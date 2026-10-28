@@ -1,14 +1,17 @@
 """Compile engine/launcher.c and check it execs Resources/worker.sh with its args,
-dropping the legacy -psn argument. Skipped when clang is not installed."""
+dropping the legacy -psn argument. Skipped off macOS (the launcher is a macOS app-bundle
+helper that uses macOS APIs) and when clang is not installed."""
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 from _support import ROOT, write_exe
 
 
+@unittest.skipUnless(sys.platform == "darwin", "the launcher is a macOS app-bundle helper")
 @unittest.skipUnless(shutil.which("clang"), "clang not installed (xcode-select --install)")
 class LauncherTests(unittest.TestCase):
     def test_launcher_execs_worker_with_args(self):
