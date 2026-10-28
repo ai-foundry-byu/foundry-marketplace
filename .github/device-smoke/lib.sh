@@ -2,8 +2,7 @@
 # Every instruction from the plugin is run through `step`, which records its exit
 # code in .qa/<platform>/steps.tsv so the job summary shows PASS/FAIL per instruction.
 # EXPECT=<rc> step ...   marks a step whose expected exit code is not 0.
-# Steps tagged "[CORRECTED]" run a fixed version of a plugin command; see the
-# defect note in the step name.
+# Steps tagged "FIXED Dn" assert the fixed behavior for defect Dn.
 
 QA_PLAT="${QA_PLAT:?set QA_PLAT}"
 mkdir -p ".qa/$QA_PLAT"

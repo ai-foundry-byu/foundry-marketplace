@@ -63,24 +63,33 @@ step "agent s4: simctl terminate UDID BUNDLE (after a fresh launch)" 'xcrun simc
 step "agent s4: simctl addmedia (a png)" 'xcrun simctl addmedia "$UDID" .qa/ios/S1-01-settings.png'
 step "agent s4: simctl get_app_container data (system app)" 'xcrun simctl get_app_container "$UDID" "$BUNDLE" data'
 alive_for() { local pid=$1 n=$2; for i in $(seq "$n"); do kill -0 "$pid" 2>/dev/null || return 1; sleep 1; done; return 0; }
-rec_race() {
-  # The agent's pattern sends SIGINT with no check that recording has started. Run 3 of this
-  # workflow hung 53 min when SIGINT landed before "Recording started". Reproduce: SIGINT at 0.5 s.
-  xcrun simctl io "$UDID" recordVideo --codec=h264 .qa/ios/race.mov > .qa/ios/race.log 2>&1 & local VID=$!
-  sleep 0.5; kill -INT $VID
-  if alive_for $VID 20; then echo "recorder still running 20 s after SIGINT: hang reproduced"; cat .qa/ios/race.log; kill -9 $VID; pkill -9 -f "recordVideo.*race.mov"; wait $VID 2>/dev/null; return 1; fi
-  echo "recorder exited after early SIGINT"; cat .qa/ios/race.log; return 0
+# FIXED D4: the ios-qa section 6 ad hoc screenshot + video block, extracted verbatim from the agent
+# file. The "# ... drive the story ..." line is replaced by a Settings launch and 3 s of screen time.
+MD=.github/device-smoke/mdblock.py
+AGENT_MD="$CLAUDE_PLUGIN_ROOT/agents/ios-qa.md"
+REC_BLOCK=$(python3 -I "$MD" "$AGENT_MD" bash recordVideo)
+REC_BLOCK=${REC_BLOCK/'# ... drive the story ...'/'xcrun simctl launch "$UDID" "$BUNDLE"; sleep 3'}
+rec_block() {
+  echo "$REC_BLOCK"; [ -n "$REC_BLOCK" ] || return 1
+  rm -f .qa/ios/S1-run.mov .qa/ios/S1-rec.log
+  local t0=$SECONDS out rc k=0
+  # watchdog (macOS has no timeout(1)): the block bounds itself at 30 s start + 3 s drive + 15 s stop,
+  # so anything past 90 s is a hang
+  UDID="$UDID" BUNDLE="$BUNDLE" bash -c "$REC_BLOCK" > .qa/ios/rec-block.out 2>&1 & local B=$!
+  while kill -0 $B 2>/dev/null; do sleep 1; k=$((k+1)); [ $k -ge 90 ] && { echo "WATCHDOG: block hung"; kill -9 $B; pkill -9 -f "recordVideo.*S1-run.mov"; break; }; done
+  wait $B; rc=$?
+  out=$(cat .qa/ios/rec-block.out)
+  local dt=$((SECONDS-t0))
+  echo "$out"; echo "--- recorder log:"; cat .qa/ios/S1-rec.log; echo "--- block rc=$rc, took ${dt}s"
+  ls -l .qa/ios/S1-run.mov; file .qa/ios/S1-run.mov
+  pgrep -fl "recordVideo.*S1-run.mov" && { echo "recorder still running"; return 1; }
+  [ $rc -eq 0 ] || return 1
+  grep -q "Recording started" .qa/ios/S1-rec.log || { echo "never saw Recording started"; return 1; }
+  echo "$out" | grep -qE "never started|did not stop" && return 1
+  [ $dt -le 48 ] || { echo "took longer than the block's own bound"; return 1; }
+  test -s .qa/ios/S1-run.mov && file .qa/ios/S1-run.mov | grep -qiE "quicktime|ISO Media"
 }
-EXPECT=1 step "DEFECT CHECK agent s6: recordVideo + early kill -INT never finalizes (hang)" rec_race
-rec_video_fixed() {
-  xcrun simctl io "$UDID" recordVideo --codec=h264 .qa/ios/S1-run.mov > .qa/ios/S1-rec.log 2>&1 & local VID=$!
-  local n=0; until grep -q "Recording started" .qa/ios/S1-rec.log; do sleep 1; n=$((n+1)); [ $n -ge 30 ] && break; done
-  sleep 3   # ... drive the story ...
-  kill -INT $VID
-  if alive_for $VID 15; then echo "did not stop, kill -9"; kill -9 $VID; wait $VID 2>/dev/null; return 1; fi
-  cat .qa/ios/S1-rec.log; test -s .qa/ios/S1-run.mov
-}
-step "[CORRECTED] recordVideo: wait for 'Recording started', then kill -INT with a bounded wait" rec_video_fixed
+step "FIXED D4 agent s6: recordVideo block verbatim starts, stops within its bound, writes a non-empty .mov" rec_block
 log_stream() {
   xcrun simctl spawn "$UDID" log stream --level debug --predicate 'process == "Preferences"' > .qa/ios/S1-log.txt & LOG=$!
   xcrun simctl launch "$UDID" "$BUNDLE"; sleep 5; kill $LOG; wait $LOG 2>/dev/null; wc -l .qa/ios/S1-log.txt
@@ -88,11 +97,12 @@ log_stream() {
 }
 step "agent s7: simctl spawn log stream --level debug --predicate" log_stream
 
-# Maestro exactly as ios-qa section 2 says
-step "install Maestro: curl -fsSL get.maestro.mobile.dev | bash" 'curl -fsSL "https://get.maestro.mobile.dev" | bash'
-EXPECT=1 step "DEFECT CHECK: maestro not on PATH in the same shell after the agent's install line" 'command -v maestro'
-export PATH="$PATH:$HOME/.maestro/bin"
-step "[CORRECTED] maestro --version after export PATH=\$PATH:\$HOME/.maestro/bin" 'maestro --version'
+# FIXED D1: Maestro with the ios-qa section 2 block extracted verbatim from the agent file
+step "FIXED D1 doctor: NOT READY run's Maestro fix line says to export PATH in the same shell" 'python3 .github/device-smoke/check_doctor.py .qa/ios/doctor.json maestro-fix'
+EXPECT=1 step "precondition: maestro not on PATH before install" 'command -v maestro'
+MAESTRO_BLOCK=$(python3 -I "$MD" "$AGENT_MD" bash get.maestro.mobile.dev)
+step "FIXED D1 agent s2: Maestro install block verbatim (curl | bash; export PATH; maestro --version) succeeds in one shell" 'echo "$MAESTRO_BLOCK"; [ -n "$MAESTRO_BLOCK" ] && eval "$MAESTRO_BLOCK"'
+step "FIXED D1: maestro resolves on PATH right after the block" 'command -v maestro'
 step "agent s2: doctor.py --platform ios after Maestro install (READY)" 'python3 "$DOCTOR_DIR/scripts/doctor.py" --platform ios --out .qa'
 step "agent s5: maestro --device UDID hierarchy > json" 'maestro --device "$UDID" hierarchy > .qa/ios/S1-03-hierarchy.json; head -c 300 .qa/ios/S1-03-hierarchy.json; echo; python3 -c "import json,sys;json.load(open(sys.argv[1]))" .qa/ios/S1-03-hierarchy.json'
 mkdir -p .qa/ios/flows

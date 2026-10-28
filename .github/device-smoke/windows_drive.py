@@ -87,11 +87,16 @@ text1 = "hello from foundry-devices CI"
 if edit is not None:
     attempt("s5 edit.wait('enabled', timeout=10)", lambda: (edit.wait("enabled", timeout=10), "enabled")[1])
     attempt("s5 edit.set_edit_text(...)", lambda: (edit.set_edit_text(text1), "set")[1])
-    wt = attempt("s5 read back edit.window_text()", lambda: edit.window_text())
-    rec("DEFECT CHECK agent s5: window_text() on an Edit returns its contents", bool(wt) and text1 in str(wt),
-        f"window_text() returned {wt!r} (the UIA Name), not the text", known_defect=True)
+    # FIXED D3: the agent now says get_value() (== iface_value.CurrentValue) for Edit controls and
+    # never window_text() to check an Edit's contents, because window_text() is the accessible name.
     got = attempt("s5 read back edit.get_value()", lambda: edit.get_value())
-    rec("[CORRECTED] s5 assert typed text read back via get_value()", bool(got) and text1 in str(got), got)
+    rec("FIXED D3 agent s5: get_value() on the Edit returns the typed text", bool(got) and text1 in str(got), got)
+    cv = attempt("s5 read back edit.iface_value.CurrentValue", lambda: edit.iface_value.CurrentValue)
+    rec("FIXED D3 agent s5: get_value() equals iface_value.CurrentValue (as the agent says)", got is not None and got == cv,
+        f"get_value={got!r} CurrentValue={cv!r}")
+    wt = attempt("s5 edit.window_text() (agent: never use this for an Edit's contents)", lambda: edit.window_text())
+    rec("FIXED D3 agent claim: window_text() on the Edit is its accessible name, not the text",
+        wt is not None and text1 not in str(wt), f"window_text() returned {wt!r}")
     attempt("s5 edit.type_keys('typed by keys{ENTER}', with_spaces=True)",
             lambda: (edit.type_keys(" typed by keys{ENTER}", with_spaces=True), "typed")[1])
     got2 = attempt("s5 read back after type_keys via get_value()", lambda: edit.get_value())

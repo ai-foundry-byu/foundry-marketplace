@@ -9,20 +9,33 @@ Then:
     uitree.py find .qa/android/ui.xml --text "Sign in"
     uitree.py find .qa/android/ui.xml --id com.example:id/email
     uitree.py find .qa/android/ui.xml --desc "Open menu" --json
-    uitree.py tap  .qa/android/ui.xml --text "Sign in"   # prints: adb shell input tap X Y
+    uitree.py tap  .qa/android/ui.xml --text "Sign in" --exact --clickable --serial "$SERIAL"
+                                                     # prints: adb -s SERIAL shell input tap X Y
 
 Matching: --text and --desc are case-insensitive substring matches unless
 --exact is given. --id matches the full resource-id, or the part after
 ":id/" (so --id email matches com.example:id/email).
 
+--clickable returns the node that takes the tap. On list screens (Settings,
+RecyclerView rows) the text node itself is not clickable; its row is. So a
+match whose own node is not clickable resolves to its nearest clickable
+ancestor, and tap uses that ancestor's bounds. Matches inside one row count
+once. A match with no clickable ancestor is dropped.
+
 `tap` exits 2 if zero or several nodes match, so a script never taps the
-wrong thing silently. Python 3 stdlib only.
+wrong thing silently. The printed command carries `-s <serial>` when one is
+known: --serial, else $ANDROID_SERIAL, else the only device `adb devices`
+lists. With several devices attached and no serial, tap exits 2 and lists
+them. Python 3 stdlib only.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass
@@ -118,7 +131,9 @@ def _match(value: str, want: str, exact: bool) -> bool:
 def find(nodes: list[Node], text: str | None = None, rid: str | None = None,
          desc: str | None = None, exact: bool = False,
          clickable_only: bool = False) -> list[Node]:
+    by_path = {n.index_path: n for n in nodes}
     out = []
+    seen = set()
     for n in nodes:
         if text is not None and not _match(n.text, text, exact):
             continue
@@ -127,11 +142,49 @@ def find(nodes: list[Node], text: str | None = None, rid: str | None = None,
         if rid is not None and not (n.resource_id == rid or n.resource_id.endswith(":id/" + rid)):
             continue
         if clickable_only and not n.clickable:
-            continue
+            n = clickable_ancestor(n, by_path)
+            if n is None:
+                continue
         if n.bounds[2] <= n.bounds[0] or n.bounds[3] <= n.bounds[1]:
             continue  # zero-size, off-screen
+        if n.index_path in seen:
+            continue  # title and summary of one row resolve to the same row
+        seen.add(n.index_path)
         out.append(n)
     return out
+
+
+def clickable_ancestor(n: Node, by_path: dict) -> Node | None:
+    """Nearest clickable ancestor of n (the row that takes the tap), or None."""
+    p = n.index_path
+    while "/" in p:
+        p = p.rsplit("/", 1)[0]
+        a = by_path.get(p)
+        if a is not None and a.clickable:
+            return a
+    return None
+
+
+def parse_adb_devices(text: str) -> list[str]:
+    """Serials in state `device` from `adb devices` output."""
+    out = []
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "device" and not line.startswith("List of devices"):
+            out.append(parts[0])
+    return out
+
+
+def attached_serials() -> list[str] | None:
+    """Serials adb sees right now, or None when adb is missing or does not answer."""
+    adb = shutil.which("adb")
+    if not adb:
+        return None
+    try:
+        p = subprocess.run([adb, "devices"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return parse_adb_devices(p.stdout or "") if p.returncode == 0 else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -149,6 +202,9 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--exact", action="store_true")
         p.add_argument("--clickable", action="store_true")
         p.add_argument("--json", action="store_true")
+        if name == "tap":
+            p.add_argument("--serial", help="device serial for the printed command "
+                                            "(default: $ANDROID_SERIAL, else the only attached device)")
     a = ap.parse_args(argv)
 
     with open(a.xml, encoding="utf-8", errors="replace") as fh:
@@ -177,8 +233,18 @@ def main(argv: list[str] | None = None) -> int:
         for h in hits:
             sys.stderr.write("  " + h.label() + "\n")
         return 2
+    serial = a.serial or os.environ.get("ANDROID_SERIAL")
+    if not serial:
+        attached = attached_serials()
+        if attached and len(attached) > 1:
+            sys.stderr.write(f"{len(attached)} devices attached ({', '.join(attached)}): "
+                             "pass --serial <serial> so the tap hits the right one\n")
+            return 2
+        if attached:
+            serial = attached[0]
     x, y = hits[0].center
-    print(f"adb shell input tap {x} {y}")
+    target = f"-s {serial} " if serial else ""
+    print(f"adb {target}shell input tap {x} {y}")
     return 0
 
 

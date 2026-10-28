@@ -1,56 +1,48 @@
-# Windows lane, PowerShell half: the agent's PowerShell lookup verbatim, the PowerShell
-# screenshot snippet and the Get-WinEvent snippet. Results go to .qa\windows\pwsh-steps.tsv.
+# Windows lane, PowerShell half: the agent's PowerShell lookup, screenshot and Get-WinEvent
+# blocks, each extracted verbatim from agents/windows-qa.md. Results go to .qa\windows\pwsh-steps.tsv.
+# Exits 1 if any step fails.
 $ErrorActionPreference = "Continue"
 New-Item -ItemType Directory -Force .qa\windows | Out-Null
 $log = ".qa\windows\pwsh-steps.tsv"
 Set-Content $log ""
+$global:fails = 0
 function Step($name, [scriptblock]$body) {
   Write-Host "::group::$name"
   $ok = $true
   try { & $body; if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { $ok = $false; Write-Host "exit $LASTEXITCODE" } } catch { $ok = $false; Write-Host "ERROR: $_" }
   Write-Host "::endgroup::"
-  $v = if ($ok) { "PASS" } else { "FAIL" }
+  $v = if ($ok) { "PASS" } else { "FAIL"; $global:fails++ }
+  if (-not $ok) { Write-Host "::warning title=windows pwsh step failed::$name" }
   Add-Content $log "$v`t$name"
   $global:LASTEXITCODE = 0
 }
 
 Write-Host "env:CLAUDE_PLUGIN_ROOT = $env:CLAUDE_PLUGIN_ROOT"
-
-Step "agent s2 PowerShell block with CLAUDE_PLUGIN_ROOT only as an ENV var (hook-style/copied snippet)" {
-  $SKILL_DIR = "${CLAUDE_PLUGIN_ROOT}/skills/device-doctor"
-  if (-not (Test-Path $SKILL_DIR)) { $SKILL_DIR = @(".claude/skills/device-doctor", "$env:CLAUDE_CONFIG_DIR/skills/device-doctor", "$HOME/.claude/skills/device-doctor") | Where-Object { Test-Path $_ } | Select-Object -First 1 }
-  Write-Host "SKILL_DIR=[$SKILL_DIR]"
-  if (-not $SKILL_DIR) { throw "SKILL_DIR is empty: `${CLAUDE_PLUGIN_ROOT} is a PowerShell variable, not the environment variable" }
-  py -3 "$SKILL_DIR/scripts/doctor.py" --platform windows --out .qa
-}
-
-# Proposed replacement for the windows-qa.md PowerShell block (works as text-substituted plugin,
-# as an env var, and standalone):
-$fixed = @'
-$SKILL_DIR = @("${CLAUDE_PLUGIN_ROOT}/skills/device-doctor", "$env:CLAUDE_PLUGIN_ROOT/skills/device-doctor", ".claude/skills/device-doctor", "$env:CLAUDE_CONFIG_DIR/skills/device-doctor", "$HOME/.claude/skills/device-doctor") | Where-Object { Test-Path $_ } | Select-Object -First 1
-py -3 "$SKILL_DIR/scripts/doctor.py" --platform windows --out .qa
-'@
-Step "[CORRECTED] proposed block, env-var mode" {
-  Invoke-Expression $fixed; Write-Host "SKILL_DIR=[$SKILL_DIR]"; if (-not $SKILL_DIR) { throw "empty" }
-}
-
-# The block above sets an environment variable. Claude Code instead substitutes ${CLAUDE_PLUGIN_ROOT}
-# as TEXT in a plugin agent's body (seen in a headless session: the subagent's command held the literal path).
-# So run the agent's PowerShell block extracted from agents/windows-qa.md in the two real modes.
 $md = Get-Content -Raw "$env:GITHUB_WORKSPACE/plugins/foundry-devices/agents/windows-qa.md"
 $block = [regex]::Match($md, '(?s)```powershell\r?\n(\$SKILL_DIR = .*?)```').Groups[1].Value
-Write-Host "extracted block:`n$block"
+Write-Host "extracted lookup block:`n$block"
 $pluginRoot = "$env:GITHUB_WORKSPACE\plugins\foundry-devices"
 
-Step "agent s2 PowerShell block, plugin mode (text-substituted root, env var unset)" {
+# FIXED D6: the block must work in all three ways it gets run.
+Step "FIXED D6 agent s2 PowerShell block, env-var mode (CLAUDE_PLUGIN_ROOT only as an env var; block pasted as is)" {
   if (-not $block) { throw "block not found in windows-qa.md" }
+  if (-not $env:CLAUDE_PLUGIN_ROOT) { throw "test setup: env var not set" }
+  Remove-Item .qa\windows\doctor.json -ErrorAction SilentlyContinue
+  Invoke-Expression $block
+  Write-Host "SKILL_DIR=[$SKILL_DIR] exit=$LASTEXITCODE"
+  if (-not $SKILL_DIR) { throw "empty SKILL_DIR in env-var mode" }
+  if ((Resolve-Path $SKILL_DIR).Path -ne (Resolve-Path "$pluginRoot\skills\device-doctor").Path) { throw "resolved to the wrong skill dir" }
+  if (-not (Test-Path .qa\windows\doctor.json)) { throw "doctor did not write .qa\windows\doctor.json" }
+}
+
+Step "FIXED D6 agent s2 PowerShell block, plugin mode (text-substituted root, env var unset)" {
   $saved = $env:CLAUDE_PLUGIN_ROOT; $env:CLAUDE_PLUGIN_ROOT = $null
   try { Invoke-Expression ($block.Replace('${CLAUDE_PLUGIN_ROOT}', $pluginRoot)) } finally { $env:CLAUDE_PLUGIN_ROOT = $saved }
   Write-Host "SKILL_DIR=[$SKILL_DIR] exit=$LASTEXITCODE"
   if (-not $SKILL_DIR) { throw "empty SKILL_DIR" }
 }
 
-Step "agent s2 PowerShell block, standalone mode (literal root, skill copied to .claude/skills)" {
+Step "FIXED D6 agent s2 PowerShell block, standalone mode (no plugin root at all, skill copied to .claude/skills)" {
   $saved = $env:CLAUDE_PLUGIN_ROOT; $env:CLAUDE_PLUGIN_ROOT = $null
   New-Item -ItemType Directory -Force .claude\skills | Out-Null
   Copy-Item -Recurse -Force "$pluginRoot\skills\device-doctor" .claude\skills\
@@ -74,25 +66,37 @@ Step "agent s5: relative-path Save lands in the working directory" {
   if (-not $p) { throw "file not where the snippet says" }
 }
 
-Step "agent s6: Get-WinEvent snippet (verbatim)" {
-  Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error','Application Hang','.NET Runtime'; StartTime=(Get-Date).AddMinutes(-30)} |
-    Format-List TimeCreated, ProviderName, Message | Out-File .qa\windows\S1-events.txt
-}
-
-Step "DEFECT CHECK agent s6: verbatim Get-WinEvent raises 'No events were found' when the log is clean" {
-  $before = $Error.Count
-  Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error','Application Hang','.NET Runtime'; StartTime=(Get-Date).AddMinutes(-30)} 2>$null | Out-Null
-  Write-Host "new errors: $($Error.Count - $before) :: $($Error[0])"
-}
-
-Step "[CORRECTED] Get-WinEvent ... -ErrorAction SilentlyContinue writes an empty file, no error" {
-  $before = $Error.Count
-  Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error','Application Hang','.NET Runtime'; StartTime=(Get-Date).AddMinutes(-30)} -ErrorAction SilentlyContinue |
-    Format-List TimeCreated, ProviderName, Message | Out-File .qa\windows\S1-events.txt
-  if (-not (Test-Path .qa\windows\S1-events.txt)) { throw "no events file" }
+# FIXED D8: the section 6 event-log block, extracted verbatim. Runs it once as written, then once
+# with the window moved into the future so the "no matching events" branch is taken for certain.
+$evBlock = [regex]::Match($md, '(?s)```powershell\r?\n(\$ev = Get-WinEvent.*?)```').Groups[1].Value
+Write-Host "extracted event-log block:`n$evBlock"
+function Run-EvBlock($code) {
+  Remove-Item .qa\windows\S1-events.txt -ErrorAction SilentlyContinue
+  $out = & { Invoke-Expression $code } *>&1
+  $errs = @($out | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+  $out | ForEach-Object { Write-Host "  > $_" }
+  if ($errs.Count -gt 0) { throw "block wrote $($errs.Count) error(s): $($errs[0])" }
+  if (-not (Test-Path .qa\windows\S1-events.txt)) { throw "no .qa\windows\S1-events.txt" }
+  $body = (Get-Content -Raw .qa\windows\S1-events.txt)
   Write-Host "events file bytes: $((Get-Item .qa\windows\S1-events.txt).Length)"
+  return $body
+}
+
+Step "FIXED D8 agent s6: Get-WinEvent block verbatim, no error output, writes S1-events.txt" {
+  if (-not $evBlock) { throw "event-log block not found in windows-qa.md" }
+  $body = Run-EvBlock $evBlock
+  if (-not $body.Trim()) { throw "events file is empty" }
+}
+
+Step "FIXED D8 agent s6: clean log (window in the future) prints and writes 'no matching events', no error" {
+  $clean = $evBlock.Replace('AddMinutes(-30)', 'AddMinutes(10)')
+  if ($clean -eq $evBlock) { throw "could not move the window" }
+  $body = Run-EvBlock $clean
+  if ($body.Trim() -ne "no matching events") { throw "expected 'no matching events', got [$body]" }
 }
 
 Step "agent s3: Get-StartApps lists AppUserModelIDs" { Get-StartApps | Select-Object -First 5 | Format-Table | Out-String | Write-Host }
 
 Get-Content $log
+if ($global:fails -gt 0) { Write-Host "$($global:fails) PowerShell step(s) failed"; exit 1 }
+exit 0

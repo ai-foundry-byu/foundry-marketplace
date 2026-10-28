@@ -3,8 +3,9 @@ name: Device smoke (foundry-devices)
 # Runs the foundry-devices plugin's own scripts and the exact commands its agents and
 # skills tell a student to run, on real Android, iOS, Windows and macOS runners.
 # Each platform script records PASS/FAIL per instruction in .qa/<platform>/steps.tsv
-# and the job summary. Steps tagged [CORRECTED] run a fixed form of a plugin command
-# that was found wrong; the defect is recorded in the step name.
+# and the job summary. Steps tagged "FIXED Dn" assert the fixed behavior for defect Dn,
+# running the plugin's corrected commands extracted verbatim from its agent files
+# (.github/device-smoke/mdblock.py). A failing step fails its job.
 
 on:
   push:
