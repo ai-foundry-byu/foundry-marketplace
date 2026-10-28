@@ -14,12 +14,22 @@ Stage exit checks (deterministic, file-based):
   0 Scaffold      README.md, CHANGELOG.md, REQUIREMENTS.md, DECISIONS.md, PRD.md, WORKPLAN.md exist
   1 Requirements  REQUIREMENTS.md has an R-01 style row, an "Already exists" section, no TODO:
   2 PRD           PRD.md has stories with criteria, no TODO:, an "Addressed critiques"
-                  appendix with content, and stories.json is fresh (gen_stories --check)
+                  appendix with content, stories.json is fresh (gen_stories --check), every
+                  R-id's Status is STORIED, LIVE or DROPPED citing a D-id, and DECISIONS.md
+                  has the human's approval row:
+                  | D-07 | 2026-11-02 | <who> | "<their words>" | PRD approved: ... | ... |
   3 Workplan      WORKPLAN.md has a task table and at least one "- [ ] M" milestone, no TODO:
-  4 Execute       every task row's Status starts with DONE or PARKED
+  4 Execute       every task row's Status is PARKED, or DONE with evidence (a commit sha,
+                  a PR "#12" or a URL): "DONE 2026-11-03: commit 3f2a9c1"
   5 Code QA       not detectable from files: CI is the evidence. Reported as a reminder.
-  6 Visual QA     done-journey.yaml exists with steps and no TODO:
-  7 Ship          every story that is not PARKED is LIVE, and CHANGELOG.md has a dated entry
+  6 Visual QA     done-journey.yaml has steps and no TODO:; the done-gate report
+                  (.qa/done-gate/last.json: sha, exit, journey, time) says exit 0 for git
+                  HEAD (or for a commit whose only later changes are artifact files); and
+                  every story that is not PARKED has a story-verifier report
+                  (.qa/verify/<id>.md) or evidence in stories.json
+  7 Ship          every story that is not PARKED is LIVE with evidence that names its
+                  commit ("commit:<sha>", added by gen_stories.py --set), and CHANGELOG.md
+                  has a dated entry
   8 Feedback      steady state: bugs become stories (see the bug-to-story skill)
 
 Exit code is always 0 in report modes; this tool reports, it does not gate.
@@ -43,7 +53,10 @@ STAGES = [
     (3, "Workplan", "write-workplan"),
     (4, "Execute", "parallel-lanes"),
     (5, "Code QA", "foundry-qa:regression-check + your CI"),
-    (6, "Visual QA with example users", "foundry-qa:done-gate, foundry-qa persona-tester, story-verifier agent, foundry-design"),
+    (6, "Visual QA with example users",
+     "the stage-6 battery on the committed HEAD (local or hosted): foundry-qa:done-gate, "
+     "foundry-qa persona-tester per device, story-verifier agent per story, "
+     "foundry-design:design-critique, foundry-qa:a11y-check (the ship skill runs them in order)"),
     (7, "Ship", "ship"),
     (8, "Feedback", "bug-to-story"),
 ]
@@ -55,6 +68,10 @@ TASK_HEADER = re.compile(r"^\|\s*Id\s*\|\s*Task\s*\|.*\|\s*Status\s*\|\s*$",
                          re.MULTILINE | re.IGNORECASE)
 MILESTONE = re.compile(r"^- \[[ xX]\] M\d", re.MULTILINE)
 DATED = re.compile(r"^## \d{4}-\d{2}-\d{2}", re.MULTILINE)
+REQ_ID = re.compile(r"^\|\s*(R-\d+)\s*\|")
+APPROVAL = re.compile(r"^\|\s*D-\d+\s*\|\s*\d{4}-\d{2}-\d{2}\s*\|.*\bPRD approved\b",
+                      re.MULTILINE | re.IGNORECASE)
+EVIDENCE = re.compile(r"\b[0-9a-f]{7,40}\b|#\d+|https?://")
 
 
 def find_root(project: Path) -> Path:
@@ -88,6 +105,38 @@ def task_statuses(workplan: str) -> list:
             continue
         i += 1
     return out
+
+
+def cells(line: str) -> list:
+    return [c.strip() for c in line.strip().strip("|").split("|")]
+
+
+def requirement_statuses(req: str) -> list:
+    """Return (R-id, status) per ask row. Status = the "Status" column, else the last cell."""
+    out, col = [], None
+    for line in req.splitlines():
+        if not line.lstrip().startswith("|"):
+            col = None
+            continue
+        row = cells(line)
+        low = [c.lower() for c in row]
+        if low and low[0] == "id" and "status" in low:
+            col = low.index("status")
+            continue
+        m = REQ_ID.match(line.strip())
+        if m:
+            out.append((m.group(1), row[col] if col is not None and len(row) > col else row[-1]))
+    return out
+
+
+def covered(status: str) -> bool:
+    s = status.strip().upper()
+    return s.startswith(("STORIED", "LIVE")) or (s.startswith("DROPPED") and bool(re.search(r"\bD-\d+", s)))
+
+
+def approved(decisions: str) -> bool:
+    return any(TODO not in m.group(0) for m in
+               re.finditer(APPROVAL.pattern + r".*$", decisions, re.MULTILINE | re.IGNORECASE))
 
 
 def evaluate(project: Path) -> dict:
@@ -127,8 +176,15 @@ def evaluate(project: Path) -> dict:
         except ValueError as exc:
             ok, msgs = False, [str(exc)]
         if not ok:
-            problems.append(msgs[0])
-    checks.append((2, not problems, "; ".join(problems) or f"{len(stories)} stories, critiqued, stories.json fresh"))
+            problems.append(msgs[0].replace(str(root) + os.sep, ""))
+    uncovered = [rid for rid, status in requirement_statuses(req) if not covered(status)]
+    if uncovered:
+        problems.append(f"{', '.join(uncovered[:10])} not STORIED or DROPPED (D-id): "
+                        "story it, or record a decision that drops it")
+    if not approved(read(root / "DECISIONS.md")):
+        problems.append('no human approval in DECISIONS.md (a dated D-row saying "PRD approved")')
+    checks.append((2, not problems, "; ".join(problems) or
+                   f"{len(stories)} stories, critiqued, stories.json fresh, every ask covered, approved"))
 
     wp = read(root / "WORKPLAN.md")
     tasks = task_statuses(wp)
@@ -142,13 +198,25 @@ def evaluate(project: Path) -> dict:
     checks.append((3, not problems, "; ".join(problems) or f"{len(tasks)} tasks planned"))
 
     open_tasks = [t for t, s in tasks if not s.upper().startswith(("DONE", "PARKED"))]
-    checks.append((4, bool(tasks) and not open_tasks,
-                   f"open tasks: {', '.join(open_tasks[:12])}" + (" ..." if len(open_tasks) > 12 else "")
-                   if open_tasks else ("all tasks DONE or PARKED" if tasks else "no tasks yet")))
+    no_proof = [t for t, s in tasks if s.upper().startswith("DONE") and not EVIDENCE.search(s[4:])]
+    problems = []
+    if open_tasks:
+        problems.append(f"open tasks: {', '.join(open_tasks[:12])}" + (" ..." if len(open_tasks) > 12 else ""))
+    if no_proof:
+        problems.append(f"DONE without evidence (add the commit sha): {', '.join(no_proof[:12])}")
+    if not tasks:
+        problems.append("no tasks yet")
+    checks.append((4, not problems, "; ".join(problems) or "all tasks DONE (with evidence) or PARKED"))
 
     checks.append((5, True, "not file-detectable: a green CI run and per-change tests are the evidence"))
 
     journey = read(root / "done-journey.yaml")
+    rows = []
+    try:
+        rows = gen_stories.load_stories(root / "stories.json")
+    except ValueError:
+        pass
+    groot = gen_stories.git_root(root)
     problems = []
     if not journey:
         problems.append("no done-journey.yaml")
@@ -157,20 +225,32 @@ def evaluate(project: Path) -> dict:
             problems.append("done-journey.yaml has no steps:")
         if TODO in journey:
             problems.append("done-journey.yaml still has TODO: placeholders")
-    checks.append((6, not problems, "; ".join(problems) or "journey defined (run foundry-qa:done-gate on the deployed build)"))
+    if groot is None:
+        problems.append("not a git repository: the build under test is a commit (git init, commit)")
+    else:
+        ok, gate_detail, _ = gen_stories.gate_passed(groot, root, (project, root))
+        if not ok:
+            problems.append(gate_detail)
+        bases = {groot, Path(project).resolve(), root.resolve()}
+        unverified = [r.get("id") for r in rows if r.get("status") != "PARKED" and not r.get("evidence")
+                      and not any((b / ".qa" / "verify" / f"{r.get('id')}.md").is_file() for b in bases)]
+        if unverified:
+            problems.append(f"no story-verifier report (.qa/verify/<id>.md) for "
+                            f"{', '.join(map(str, unverified[:10]))}")
+    checks.append((6, not problems, "; ".join(problems) or
+                   "done gate exit 0 on HEAD and every story verified (now mark LIVE or PARTIAL)"))
 
-    rows = []
-    try:
-        rows = json.loads(read(root / "stories.json") or "[]")
-    except json.JSONDecodeError:
-        pass
-    not_live = [r.get("id") for r in rows if isinstance(r, dict)
-                and r.get("status") not in ("LIVE", "PARKED")]
+    not_live = [r.get("id") for r in rows if r.get("status") not in ("LIVE", "PARKED")]
+    unproven = [r.get("id") for r in rows if r.get("status") == "LIVE"
+                and not any(str(e).startswith("commit:") for e in (r.get("evidence") or []))]
     problems = []
     if not rows:
         problems.append("no stories in stories.json")
     if not_live:
         problems.append(f"{len(not_live)} stories not LIVE: {', '.join(map(str, not_live[:10]))}")
+    if unproven:
+        problems.append(f"LIVE with no evidence of its commit (set LIVE with gen_stories.py --set): "
+                        f"{', '.join(map(str, unproven[:10]))}")
     changelog = re.sub(r"^```.*?^```", "", read(root / "CHANGELOG.md"), flags=re.MULTILINE | re.DOTALL)
     if not DATED.search(changelog):
         problems.append("CHANGELOG.md has no dated \"## YYYY-MM-DD\" entry")

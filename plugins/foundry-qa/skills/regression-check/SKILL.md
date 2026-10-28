@@ -1,6 +1,6 @@
 ---
 name: regression-check
-description: Stack-neutral blast-radius check before calling a change done. Maps every consumer of what you changed (functions, exports, API routes, env vars, config keys, database columns, CSS classes, CLI flags) with grep, judges whether each one relies on the behavior you changed, and behavior-tests the at-risk ones. Use before declaring done on any edit to shared code, when asked "what could this break", "check for regressions", "blast radius", "who uses this", or after changing a signature, schema, route, or shared component.
+description: Stack-neutral blast-radius check before calling a change done. Maps every consumer of what you changed (functions, exports, API routes, env vars, config keys, database columns, CSS classes, CLI flags) with grep, judges whether each one relies on the behavior you changed, and behavior-tests the at-risk ones. Use before declaring done on any edit to shared code, before applying a patch file, when asked "is it safe to apply this patch", "is this patch/PR/diff safe", "can I apply this change", "should I merge this", "what could this break", "check for regressions", "blast radius", "who uses this", or after changing a signature, schema, route, or shared component.
 ---
 
 # regression-check
@@ -35,6 +35,12 @@ List exactly what changed:
 git diff --stat main...HEAD
 git diff main...HEAD | grep -E '^[-+].*(export|def |function |class |interface |type |route|env|process\.env|os\.environ)'
 ```
+
+A patch file that is not applied yet ("is it safe to apply PROPOSED.patch?"): read it with
+`git apply --stat PROPOSED.patch` and the patch itself, run the same consumer search, and for
+the behavior test apply it temporarily (`git apply PROPOSED.patch`, test, `git apply -R
+PROPOSED.patch`), leaving the tree as you found it. The answer is the consumer table plus the
+test result, not a read-through.
 
 Then grep for every consumer of each changed name. Use `rg` (ripgrep) if you have it, `grep -rn` otherwise. Exclude build output:
 

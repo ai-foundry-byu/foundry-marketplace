@@ -1,6 +1,6 @@
 ---
 name: secrets-hygiene
-description: Keep API keys and passwords out of git, and rotate one correctly when it leaks. Sets up .env patterns, .gitignore, a gitleaks pre-commit hook and CI scan, then runs the probe-first rotation flow (probe the leaked key, map every consumer, mint new, swap all consumers, revoke old, re-probe until dead). Use when the user says "I committed my API key", "a key leaked", "GitHub sent a secret scanning alert", "rotate this key", "set up .env", "keep secrets out of git", "add gitleaks", or before a repo goes public.
+description: Keep API keys and passwords out of git, scan a repo for keys before you commit or push, and rotate one correctly when it leaks. Sets up .env patterns, .gitignore, a gitleaks pre-commit hook and CI scan, then runs the probe-first rotation flow (probe the leaked key, map every consumer, mint new, swap all consumers, revoke old, re-probe until dead). Use when the user says "I committed my API key", "a key leaked", "GitHub sent a secret scanning alert", "rotate this key", "set up .env", "keep secrets out of git", "add gitleaks", "make sure I'm not leaking any keys", "am I about to commit a secret", "scan for API keys or secrets", "check for leaked credentials before I push", or before a repo goes public.
 ---
 
 # secrets-hygiene: prevent leaks, and handle the one that happens anyway
@@ -9,9 +9,9 @@ Two jobs. **Prevent** (set up once per repo, 10 minutes) and **respond** (when a
 
 Bundled tools (all Python 3 stdlib):
 
-- `${CLAUDE_SKILL_DIR}/scripts/scan_secrets.py`: fallback secret scanner (`--staged`, `--worktree`, `--all`, or paths). Redacted output.
+- `${CLAUDE_SKILL_DIR}/scripts/scan_secrets.py`: fallback secret scanner (`--staged`, `--worktree`, `--all`, or paths). `--all` covers tracked files AND untracked files that are not gitignored, which is everything `git add .` would stage. Redacted output.
 - `${CLAUDE_SKILL_DIR}/scripts/probe_key.py`: asks a provider whether a key still authenticates (`LIVE`, `DEAD`, `ERR`).
-- `${CLAUDE_SKILL_DIR}/scripts/commit_secret_guard.py`: the plugin hook (runs automatically only when this skill is installed as part of the foundry-builder-kit plugin). It blocks a `git commit` the agent runs when the staged change contains a secret.
+- `${CLAUDE_SKILL_DIR}/scripts/commit_secret_guard.py`: the plugin hook (runs automatically only when this skill is installed as part of the foundry-builder-kit plugin). It blocks a `git commit` the agent runs when the commit would contain a secret: what is already staged plus whatever the same command stages first (`git add -A && git commit`, `git add <file> && git commit`, `git commit -am`). It reads chains, subshells, redirections, comments, heredocs, `cd`/`git -C`, runners like `timeout`/`xargs` and git aliases, and scans the command text too (a key in a commit message or in a file the command writes). Off for one session: `export FOUNDRY_COMMIT_SECRET_GUARD=0` in the terminal before you start `claude` (the old name `FOUNDRY_SECRETS_GUARD` still works; an `export` run by the agent does not reach the hook). The foundry-guardrails plugin's `FOUNDRY_SECRET_GUARD` is a different switch for a different hook.
 - Templates in `${CLAUDE_SKILL_DIR}/templates/`.
 
 ## Part 1: prevent
@@ -45,14 +45,19 @@ If `git rm --cached` removed a tracked env file, its contents are still in histo
 Install gitleaks: `brew install gitleaks` (macOS), `winget install gitleaks` or `scoop install gitleaks` (Windows), or a release binary from github.com/gitleaks/gitleaks. Then pick one:
 
 - **pre-commit framework:** copy `${CLAUDE_SKILL_DIR}/templates/pre-commit-config.yaml` to `.pre-commit-config.yaml`, then `pre-commit install`.
-- **plain git hook:** `cp "${CLAUDE_SKILL_DIR}/templates/pre-commit.sh" .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit`.
+- **plain git hook** (copy BOTH files; `scripts/scan_secrets.py` is the hook's fallback when gitleaks is not installed, and without it the hook refuses every commit):
+
+  ```bash
+  mkdir -p scripts && cp "${CLAUDE_SKILL_DIR}/scripts/scan_secrets.py" scripts/ \
+    && cp "${CLAUDE_SKILL_DIR}/templates/pre-commit.sh" .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+  ```
 
 Scan what is already there, once:
 
 ```bash
 gitleaks git --redact -v .            # full git history
 gitleaks dir --redact -v .            # the files on disk, including untracked
-python3 "${CLAUDE_SKILL_DIR}/scripts/scan_secrets.py" --all   # no gitleaks available
+python3 "${CLAUDE_SKILL_DIR}/scripts/scan_secrets.py" --all   # no gitleaks: tracked + untracked, skips gitignored
 ```
 
 Add the CI scan so a teammate without the hook is still caught: copy `${CLAUDE_SKILL_DIR}/templates/secret-scan.yml` to `.github/workflows/secret-scan.yml`. Also turn on GitHub's own secret scanning and push protection (repo Settings, Code security).

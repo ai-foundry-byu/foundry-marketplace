@@ -46,9 +46,10 @@ class Hook(HookCase):
     def assertBlocked(self, result, contains=""):
         code, out, _ = result
         self.assertEqual(code, 0)
-        self.assertEqual(out["decision"], "block")
+        hso = out["hookSpecificOutput"]  # non-error Stop feedback, not decision:block
+        self.assertEqual(hso["hookEventName"], "Stop")
         if contains:
-            self.assertIn(contains, out["reason"])
+            self.assertIn(contains, hso["additionalContext"])
 
     def test_unarmed_is_noop(self):
         self.env.pop("FOUNDRY_SHIP_WORKPLAN")
@@ -81,17 +82,19 @@ class Hook(HookCase):
         for _ in range(3):
             self.assertBlocked(self.stop(active=True))
         code, out, err = self.stop(active=True)
-        self.assertIsNone(out)
-        self.assertIn("human", err)
+        self.assertNotIn("hookSpecificOutput", out)  # the stop is allowed
+        self.assertIn("human", out["systemMessage"])
+        self.assertEqual(err, "")
         self.assertEqual(self.log_lines()[-1]["action"], "allow-cap-reached")
 
-    def test_default_cap_is_20(self):
+    def test_default_cap_is_8(self):
+        # Claude Code overrides the 9th consecutive Stop block, so a cap above 8 never fires
         self.env["FOUNDRY_SHIP_MILESTONE"] = "M2"
         blocks = 0
-        for _ in range(25):
+        for _ in range(12):
             _, out, _ = self.stop(active=True)
-            blocks += 1 if out else 0
-        self.assertEqual(blocks, 20)
+            blocks += 1 if out and "hookSpecificOutput" in out else 0
+        self.assertEqual(blocks, 8)
 
     def test_unknown_milestone_and_missing_file(self):
         self.env["FOUNDRY_SHIP_MILESTONE"] = "M42"

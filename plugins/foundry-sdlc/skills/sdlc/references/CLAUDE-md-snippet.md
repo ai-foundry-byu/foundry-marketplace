@@ -8,6 +8,10 @@ Paste everything below the line into your project's `CLAUDE.md`. Plugin skills l
 
 This project follows the Foundry SDLC: scaffold, requirements, PRD and stories, workplan, execute, code QA, visual QA, ship, feedback. To find the current stage, run the `sdlc` skill (`foundry-sdlc:sdlc` when it came with the plugin). It runs the stage detector, `scripts/sdlc_stage.py`, that ships inside the skill. **Never skip a gate.** If a gate cannot run, say so and stop.
 
+### Bug reports go through bug-to-story
+- **Every bug report or failed check goes through the `bug-to-story` skill** (`foundry-sdlc:bug-to-story`): "a classmate says X is broken", "a user can't Y", "handle this bug", a verifier or persona FAIL. In order: record the reporter's words as a new R-id in REQUIREMENTS.md, reproduce, add or extend a story criterion in PRD.md, write the failing test first, add a WORKPLAN task, fix, and log it in CHANGELOG.md. Do not fix a reported bug outside that skill.
+- A report you cannot reproduce still gets its R-id (status OPEN) and an open question saying what you tried.
+
 ### Root cause first
 - Reproduce the problem before you change code. Never fix a bug you have not seen.
 - Ask "why" until you reach the actual cause, a line of code or a wrong assumption. Fix that, not the symptom. A retry, a sleep, a broad try/except or a special case for one input is a bandaid. Use one only as a labeled stopgap, with a task to find the cause.
@@ -19,8 +23,9 @@ This project follows the Foundry SDLC: scaffold, requirements, PRD and stories, 
 - Before you edit a shared file (anything other modules import), list its consumers and check each one. The `foundry-qa:regression-check` skill does this.
 
 ### Never say "done" without a passing gate
-- "Done" means the gate passed on the deployed build: the done-gate journey exited 0, and the story-verifier marked every criterion PASS. INCONCLUSIVE is not a pass.
-- Without that, report the real state with its evidence: "built, tests pass locally, not deployed", or "deployed, done gate not run because <reason>".
+- "Done" means every stage-6 gate passed on a **committed SHA**: the done-gate journey exited 0, persona-tester, a11y-check and design-critique found no blocking failure, and the story-verifier marked every criterion PASS. INCONCLUSIVE is not a pass. The ship skill runs these.
+- The build under test is the committed HEAD: the deployed URL when there is hosting, or the app started locally from that commit when there is none (a class project). Hosting is optional; a commit is not.
+- Without that, report the real state with its evidence: "built, tests pass, not committed", or "committed at 3f2a9c1, done gate not run because <reason>".
 - Never write "should work now". Run it and show the output.
 
 ### Reuse before build
@@ -40,8 +45,9 @@ Choose build effort, review depth, and whether an independent reviewer is needed
 Building agents run at low or medium effort for normal work, and at high or above only for the top tier. An independent verifier is for the top tier. Below that, the builder's own tests are the verification.
 
 ### Artifacts and status words
-- Stories live only in `PRD.md` (`**US-01. Title.**` plus numbered criteria). `stories.json` is compiled by `tools/gen_stories.py`. Never hand-edit a story's title or criteria there.
-- Story status: NOT_BUILT, BUILT (code exists, not verified), PARTIAL (deployed, some criteria fail), LIVE (deployed and every criterion verified), PARKED.
+- Stories live only in `PRD.md` (`**US-01. Title.**` plus numbered criteria). `stories.json` is compiled from it. From the project root: `python3 tools/gen_stories.py --prd product/PRD.md --out product/stories.json` (drop `product/` when the artifacts are at the root; add `--check` in CI). Never hand-edit a story's title or criteria there.
+- Story status: NOT_BUILT, BUILT (code exists, not verified), PARTIAL (a gate failed or was inconclusive), LIVE (every gate passed on a committed SHA; set it with `tools/gen_stories.py ... --set US-01=LIVE --evidence <report>`, which refuses otherwise), PARKED.
+- Every WORKPLAN task goes to `DONE <date>: commit <sha>` as its commit lands, whether it was built in a lane or in this session.
 - Requests and human decisions are recorded verbatim, in `REQUIREMENTS.md` and `DECISIONS.md`. Agents propose. Humans decide.
 
 ### Parallel work

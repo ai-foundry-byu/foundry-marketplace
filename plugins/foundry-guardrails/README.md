@@ -7,20 +7,20 @@ Six hooks, all Python 3 standard library, all on by default except `ship-stop` (
 | Hook | Event (matcher) | What it blocks | Default | Disable | Maturity |
 |---|---|---|---|---|---|
 | `destructive-guard` | PreToolUse (`Bash`) | `rm -rf` of `/`, `~`, `$HOME`, `*`, `.` or a system dir; force-push to `main`/`master` (plain `--force` anywhere); `git reset --hard`, `git checkout -- .`, `git restore .`, `git clean -f` when they would destroy uncommitted work; `DROP`/`TRUNCATE`/`DELETE` without `WHERE` sent through a DB client; `dd of=/dev/...`; `mkfs`; fork bombs; `chmod -R 777 /`; `curl ... \| sh`; `shutdown`/`reboot` | deny | `FOUNDRY_DESTRUCTIVE_GUARD=0` | new |
-| `secret-guard` | PreToolUse (`Bash\|Read\|Grep`) | Reading or printing `.env`, private keys, cloud/registry credential files; browser password and cookie stores; password-manager CLIs (`bw`, `op`, `lpass`, `pass`, `security ... -w`); token printers (`gh auth token`, `gcloud auth print-access-token`, ...); `env`/`printenv` dumps; `echo $API_KEY` | deny | `FOUNDRY_SECRET_GUARD=0` | proven |
-| `verify-before-done` | PreToolUse (`Bash\|Edit\|Write\|MultiEdit\|NotebookEdit`) + Stop | Stopping after editing code with no test or typecheck run since the last edit (blocks once per stop, at most 2 times per session). Irreversible commands (`git push`, `vercel --prod`, `npm publish`, `wrangler deploy`, `terraform apply`, `gh pr merge`, ...) unless the command contains `VERIFY_OK=1` | on | `FOUNDRY_VERIFY=0` | proven |
+| `secret-guard` | PreToolUse (`Bash\|Read\|Grep`) | Reading or printing `.env`, private keys, cloud/registry credential files; browser password and cookie stores; password-manager CLIs (`bw`, `op`, `lpass`, `pass`, `security ... -w`); token printers (`gh auth token`, `gcloud auth print-access-token`, ...); `env`/`printenv` dumps; `echo $API_KEY`. Listing key names only (`cut -d= -f1 .env`) is allowed | deny | `FOUNDRY_SECRET_GUARD=0` | proven |
+| `verify-before-done` | PreToolUse (`Bash\|Edit\|Write\|MultiEdit\|NotebookEdit`) + Stop | Stopping after changing code with no test or typecheck run since the change (blocks once per stop, at most 2 times per session). In a git repo it detects the change by content, so edits made with `sed -i`, heredocs, `tee`, `cp` or a script count too. Irreversible commands (`git push`, `vercel --prod`, `npm publish`, `wrangler deploy`, `terraform apply`, `gh pr merge`, ...) unless the command contains `VERIFY_OK=1`, which is refused while code is untested | on | `FOUNDRY_VERIFY=0` | proven (the Edit/Write path); the shell-edit detection is new |
 | `worktree-guard` | PreToolUse (`Edit\|Write\|MultiEdit\|NotebookEdit`) | From inside a linked git worktree, editing a file in the main checkout | deny (only acts inside a linked worktree) | `FOUNDRY_WORKTREE_GUARD=0` | proven |
-| `stale-write-guard` | PreToolUse (`Write`) | A whole-file `Write` to a git-tracked file that has uncommitted changes (they would be overwritten) | warn | `FOUNDRY_STALE_WRITE_GUARD=0` | new |
-| `ship-stop` | Stop | Stopping while the workplan milestone you named is still `- [ ]` (at most 20 continuations per milestone) | off until `FOUNDRY_SHIP_WORKPLAN` is set | `FOUNDRY_SHIP_STOP=0` or unset the workplan | proven |
+| `stale-write-guard` | PreToolUse (`Write`) + PostToolUse (`Edit\|Write\|MultiEdit`) | A whole-file `Write` to a git-tracked file whose uncommitted changes were not made by this session (they would be overwritten) | deny (`FOUNDRY_STALE_WRITE_ENFORCE=0` warns instead) | `FOUNDRY_STALE_WRITE_GUARD=0` | new |
+| `ship-stop` | Stop | Stopping while the workplan milestone you named is still `- [ ]` (at most 8 continuations per milestone) | off until `FOUNDRY_SHIP_WORKPLAN` is set | `FOUNDRY_SHIP_STOP=0` or unset the workplan | proven |
 | `guardrails-help` | skill | Tells Claude how to respond when a guardrail blocks it, and tells you how to configure the hooks | n/a | n/a | new |
 
 `FOUNDRY_GUARDRAILS=0` turns every hook off at once.
 
-**Maturity.** "proven" means the hook is a generalized version of a hook that runs in our own Claude Code harness every day. "new" means it was written for this marketplace from documented patterns and is tested here, but it has not been run in daily use. `destructive-guard` uses the rule set of the published `claude-deploy-kit` command guard (a library, not a hook), so it is labeled new. `stale-write-guard` is ported from a guard we wrote but never switched on, so it is labeled new too.
+**Maturity.** "proven" means the hook is a generalized version of a hook that runs in our own Claude Code harness every day. "new" means it was written for this marketplace from documented patterns and is tested here, but it has not been run in daily use. `destructive-guard` uses the rule set of the published `claude-deploy-kit` command guard (a library, not a hook), so it is labeled new. `stale-write-guard` is ported from a guard we wrote but never switched on, and its deny-by-default design (2026-10-28) has unit tests but no live session yet, so it is labeled new too.
 
 ## Guardrails, not a security boundary
 
-These hooks catch the mistakes a well-meaning agent actually makes: running `cat .env` to "check the config", force-pushing over a teammate, wiping a directory with a bad glob, declaring victory without running tests. They are **not** a sandbox. A determined process can get around any pattern list. Shell writes (`cat > file`), scripts that read secrets from inside a file, and commands built at runtime are invisible to them. For a real boundary, use OS-level isolation: a container or VM, a scrubbed environment with no secrets in it, and least-privilege credentials. Use both.
+These hooks catch the mistakes a well-meaning agent actually makes: running `cat .env` to "check the config", force-pushing over a teammate, wiping a directory with a bad glob, declaring victory without running tests. They are **not** a sandbox. A determined process can get around any pattern list. Scripts that read secrets from inside a file and commands built at runtime are invisible to them, and only `verify-before-done` sees shell writes such as `cat > file` (by their effect on the files; `worktree-guard` and `stale-write-guard` watch only the edit tools). For a real boundary, use OS-level isolation: a container or VM, a scrubbed environment with no secrets in it, and least-privilege credentials. Use both.
 
 ## Install
 
@@ -72,7 +72,6 @@ Every switch is an environment variable. Put them in the `env` block of `.claude
 ```json
 {
   "env": {
-    "FOUNDRY_STALE_WRITE_ENFORCE": "1",
     "FOUNDRY_VERIFY_IGNORE": "*.json,*.lock",
     "FOUNDRY_SHIP_WORKPLAN": "WORKPLAN.md",
     "FOUNDRY_SHIP_MILESTONE": "M3.2"
@@ -87,8 +86,8 @@ Every switch is an environment variable. Put them in the `env` block of `.claude
 | `FOUNDRY_DESTRUCTIVE_ALLOW=rule1,rule2` | destructive-guard | allow named rules for the session (rule names appear in every deny message, for example `git-reset-hard`) |
 | `FOUNDRY_ALLOW_FORCE_PUSH=1` | destructive-guard | allow plain `--force` to non-protected branches. `main`/`master` stay blocked |
 | `FOUNDRY_PROTECTED_BRANCHES=develop,release` | destructive-guard | add protected branches (`main` and `master` are always protected) |
-| `FOUNDRY_SECRET_GUARD=0` | secret-guard | disable |
-| `FOUNDRY_VERIFY=0` | verify-before-done | disable |
+| `FOUNDRY_SECRET_GUARD=0` | secret-guard | disable. The foundry-builder-kit commit guard is a separate hook with its own switch, `FOUNDRY_COMMIT_SECRET_GUARD=0` |
+| `FOUNDRY_VERIFY=0` | verify-before-done | disable (also the human override when a push must go out unverified) |
 | `FOUNDRY_VERIFY_MAX_BLOCKS=2` | verify-before-done | Stop blocks allowed per session |
 | `FOUNDRY_VERIFY_TEST_PATTERN='^just test'` | verify-before-done | extra regex that counts as a test command |
 | `FOUNDRY_VERIFY_IRREVERSIBLE_PATTERN='^make release'` | verify-before-done | extra regex that needs `VERIFY_OK=1` |
@@ -96,10 +95,10 @@ Every switch is an environment variable. Put them in the `env` block of `.claude
 | `FOUNDRY_WORKTREE_GUARD=0` | worktree-guard | disable |
 | `FOUNDRY_WORKTREE_GUARD_WARN=1` | worktree-guard | warn instead of deny |
 | `FOUNDRY_STALE_WRITE_GUARD=0` | stale-write-guard | disable |
-| `FOUNDRY_STALE_WRITE_ENFORCE=1` | stale-write-guard | deny instead of warn |
+| `FOUNDRY_STALE_WRITE_ENFORCE=0` | stale-write-guard | warn instead of deny (the warning arrives after the write, so it protects nothing) |
 | `FOUNDRY_SHIP_WORKPLAN=path` | ship-stop | arm it (relative paths resolve from the project directory) |
 | `FOUNDRY_SHIP_MILESTONE=M3.2` | ship-stop | the milestone to finish (default: the first open one) |
-| `FOUNDRY_SHIP_MAX_BLOCKS=20` | ship-stop | continuation cap per milestone per session |
+| `FOUNDRY_SHIP_MAX_BLOCKS=8` | ship-stop | continuation cap per milestone per session (above 8, Claude Code's own cap may end the turn first; see ship-stop) |
 | `FOUNDRY_SHIP_STOP=0` | ship-stop | disable |
 | `FOUNDRY_GUARDRAILS_STATE_DIR`, `FOUNDRY_GUARDRAILS_LOG` | all | override where state and the log go |
 
@@ -119,7 +118,7 @@ git reset --hard would throw away uncommitted changes. Run git stash (recoverabl
 commit first. ...
 ```
 
-SQL rules apply only when the command calls a database client (`psql`, `mysql`, `sqlite3`, `duckdb`, `supabase db`, `prisma db execute`, `wrangler d1 execute`, ...). An `echo "DROP TABLE"` is not blocked.
+SQL rules apply only when the command calls a database client (`psql`, `mysql`, `sqlite3`, `duckdb`, `supabase db`, `prisma db execute`, `wrangler d1 execute`, ...). An `echo "DROP TABLE"` is not blocked. A `WHERE` that is always true (`WHERE 1`, `WHERE 1=1`, `WHERE true`, `WHERE 'x'='x'`, `WHERE id=id`, `WHERE id=2 OR 1=1`) counts as no `WHERE`.
 
 ### secret-guard
 
@@ -132,24 +131,31 @@ Anything a command prints, or a file Claude reads, goes into the conversation an
 | `cp .env.example .env`, `cat .env.example` | `env`, `printenv`, `printenv OPENAI_API_KEY` |
 | `docker run --env-file .env app` | `gh auth token`, `op read ...`, `security find-generic-password -w` |
 | `cat ~/.ssh/id_ed25519.pub` | `cat ~/.ssh/id_ed25519`, `git show HEAD:.env` |
+| key names only: `cut -d= -f1 .env`, `sed 's/=.*//' .env`, `awk -F= '{print $1}' .env`, `grep -o '^[A-Za-z_][A-Za-z0-9_]*' .env`, `env \| cut -d= -f1` (optionally piped into `sort`, `uniq`, `wc`, `head`, `tail`) | `cut -d= -f2 .env`, `awk -F= '{print $2}' .env`, names-only forms on a `.env` with a multi-line value or a long token in a comment (they would print part of it) |
 
 Secret files: `.env` and `.env.*` (but not `.env.example`, `.sample`, `.template`, `.dist`), `.envrc`, `*.pem`, `*.key`, `*.p12`, SSH private keys, `~/.aws/credentials`, `.netrc`, `.npmrc`, `.pypirc`, `.git-credentials`, docker and kube configs, the GitHub CLI hosts file, gcloud credentials, `credentials.json`, `service-account*.json`, `secrets.{json,yaml,toml}`.
 
 ### verify-before-done
 
-1. Every `Edit`/`Write` to a code file inside the project marks the session "dirty" and clears "tested". Docs (`*.md`, `*.mdx`, `*.txt`, `*.rst`, `*.adoc`, anything under `docs/`) and files outside the project do not count.
-2. A Bash test or typecheck marks it "tested": `pytest`, `python -m unittest`, `uv run pytest`, `npm test`, `npm run test:unit`, `pnpm typecheck`, `npx tsc --noEmit`, `vitest`, `jest`, `go test`, `cargo test`, `mvn test`, `gradle test`, `dotnet test`, `make test`, and more. The command has to start a stage, so `echo pytest` does not count.
-3. On Stop: if the session is dirty and untested, Claude gets one block with this reason, then continues:
+1. A code change marks the session "untested". The hook sees it two ways:
+   - **By effect, in a git repo.** At the session's first hook call it records every dirty or untracked source file with its content hash, plus `HEAD`. At Stop (and when `VERIFY_OK=1` is used) it compares again. A source file whose content changed, including in a commit made since, is a change, whatever tool made it: `Edit`, `sed -i`, `cat > f <<EOF`, `tee`, `cp`/`mv`, a Python script, `git apply`. Source means code extensions (`.py`, `.ts`, `.go`, `.html`, `.css`, `.sql`, ... and `Makefile`, `Dockerfile`). Docs (`*.md`, `*.txt`, `*.rst`, `docs/`), data and side-effect files a program writes (`.json`, `.db`, `.log`, lockfiles), dependency and build folders, files outside the project, and files that were already dirty and that the session did not touch do not count.
+   - **By tool.** Every `Edit`/`Write` to a non-doc file inside the project (in git, not once the file is back to what it was).
+   - Effects cannot tell who made a change: an edit you make in your editor, or another Claude session in the same checkout, counts too. Run parallel sessions in separate worktrees.
+   - **Outside git**, a command-pattern fallback: the targets of `>`/`>>`, `tee`, `sed -i`, `perl -i`, `cp`, `mv`, inline `python -`/`node -e` code that writes a file, `git apply` and `patch`. A script file that writes code (`python gen.py`) is not seen there.
+2. A Bash test or typecheck marks it "tested" and moves the baseline to the code that test saw: `pytest`, `python -m unittest`, `uv run pytest`, `npm test`, `npm run test:unit`, `pnpm typecheck`, `npx tsc --noEmit`, `vitest`, `jest`, `go test`, `cargo test`, `mvn test`, `gradle test`, `dotnet test`, `make test`, and more. The command has to start a stage, so `echo pytest` does not count.
+3. On Stop: if code changed since the last test run, Claude gets one "keep working" message with this reason, then continues:
 
    ```text
-   [foundry-guardrails/verify-before-done] You edited 2 code file(s) (app.py, api.py) and no test
-   or typecheck command has run since the last edit. Before finishing: run the project's tests or
+   [foundry-guardrails/verify-before-done] Code changed in 2 file(s) (app.py, api.py) and no test
+   or typecheck command has run since. Before finishing: run the project's tests or
    typecheck ..., and report the command and its result. If this change cannot be tested, say so
    plainly and explain why. (block 1 of at most 2 this session; FOUNDRY_VERIFY=0 disables)
    ```
 
-4. It cannot loop. When Claude stops again while `stop_hook_active` is true, the stop is allowed and an "unverified stop" line is logged. The session-wide cap (default 2) and Claude Code's own limit of 8 consecutive continuations back that up. While background tasks are still running (a test run in the background, for example), the stop is allowed and the session stays dirty.
-5. Irreversible commands are denied until the command carries `VERIFY_OK=1`, for example `VERIFY_OK=1 git push origin feature`. The token is logged and also counts as verification for the Stop check. It is an explicit claim that the agent verified the work, and it shows up in review. It is not a lock.
+   It is sent as Stop hook feedback (`hookSpecificOutput.additionalContext`, the documented non-error path), so Claude Code labels it "Stop hook feedback". Earlier versions of this plugin used `decision: "block"`, which Claude Code labels "Stop hook error occurred · ctrl+o to see". Either way it is the guard working, not a crash: press ctrl+o to read the reason, or check `guardrails.log`.
+4. It cannot loop. When Claude stops again while `stop_hook_active` is true after this hook's own message, the stop is allowed, an "unverified stop" line is logged, and the baseline resets so the next turn is not nagged about the same change. When a different Stop hook (ship-stop) is what kept Claude going, the check still runs, so code written during those continuations is still checked. The session-wide cap (default 2) and Claude Code's own cap back that up. While background tasks are still running (a test run in the background, for example), the stop is allowed and the change stays pending.
+5. Irreversible commands are denied until the command carries `VERIFY_OK=1`, for example `VERIFY_OK=1 git push origin feature`, and the token is refused while code changed since the last test run: "run the tests first; VERIFY_OK=1 is for after they pass". Tests in the same command count only when they gate the push: `pytest && VERIFY_OK=1 git push`. With `;`, `||`, `&` or a pipe in between (`pytest; VERIFY_OK=1 git push`, `npm test | tail && ...`) the push would run whatever the tests report, so it is refused. A command the hook denies never runs, so its tests do not count either. The token is logged. If the project has no tests, the agent is told to hand the command to you instead; `FOUNDRY_VERIFY=0` is the human override.
+6. When `destructive-guard` also denies a command (a force push to `main`, for example), this hook stays silent. Claude Code passes only one deny reason to the model when two hooks deny the same call, so the more important one is the one Claude gets.
 
 ### worktree-guard
 
@@ -157,7 +163,7 @@ When the session's working directory is inside a linked worktree (`git worktree 
 
 ### stale-write-guard
 
-A `Write` replaces the whole file with what Claude holds in context. If the tracked file has uncommitted changes (from you, a formatter, or another session), the hook warns Claude by default. The warning goes into Claude's context and the write still happens. With `FOUNDRY_STALE_WRITE_ENFORCE=1` it denies the write and tells Claude to read the file again and use `Edit`. New files, untracked files, files outside git, clean files and identical content always pass.
+A `Write` replaces the whole file with what Claude holds in context. The hook protects uncommitted changes that this session did not make (yours, a formatter's, another session's). After every `Edit`/`Write`/`MultiEdit` the session makes, it records the file's content hash. A `Write` is then allowed when the file is new, untracked, outside git, clean against `HEAD`, identical to the new content, or still exactly what this session last wrote. Otherwise it is **denied**, even after a Read, and Claude is told to use `Edit` for a targeted change, or to ask you to commit or stash first. With `FOUNDRY_STALE_WRITE_ENFORCE=0` it only warns, and the warning reaches Claude after the write has already replaced the file, so warn mode does not prevent the overwrite.
 
 ### ship-stop
 
@@ -173,7 +179,8 @@ Keeps Claude working until a milestone in your workplan is checked off. The work
 
 - `- [ ]` is open, `- [x]` is done, and `- [!]` or `- [-]` is blocked or deferred, with the reason on the same line. Only an open milestone blocks.
 - Indented lines under a milestone are quoted back to Claude as its acceptance notes.
-- After 20 continuations on one milestone (`FOUNDRY_SHIP_MAX_BLOCKS`), the stop is allowed and stderr says a human needs to look.
+- After 8 continuations on one milestone (`FOUNDRY_SHIP_MAX_BLOCKS`), the stop is allowed and you see "a human needs to look at it" (a `systemMessage`). The default is 8 because Claude Code ends the turn itself once Stop hooks have continued it 8 times in a row with no tool call in between: it overrides the 9th block and says "A hook blocked the turn from ending 9 consecutive times" (observed on Claude Code 2.1.308). `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` raises that limit. With a plugin cap above Claude Code's, the plugin's message may never show.
+- Each continuation is sent as Stop hook feedback, not an error (see verify-before-done, point 3). Older builds showed "Stop hook error occurred" here; that was the guard working.
 - A missing file, an unknown milestone id, or background tasks still running all allow the stop.
 
 Arm it for one run:
@@ -203,16 +210,17 @@ cd plugins/foundry-guardrails
 python3 -m unittest discover -s tests -v
 ```
 
-108 tests. They cover the allow and deny cases for each rule, the false positives listed above, malformed stdin, the disable switches, the Stop loop caps, and real temporary git repos and worktrees. The hooks were also checked end to end in a live `claude -p --plugin-dir` session: `cat .env` was denied, and a code edit with no tests got exactly one Stop block.
+145 tests. They cover the allow and deny cases for each rule, the false positives listed above, malformed stdin, the disable switches, the Stop loop caps, and real temporary git repos and worktrees. The hooks were also checked end to end in a live `claude -p --plugin-dir` session: `cat .env` was denied, and a code edit with no tests got exactly one Stop block.
 
 ## Known limitations
 
 - Pattern matching cannot see inside script files. `python leak.py` that prints `.env`, or `psql -f drop.sql`, is not caught.
 - `verify-before-done` sees that a test command *ran*, not that it *passed*. The Stop message asks Claude to report the result. Review it.
-- `VERIFY_OK=1` can be typed by the agent itself. It is an audit token, not an approval. If you need a human approval step, deny the command and have the human run it.
+- `VERIFY_OK=1` can be typed by the agent itself. It is refused while code is untested, but a test command that ran is not a test that passed. It is an audit token, not an approval. If you need a human approval step, deny the command and have the human run it.
 - `secret-guard` denies `sed -i` on `.env` (a reader command naming a secret file). Edit `.env` yourself.
 - The worktree guard only sees the `Edit`/`Write`/`NotebookEdit` tools, not shell writes.
-- `stale-write-guard` warns whenever a tracked file is dirty, including when the dirt is Claude's own earlier edit in the same session. That is why it warns by default.
+- `verify-before-done` outside git reads write targets from the command text only. Inside git, a `git pull` that changes code files mid-session also counts as a change.
+- `stale-write-guard` counts the session's own `sed`/heredoc changes as "not this session's", because it records only edit-tool writes. Claude is told to use `Edit` in that case.
 
 ## Credits
 

@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign in</title></head>
+<body><main><h1>Sign in</h1><p>A test-only sign-in page: the button sets the session cookie.</p>
+<button id="signin" type="button" style="min-height:44px;min-width:44px">Sign in as the QA user</button></main>
+<script>
+document.getElementById('signin').addEventListener('click', () => {
+  document.cookie = 'qa_session=ok; path=/';
+  location.href = '/private.html';
+});
+</script>
+</body></html>

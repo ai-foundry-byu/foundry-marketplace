@@ -8,7 +8,8 @@
   Run now: launchctl kickstart gui/$(id -u)/com.example.daily-digest
   Changed EnvironmentVariables? kickstart does NOT re-read them. bootout, then bootstrap again:
            launchctl bootout gui/$(id -u)/com.example.daily-digest
-  OFF condition: bootout and delete this file when the job is no longer needed.
+  Deadman: this job is not done without templates/launchd-deadman.plist loaded beside it.
+  OFF condition: bootout and delete this file (and the deadman plist) when the job is no longer needed.
   Secrets: keep tokens out of this file if you can (it is world-readable by default);
   have the prompt read them, or chmod 600 the plist.
 -->
@@ -18,7 +19,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/YOU/bin/run_headless.py</string>
+    <string>/Users/YOU/projects/your-app/scripts/run_headless.py</string>
     <string>--name</string><string>daily-digest</string>
     <string>--prompt-file</string><string>prompts/digest.md</string>
     <string>--workdir</string><string>/Users/YOU/projects/your-app</string>

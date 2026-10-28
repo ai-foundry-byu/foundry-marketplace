@@ -8,6 +8,22 @@ description: Improve a prompt, skill, agent config or model choice against an ev
 Hill-climbing is a loop: read failures, make ONE change to one surface, rerun the eval, keep
 the change only if the score really went up (or the cost really went down at equal score),
 otherwise revert. It needs a working suite first (see `new-eval`) and a stored baseline.
+The surface can be a prompt or code (rules, keyword lists, a function): the rules are the same.
+
+## You MUST
+
+1. **One change per round.** A round's diff changes ONE rule, instruction or function. If it
+   touches two behaviors, it is two rounds: run evalkit after each.
+2. **Keep a round table** and print it in the final report, even after one round:
+   `| round | change | score before | score after | kept/reverted |`.
+3. **Revert anything that does not beat the noise band** (the comparison reads `within noise`,
+   `regressed`, or lists a `newly_failing` case). Revert means the file goes back, now.
+4. **Never write rules copied from case text.** Before keeping a change, check that no word,
+   phrase or id in the diff was taken from a failing case's input unless it is a general term
+   the rule genuinely needs. Special-casing "money back" because one case says it is cheating.
+5. **Check a held-out split before declaring a win**: decide keep/revert on `val`, confirm on
+   `test` at the end. With too few cases for splits, say plainly that there was no held-out
+   check and that the gain may be overfit.
 
 Tool: `evalkit` (on PATH while the foundry-evals plugin is enabled), or
 `python3 "${CLAUDE_SKILL_DIR}/scripts/evalkit.py"`, which works with this skill on its own.
@@ -41,7 +57,8 @@ evalkit run evals/<suite> --split val   --reps 3 --label baseline
    failure BEHAVIOR in one sentence ("refuses nothing that is final sale", "states a 60-day
    window that does not exist").
 2. **Make ONE change** to ONE surface that targets that behavior. One change means you can
-   tell what caused the result.
+   tell what caused the result. Batching "negation fix + question rule + new keywords" into one
+   round makes the result unreadable and is not allowed.
 3. **Rerun val** with the same reps:
 
 ```bash
@@ -54,12 +71,14 @@ evalkit run evals/<suite> --split val --reps 3 --label r1-final-sale-rule
      extra text you now have to maintain.
    - `regressed`, or anything in `newly_failing` with a `regression` tag -> **revert**.
    - `NOT COMPARABLE` -> you changed cases or graders mid-climb. Undo that, or start a new baseline.
-5. Log the round in a table (round, change, val score, delta, cost, keep or revert).
+5. Add a row to the round table (round, change, score before, score after, cost, kept or
+   reverted) and only then start the next round.
 
 ## Rules for prompt changes
 
 - **Generalize the behavior, never paste case content.** Adding "TS-1006 is final sale" to
-  the prompt makes that case pass and teaches nothing. Write the rule the case exposed.
+  the prompt, or adding a failing case's exact words to a keyword list, makes that case pass
+  and teaches nothing. Write the rule the case exposed.
 - **Cut before you add.** Platitudes and restated defaults ("be helpful", "be accurate") cost
   tokens and rarely move a score. Deleting them is a valid round.
 - **Do not add thoroughness boosters** ("think step by step", "double-check everything",
@@ -96,6 +115,10 @@ val: <baseline>% -> <final>% ; test: <baseline>% -> <final>% (<reading>).
 Cost per run: <before> -> <after> (or "not reported").
 Kept changes: <one line each, with run ids>.
 Reverted: <one line each, with why>.
+
+| round | change | score before | score after | kept/reverted |
+|---|---|---|---|---|
+| r1 | <one change> | <x>% | <y>% (<reading>) | kept / reverted |
 ```
 
 If test did not move with val, you fit the val cases. Say so, and do not ship the climb.

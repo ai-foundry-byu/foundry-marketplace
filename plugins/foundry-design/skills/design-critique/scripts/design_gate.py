@@ -9,11 +9,13 @@ show up in, and fails the build when they get worse or break a hard limit:
   page.<p>@<vp>.dead_controls   disabled / aria-disabled buttons on screen   (C3)
   page.<p>@<vp>.entry_points    navigation controls (surface-count proxy)    (C5, C8)
   page.<p>@<vp>.primary_buttons visible primary-styled buttons               (one primary per screen)
-  page.<p>@<vp>.small_target_count  targets under the touch / pointer minimum (WCAG 2.5.8, Fitts)
+  page.<p>@<vp>.small_target_count  targets under 24 px, the WCAG 2.5.8 floor, on every viewport
+                                (inline links in a sentence, hidden and off-screen elements exempt;
+                                touch targets under 44 px are reported as an advisory note, not gated)
   page.<p>@<vp>.contrast_failure_count  text below 4.5:1 (3:1 for large)     (WCAG 1.4.3)
   page.<p>@<vp>.unlabeled_buttons  buttons with no accessible name           (WCAG 4.1.2)
   page.<p>@<vp>.inputs_under_16px  touch inputs under 16px (iOS zoom)
-  page.<p>@<vp>.h_scroll        horizontal page scroll                       (layout floor)
+  page.<p>@<vp>.h_scroll        horizontal page scroll: scrollWidth > clientWidth (layout floor)
   context.<name>.present        a must-always-be-visible element is present  (C4)
 
 Subcommands:
@@ -27,7 +29,10 @@ install chromium). `check` and `bless` are stdlib only, so any collector in any 
 can write the metrics JSON and reuse the comparison.
 
 Exit codes: 0 pass, 1 design regression or limit violation, 2 usage/config error,
-3 refused a non-local target (set "allow_remote": true only for a read-only target).
+3 refused a non-local target (set "allow_remote": true only for a read-only target),
+6 INCONCLUSIVE: nothing was measured because of the environment, not the design (browser
+not installed or crashed, navigation timed out, app not reachable). 6 is not a pass and not a
+regression: fix the environment and rerun.
 """
 from __future__ import annotations
 
@@ -77,6 +82,8 @@ MUST_HOLD = ("reached", "present")
 MUST_STAY_FALSE = ("h_scroll",)
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+EXIT_INCONCLUSIVE = 6
 
 # --------------------------------------------------------------------------- color math
 
@@ -180,7 +187,8 @@ def evaluate_page(raw: dict, limits: dict) -> tuple[dict, dict]:
       "touch": bool, "inner_width": int, "scroll_width": int,
       "dead_controls": int, "entry_points": int, "primary_buttons": int,
       "unlabeled_buttons": int, "inputs_font_px": [float, ...],
-      "targets": [{"w":..,"h":..,"label":..,"inline":bool}, ...],
+      "client_width": int  (layout viewport; preferred over inner_width for h_scroll),
+      "targets": [{"w":..,"h":..,"label":..,"inline":bool,"offscreen":bool}, ...],
       "text_samples": [{"fg":"rgb()", "bg_layers":["rgba()",...], "bg_image":bool,
                         "size":px, "weight":n, "text":".."}, ...],
       "page_bg": "rgb()"  (optional)
@@ -188,17 +196,23 @@ def evaluate_page(raw: dict, limits: dict) -> tuple[dict, dict]:
     """
     lim = {**DEFAULT_LIMITS, **(limits or {})}
     touch = bool(raw.get("touch"))
-    min_target = lim["min_touch_target"] if touch else lim["min_pointer_target"]
+    floor = lim["min_pointer_target"]       # WCAG 2.5.8: the hard fail, on every viewport
+    guidance = lim["min_touch_target"]      # 44 px touch guidance: advisory only
 
-    small = []
+    small, advisory = [], []
     for t in raw.get("targets", []):
         if t.get("inline"):
             continue  # WCAG 2.5.8 exempts targets inside a sentence
+        if t.get("offscreen"):
+            continue  # skip links parked off-screen until focused
         w, h = t.get("w", 0), t.get("h", 0)
         if w <= 1 or h <= 1:
-            continue  # visually hidden (skip links, sr-only)
-        if w < min_target or h < min_target:
-            small.append({"label": t.get("label", ""), "w": w, "h": h})
+            continue  # visually hidden (sr-only)
+        entry = {"label": t.get("label", ""), "w": w, "h": h}
+        if w < floor or h < floor:
+            small.append(entry)
+        elif touch and (w < guidance or h < guidance):
+            advisory.append(entry)
 
     failures, unknown = [], 0
     for s in raw.get("text_samples", []):
@@ -229,9 +243,12 @@ def evaluate_page(raw: dict, limits: dict) -> tuple[dict, dict]:
         "contrast_failure_count": len(failures),
         "unlabeled_buttons": int(raw.get("unlabeled_buttons", 0)),
         "inputs_under_16px": under16,
-        "h_scroll": int(raw.get("scroll_width", 0)) > int(raw.get("inner_width", 0)),
+        # clientWidth is the layout viewport. Mobile emulation widens window.innerWidth to the
+        # content width, so innerWidth would hide exactly the phone overflow this checks for.
+        "h_scroll": int(raw.get("scroll_width", 0)) > int(raw.get("client_width") or raw.get("inner_width", 0)),
     }
-    details = {"small_targets": small[:25], "contrast_failures": failures[:25], "contrast_unknown": unknown}
+    details = {"small_targets": small[:25], "contrast_failures": failures[:25], "contrast_unknown": unknown,
+               "touch_advisory_count": len(advisory), "touch_advisory": advisory[:25]}
     return metrics, details
 
 
@@ -306,6 +323,24 @@ class ConfigError(ValueError):
     pass
 
 
+class InfraError(RuntimeError):
+    """The environment, not the design, stopped the measurement (exit 6, INCONCLUSIVE)."""
+
+
+_INFRA_RE = re.compile(
+    r"has been closed|Target closed|Browser closed|browser has disconnected|Executable doesn't exist"
+    r"|net::ERR_|^\s*Page\.(goto|reload): .*Timeout", re.I)
+
+
+def is_infra_error(e: BaseException) -> bool:
+    """True for failures of the browser or the network, never of the page under test: a closed
+    browser, a missing browser binary, an unreachable server or a navigation timeout. A click or
+    goal-wait timeout is NOT infra: a missing button is a real design result."""
+    if isinstance(e, InfraError):
+        return True
+    return bool(_INFRA_RE.search(str(e)))
+
+
 def load_json(path: str) -> dict:
     try:
         with open(path, encoding="utf-8") as fh:
@@ -356,6 +391,8 @@ COLLECT_JS = r"""
   const vis = (el) => {
     const r = el.getBoundingClientRect();
     if (r.width <= 0 || r.height <= 0) return false;
+    // entirely off-screen above or left of the document (a parked skip link) is not on screen
+    if (r.bottom + window.scrollY <= 0 || r.right + window.scrollX <= 0) return false;
     const cs = getComputedStyle(el);
     return cs.visibility !== 'hidden' && cs.display !== 'none' && parseFloat(cs.opacity) > 0;
   };
@@ -364,7 +401,10 @@ COLLECT_JS = r"""
   for (const el of document.querySelectorAll(sel.interactive)) {
     if (!vis(el)) continue;
     const r = el.getBoundingClientRect();
-    const inline = el.tagName === 'A' && getComputedStyle(el).display === 'inline';
+    // WCAG 2.5.8 inline exception: an inline target that sits in a run of non-target text
+    const p = el.parentElement;
+    const inline = getComputedStyle(el).display === 'inline' && !!p
+      && [...p.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
     targets.push({w: Math.round(r.width), h: Math.round(r.height), inline,
       label: (el.getAttribute('aria-label') || el.textContent || el.getAttribute('name') || '').trim().slice(0, 40)});
   }
@@ -404,12 +444,16 @@ COLLECT_JS = r"""
                   size: parseFloat(cs.fontSize), weight: parseFloat(cs.fontWeight) || 400,
                   text: text.slice(0, 40)});
   }
-  return {touch, inner_width: window.innerWidth, scroll_width: de.scrollWidth,
+  return {touch, inner_width: window.innerWidth, client_width: de.clientWidth, scroll_width: de.scrollWidth,
           dead_controls: dead, entry_points: entry, primary_buttons: primary,
           unlabeled_buttons: unlabeled, inputs_font_px: inputs, targets, text_samples: samples,
           page_bg: 'rgb(255, 255, 255)'};
 }
 """
+
+
+def _first_line(e: BaseException) -> str:
+    return (str(e).strip().splitlines() or [type(e).__name__])[0][:300]
 
 
 def _run_step(page, step: dict, timeout_ms: int) -> None:
@@ -491,7 +535,9 @@ def measure(cfg: dict, screenshots_dir: str | None = None) -> tuple[dict, dict]:
                         page.locator(f["goal"]).first.wait_for(state="visible", timeout=timeout_ms)
                         reached = True
                     except Exception as e:  # a broken flow is a result, not a crash
-                        details[key] = {"error": str(e).splitlines()[0][:200]}
+                        if is_infra_error(e):  # ...unless the browser or network broke
+                            raise InfraError(f"{key}: {_first_line(e)}") from e
+                        details[key] = {"error": _first_line(e)}
                     metrics[f"{key}.clicks"] = count_clicks(f["steps"])
                     metrics[f"{key}.reached"] = reached
                 for c in cfg.get("context_checks", []):
@@ -508,7 +554,9 @@ def measure(cfg: dict, screenshots_dir: str | None = None) -> tuple[dict, dict]:
                         page.wait_for_timeout(settle_ms)
                         present = page.locator(c["selector"]).first.is_visible()
                     except Exception as e:
-                        details[key] = {"error": str(e).splitlines()[0][:200]}
+                        if is_infra_error(e):
+                            raise InfraError(f"{key}: {_first_line(e)}") from e
+                        details[key] = {"error": _first_line(e)}
                     metrics[f"{key}.present"] = present
                 ctx.close()
         finally:
@@ -529,6 +577,15 @@ def _print_result(fails: list[str], notes: list[str]) -> int:
         return 1
     print("\nDESIGN GATE: PASS (no regression, no limit violation)")
     return 0
+
+
+def _advisory_notes(details: dict) -> list[str]:
+    out = []
+    for key, d in sorted((details or {}).items()):
+        n = d.get("touch_advisory_count") if isinstance(d, dict) else None
+        if n:
+            out.append(f"advisory (not gated): {key} has {n} touch target(s) between 24 and 44 px")
+    return out
 
 
 def _write_json(path: str, data: dict) -> None:
@@ -566,8 +623,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if a.cmd == "check":
-            cur = load_json(a.current)
-            cur = cur.get("metrics", cur)
+            raw_cur = load_json(a.current)
+            cur = raw_cur.get("metrics", raw_cur)
             limits, base_path = {}, a.baseline
             if a.config:
                 cfg = load_json(a.config)
@@ -578,7 +635,8 @@ def main(argv: list[str] | None = None) -> int:
                 baseline = load_json(base_path)
             elif base_path:
                 print(f"note: no baseline at {base_path}; checking hard limits only. Run bless to create one.")
-            return _print_result(*gate(cur, baseline, limits))
+            fails, notes = gate(cur, baseline, limits)
+            return _print_result(fails, notes + _advisory_notes(raw_cur.get("details") or {}))
 
         cfg = validate_config(load_json(a.config))
         if not is_local_target(cfg["base_url"]) and not cfg.get("allow_remote"):
@@ -590,9 +648,19 @@ def main(argv: list[str] | None = None) -> int:
             metrics, details = measure(cfg, getattr(a, "screenshots", None) or cfg.get("screenshots_dir"))
         except ConfigError:
             raise
-        except Exception as e:  # app not running, setup step failed, browser missing
-            first = (str(e).strip().splitlines() or [type(e).__name__])[0]
-            raise ConfigError(f"measurement failed before any metric was taken: {first[:300]}. "
+        except Exception as e:
+            first = _first_line(e)
+            if is_infra_error(e):  # environment, not design: never report it as a regression
+                if "Executable doesn't exist" in first:
+                    hint = "Playwright's browser is not installed for this Python: run python3 -m playwright install chromium"
+                elif "net::ERR_" in first:
+                    hint = f"the app is not reachable: start it at {cfg['base_url']} and rerun"
+                else:
+                    hint = "the browser crashed or a page load timed out (often a loaded machine): rerun, or raise timeout_ms"
+                print(f"\nDESIGN GATE: INCONCLUSIVE (exit {EXIT_INCONCLUSIVE}, not a pass and not a design regression)\n"
+                      f"  {first}\n  fix: {hint}")
+                return EXIT_INCONCLUSIVE
+            raise ConfigError(f"measurement failed before any metric was taken: {first}. "
                               f"Is the app running at {cfg['base_url']}? Do setup_steps match the page?")
         payload = {"metrics": metrics, "details": details}
 
@@ -619,7 +687,7 @@ def main(argv: list[str] | None = None) -> int:
         for key, d in sorted(details.items()):
             if d.get("error"):
                 notes.append(f"{key}: {d['error']}")
-        return _print_result(fails, notes)
+        return _print_result(fails, notes + _advisory_notes(details))
     except ConfigError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2

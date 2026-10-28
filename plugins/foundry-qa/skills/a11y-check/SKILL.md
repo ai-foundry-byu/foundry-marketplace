@@ -1,6 +1,6 @@
 ---
 name: a11y-check
-description: Accessibility check for a web app against a WCAG 2.2 AA floor. Runs axe-core in a real browser via Playwright on desktop and mobile profiles (optionally after a journey reaches the right state), reports violations by impact with selectors and fixes, then walks the manual checks axe cannot do (keyboard, focus, zoom, reduced motion, screen reader names). Use when asked to "check accessibility", "a11y audit", "WCAG", "is this accessible", "screen reader", "keyboard navigation", "color contrast", or before shipping any new page or form.
+description: Accessibility check for a web app against a WCAG 2.2 AA floor. Runs axe-core in a real browser via Playwright on desktop and mobile profiles (optionally after a journey reaches the right state, or signed in), adds its own WCAG 2.2 target-size check (2.5.8), reports violations by impact with selectors and fixes, then walks the manual checks axe cannot do (keyboard, focus, zoom, reduced motion, screen reader names). Use when asked to "check accessibility", "a11y audit", "WCAG", "is this accessible", "screen reader", "keyboard navigation", "color contrast", or before shipping any new page or form.
 ---
 
 # a11y-check
@@ -13,9 +13,17 @@ Two halves, and you need both:
 
 A clean axe run is the floor, not the finish.
 
+## You MUST
+
+1. Audit the pages users actually reach, signed in when the app has sign-in (`--storage-state`
+   or a journey with `auth`). An audit of only the sign-in page is not an audit of the app.
+2. Confirm or dismiss every `small-targets` item the script lists.
+3. Report each manual checklist section as DONE, FAILED (with the criterion) or NOT DONE.
+
 ## Setup (once)
 
 ```bash
+python3 -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install playwright
 python3 -m playwright install chromium
 ```
@@ -33,7 +41,22 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/a11y_check.py" \
 
 # the state a journey reaches (a modal open, a form with errors, a signed-in page)
 python3 "${CLAUDE_SKILL_DIR}/scripts/a11y_check.py" --journey qa/done-journey.yaml --base-url http://localhost:3000
+
+# signed-in pages by URL
+python3 "${CLAUDE_SKILL_DIR}/scripts/a11y_check.py" --url http://localhost:3000/dashboard --storage-state .qa/auth.json
 ```
+
+Signed-in apps: `--storage-state FILE`, `--header "Name: value"`, `--auth FILE` (an `auth:`
+block), or the journey's own `auth`. Make the state once with
+`python3 "${CLAUDE_SKILL_DIR}/scripts/qa_session.py" login --url <sign-in url> --out .qa/auth.json`.
+Each page is audited after the network goes quiet plus `--settle-ms` (default 800), so lists
+that load late are audited too.
+
+**Target size (WCAG 2.2, 2.5.8).** axe can pass small icon buttons, so the script also measures
+every visible control. Under 24x24 CSS px with another target inside its 24 px circle: a
+blocking `target-size-2.5.8` violation (impact serious). Under 24x24 but spaced far enough:
+listed as `small-targets` (passes only through the spacing exception; confirm or dismiss each).
+Inline links inside a sentence are exempt.
 
 Options: `--fail-on critical|serious|moderate|minor` (default `serious`), `--tags` (default
 `wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa`; add `best-practice` for more), `--browser webkit`.
@@ -96,9 +119,10 @@ Do these on every new page or flow. Each line names the success criterion.
 
 ## 3. Report
 
-List blocking axe violations first (rule, impact, count, selector, fix), then manual checklist
-failures with the criterion number. Say plainly which manual checks you did and which you did
-not get to. Never call a page "accessible" because axe is clean.
+List blocking violations first (rule, impact, count, selector, fix), then each `small-targets`
+item as confirmed or dismissed, then the manual checklist: every section above as **DONE**,
+**FAILED** (with the criterion number) or **NOT DONE**. Never call a page "accessible" because
+axe is clean.
 
 ## Acceptance check
 

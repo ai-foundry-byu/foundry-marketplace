@@ -19,12 +19,16 @@ never change real data while doing it.
   `$SKILL_DIR/templates/personas/` (`TEMPLATE.md`, `first-time-mobile-user.md`,
   `power-user-on-desktop.md`), where `SKILL_DIR` is the persona-run skill folder (see Locate
   the skill below). Copy them into the project; do not edit the skill's copies.
-- **A stories file:** `qa/stories.json`. Example:
-  `$SKILL_DIR/templates/stories.example.json`. Each story has `id`, `title`,
-  `start` (path), optional `steps` and `assertions` (same format as a done-journey), optional
-  human `acceptance` criteria, optional `devices` to narrow the persona's list, and
-  `writes: true` if the story is about saving something.
-- **A base URL.**
+- **The project's stories.json**, as is: in a foundry-sdlc project `product/stories.json` (or
+  `stories.json` at the root). Never write a second stories file for the script. Each story has
+  `id`, `title`, `acceptance`, `surfaces`, `devices`, `status`; an optional `qa` block
+  (`start`, `steps`, `assertions`, `wait_for`, done-journey format) makes it scripted. Without a
+  `qa` block the script opens `surfaces[0]` and you judge the acceptance criteria from the
+  screenshot. Example: `$SKILL_DIR/templates/stories.example.json`.
+- **A base URL**, and for a signed-in app a session: `--storage-state .qa/auth.json` (made with
+  `python3 "$SKILL_DIR/scripts/qa_session.py" login --url <sign-in url> --out .qa/auth.json`),
+  `--header` or `--auth <journey file>`. Never write your own Playwright script to get past a
+  sign-in.
 
 If the persona file or stories are missing, offer to draft them from the PRD or the user's
 description, using the templates. Ask before inventing a persona's traits; a persona should
@@ -57,20 +61,23 @@ SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/persona-run"; [ -d "$SKILL_DIR" ] || SKI
 
 # see the story x device matrix first
 python3 "$SKILL_DIR/scripts/persona_run.py" --persona qa/personas/first-time-mobile-user.md \
-  --stories qa/stories.json --base-url <url> --plan
+  --stories product/stories.json --base-url <url> --plan
 
 # run it
 python3 "$SKILL_DIR/scripts/persona_run.py" --persona qa/personas/first-time-mobile-user.md \
-  --stories qa/stories.json --base-url <url>
+  --stories product/stories.json --base-url <url>
 
 # narrower, or the Safari engine
-...  --story S-2 --story S-4 --devices phone-390x844 --browser webkit
+...  --story US-02 --story US-04 --devices phone-390x844 --browser webkit
 ```
 
 Output goes to `.qa/persona/<persona-name>/`: `REPORT.md`, `results.json`, and a screenshot
-per story and device. Besides each story's own assertions, every run checks the persona's
-patience budget, horizontal overflow on phone and tablet, tap targets under the persona's
-minimum, and console errors.
+per story and device, taken after the page settles (network quiet, then `qa.wait_for`, then
+800 ms), so async lists are on screen. Besides each story's own assertions, every run checks
+the persona's patience budget (navigation start to content ready), horizontal overflow on
+phone and tablet, and console errors. Tap targets under the persona's minimum are a site-wide
+check: REPORT.md lists them once per device; report them once as warnings, not as a failure
+of every story.
 
 ## Safety: read-only is the default, and you keep it that way
 

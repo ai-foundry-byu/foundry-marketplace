@@ -14,8 +14,13 @@ cannot express:
 
 Usage:
   python3 validate_findings.py design/findings/2026-01-15-settings.json [--schema PATH]
+      [--verdicts design/findings/2026-01-15-settings.verdicts.md]
+
+--verdicts also fails unless every surface (each one in the verdicts file and each one a
+finding names) has a verdict line for all 8 questions: `C3 route:/settings - clean`.
 Exit 0 = valid, 1 = violations printed, 2 = unreadable input.
-Warnings (exit unaffected) flag addition language hidden in a diff_hint.
+Warnings (exit unaffected) flag addition language hidden in a diff_hint of a non-escalate
+finding. Quote UI labels you name ('Add member') so they are not read as proposals.
 """
 from __future__ import annotations
 
@@ -29,7 +34,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_SCHEMA = os.path.join(HERE, "..", "findings.schema.json")
 FLOW_SHAPE_QUESTIONS = {1, 5, 6, 8}
 MAX_NITS = 2
-ADDITION_RE = re.compile(r"\b(add|adding|introduce|create|new (button|screen|page|modal|step|panel|tab|setting))\b", re.I)
+# Language that PROPOSES a new element. Bare "create" or "new" is not enough: hints often name
+# the product's own controls ("Delete the 'Create a group' FAB").
+ADDITION_RE = re.compile(
+    r"\b(add|adding|introduce|introducing)\b"
+    r"|\b(create|build|make) (a |an )?new\b"
+    r"|\bnew (button|screen|page|modal|step|panel|tab|setting)s?\b", re.I)
+# Quoted spans are UI labels being named, not proposals: 'Add member', "New group", `Create`.
+QUOTED_RE = re.compile(r"(?<!\w)'[^']*'(?!\w)|\"[^\"]*\"|`[^`]*`|\u2018[^\u2019]*\u2019|\u201c[^\u201d]*\u201d")
 
 _TYPES = {
     "object": dict, "array": list, "string": str, "integer": int, "number": (int, float), "boolean": bool,
@@ -102,11 +114,32 @@ def check_rules(findings: list[dict]) -> tuple[list[str], list[str]]:
         if not grounded and verb != "escalate":
             errs.append(f"{where}: no grounding (constitution_refs, log_refs or heuristic); ungrounded taste must escalate")
         hint = (f.get("proposal") or {}).get("diff_hint", "")
-        if hint and ADDITION_RE.search(hint):
+        # escalate is how additions reach the builder, so it never warns
+        if hint and verb != "escalate" and ADDITION_RE.search(QUOTED_RE.sub(" ", hint)):
             warns.append(f"{where}: diff_hint reads like an addition ({hint[:60]!r}); the critic may only subtract")
     if nits > MAX_NITS:
         errs.append(f"run has {nits} nits; at most {MAX_NITS} allowed")
     return errs, warns
+
+
+VERDICT_RE = re.compile(r"^\s*[-*]?\s*C([1-8])\s+(\S+)\s+-\s+(clean|finding)\b", re.I | re.M)
+
+
+def check_verdicts(findings: list, text: str) -> list[str]:
+    """Every surface named in the findings, and every surface in the verdicts file, needs one
+    verdict line per question: `C3 route:/settings - clean` or `C3 route:/settings - finding df-7`."""
+    seen: dict[str, set[int]] = {}
+    for m in VERDICT_RE.finditer(text or ""):
+        seen.setdefault(m.group(2), set()).add(int(m.group(1)))
+    if not seen:
+        return ["verdicts file has no 'Cn <surface> - clean|finding' lines; a run with no verdicts is not a pass"]
+    surfaces = set(seen) | {f.get("surface") for f in findings if isinstance(f, dict) and f.get("surface")}
+    errs = []
+    for surface in sorted(surfaces):
+        missing = [f"C{q}" for q in range(1, 9) if q not in seen.get(surface, set())]
+        if missing:
+            errs.append(f"verdicts: {surface} has no verdict line for {', '.join(missing)}")
+    return errs
 
 
 def validate(data, schema: dict) -> tuple[list[str], list[str]]:
@@ -125,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("findings")
     ap.add_argument("--schema", default=DEFAULT_SCHEMA)
+    ap.add_argument("--verdicts", help="the run's verdict lines file; fail unless every surface has C1-C8")
     a = ap.parse_args(argv)
     try:
         with open(a.schema, encoding="utf-8") as fh:
@@ -135,6 +169,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
     errs, warns = validate(data, schema)
+    if a.verdicts:
+        try:
+            with open(a.verdicts, encoding="utf-8") as fh:
+                vtext = fh.read()
+        except OSError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        items = data.get("findings", []) if isinstance(data, dict) else data
+        errs += check_verdicts(items if isinstance(items, list) else [], vtext)
     for w in warns:
         print("warning:", w)
     if errs:

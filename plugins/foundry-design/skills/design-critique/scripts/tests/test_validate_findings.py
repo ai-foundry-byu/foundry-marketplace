@@ -94,6 +94,52 @@ class ValidateTests(unittest.TestCase):
         self.assertEqual(errs, [])
         self.assertTrue(warns)
 
+    def warns(self, verb, hint):
+        return v.validate([finding(proposal={"type": verb, "diff_hint": hint})], SCHEMA)[1]
+
+    def test_naming_a_product_control_does_not_warn(self):
+        # L4-critique2: hints that NAME the app's own "Create a group" button warned falsely.
+        for hint in ("Delete the 'Create a group' FAB; the header button does the same job",
+                     'Merge "Add member" into the group menu',
+                     "Relabel `New group` to the vocabulary word",
+                     "Remove the duplicate create-group entry point in the nav"):
+            self.assertEqual(self.warns("remove", hint), [], hint)
+
+    def test_proposed_addition_still_warns(self):
+        for hint in ("Merge the two lists, then add a filter chip row",
+                     "Introduce a summary panel above the list",
+                     "Create a new settings page for these toggles",
+                     "Merge the user's two lists and don't forget to add a chip, it's simple"):
+            self.assertTrue(self.warns("merge", hint), hint)
+
+    def test_escalate_never_warns(self):
+        # escalate hands additions to the builder on purpose
+        self.assertEqual(self.warns("escalate", "add an onboarding hint for first-time users"), [])
+
+    def test_verdicts_cover_every_question_per_surface(self):
+        full = "\n".join(f"C{q} route:/settings - " + ("finding df-1" if q == 6 else "clean") for q in range(1, 9))
+        self.assertEqual(v.check_verdicts([finding()], full), [])
+        partial = "\n".join(f"C{q} route:/settings - clean" for q in range(1, 6))
+        errs = v.check_verdicts([finding()], partial)
+        self.assertTrue(any("C6" in e and "route:/settings" in e for e in errs), errs)
+        # a surface with findings but no verdict lines at all
+        self.assertTrue(v.check_verdicts([finding(surface="route:/home")], full))
+        # an empty verdicts file is never a clean pass
+        self.assertTrue(v.check_verdicts([], ""))
+
+    def test_cli_verdicts_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fpath, vpath = os.path.join(tmp, "f.json"), os.path.join(tmp, "f.verdicts.md")
+            with open(fpath, "w") as fh:
+                json.dump([finding()], fh)
+            with open(vpath, "w") as fh:
+                fh.write("C1 route:/settings - clean\n")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(v.main([fpath, "--verdicts", vpath]), 1)
+                with open(vpath, "w") as fh:
+                    fh.write("\n".join(f"C{q} route:/settings - clean" for q in range(1, 9)))
+                self.assertEqual(v.main([fpath, "--verdicts", vpath]), 0)
+
     def test_cli_exit_codes(self):
         with tempfile.TemporaryDirectory() as tmp:
             good = os.path.join(tmp, "good.json")

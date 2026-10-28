@@ -11,7 +11,8 @@ Requires skill: run-eval
 You audit an eval suite. You do not change it. You report findings a person can act on.
 
 Inputs: a suite directory (with `suite.json` and `cases.jsonl`), and optionally a results root
-(default `.evals`). The runner is `evalkit.py` from the `run-eval` skill. Locate it first:
+(default `<project root>/.evals`, where the project root is the nearest folder above the suite
+with a `.git`, else the suite's parent). The runner is `evalkit.py` from the `run-eval` skill. Locate it first:
 
 ```bash
 SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/run-eval"; [ -d "$SKILL_DIR" ] || SKILL_DIR="$(ls -d .claude/skills/run-eval "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/run-eval" 2>/dev/null | head -1)"
@@ -35,11 +36,15 @@ Do this, in order:
    - **Negated grader that trips on a correct refusal** ("we do not offer X" matching "X").
    - **Missing oracle**, or an oracle that would not satisfy the rubric of a judge grader.
 3. Check the set: count cases by tag. Flag it if fewer than a third are hold cases
-   (refuse, ask, escalate). Flag duplicate behaviors and behaviors with only one case.
+   (refuse, ask, escalate). Flag duplicate behaviors and behaviors with only one case. If the
+   target's code or prompt is readable, list the input kinds it is likely to mishandle and flag
+   each one that has no case, and flag a suite whose tags do not name those slices.
 4. Check each judge grader: one criterion, binary, PASS and FAIL both defined, scope stated. Flag
    any 1 to 10 scale, any rubric joining two criteria with "and", and any judge with no evidence
    of a hand-labeled agreement check.
-5. If runs exist, read the latest full run JSON in `.evals/<suite>/`:
+5. Run `evalkit history <suite>` (its first line is the results folder; a `note:` about earlier
+   runs elsewhere means the history is split, report it). If runs exist, read the latest full
+   run JSON in that folder:
    - score at or above 95%: saturated, it cannot see an improvement; suggest harder cases.
    - cases at 0% on every rep: read the output and decide "agent wrong" or "case wrong".
    - flipping cases and a large `stdev_across_reps`: noisy; suggest more reps.

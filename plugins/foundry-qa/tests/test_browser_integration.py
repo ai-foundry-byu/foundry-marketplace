@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -36,7 +37,28 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _json(self, obj, status=200):
+        body = json.dumps(obj).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
+        if self.path.startswith("/api/slow"):
+            time.sleep(1.2)                       # data that lands well after the load event
+            self._json([{"name": "Stats 121"}, {"name": "Finance 201"}, {"name": "Strategy 401"}])
+            return
+        if self.path.startswith("/private.html"):
+            signed_in = ("qa_session=ok" in (self.headers.get("Cookie") or "")
+                         or self.headers.get("X-QA-Token") == "letmein")
+            if not signed_in:
+                self.send_response(302)
+                self.send_header("Location", "/login.html")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
         if self.path.startswith("/api/version"):
             body = json.dumps({"commit": SHA}).encode()
             self.send_response(200)
@@ -204,6 +226,126 @@ screenshot: save
         code, out = self.run_script("a11y_check.py", "--url", f"{self.base}/index.html",
                                     "--devices", "desktop-1440x900,phone-390x844")
         self.assertEqual(code, 0, out)
+
+    # ── regressions from the 2026-10 live test campaign ──────────────────────
+
+    def test_persona_run_reads_sdlc_stories_and_waits_for_async_data(self):
+        """L3-D1/L1-D13: the product stories.json is read as is. L3-D2: checks see data that loads late."""
+        persona = self.d / "p.md"
+        persona.write_text("---\nname: Mobile newcomer\ndevices: [phone-390x844]\npatience_seconds: 20\n"
+                           "min_tap_target_px: 44\n---\nNew here.\n")
+        stories = self.d / "stories.json"
+        stories.write_text(json.dumps({"stories": [
+            {"id": "US-01", "title": "see the groups", "acceptance": ["Every group is listed"],
+             "surfaces": ["/slow.html"], "devices": ["phone-390x844", "ios-sim"], "status": "BUILT",
+             "waits_on": [], "covers": ["R-01"], "notes": "", "evidence": [], "owner": "unknown-key"},
+            {"id": "US-02", "title": "save email", "acceptance": ["It saves"], "surfaces": ["/index.html"],
+             "devices": ["phone-390x844"], "status": "BUILT", "waits_on": [],
+             "qa": {"steps": [{"fill": {"selector": "#email", "value": "a@example.com"}}, {"click": "#save"}],
+                    "assertions": [{"text": {"selector": "#status", "contains": "Saved"}}]}},
+        ]}))
+        code, out = self.run_script("persona_run.py", "--persona", str(persona), "--stories", str(stories),
+                                    "--base-url", self.base, "--out", "out")
+        self.assertNotIn("CONFIG ERROR", out)
+        self.assertIn("WARNING", out)                         # unknown key and ios-sim: warned, not rejected
+        data = json.loads((self.d / "out/results.json").read_text())
+        res = {r["story"]: r for r in data["results"]}
+        us1 = res["US-01"]
+        self.assertGreaterEqual(us1["elapsed_s"], 1.2, "patience must be measured to content, not the load event")
+        self.assertEqual(us1["status"], "failed", us1)        # the TypeError fires only after the fetch
+        self.assertTrue(any("null" in e or "members" in e for e in us1["console_errors"]), us1["console_errors"])
+        self.assertEqual(res["US-02"]["status"], "passed", res["US-02"])   # qa block steps ran
+        self.assertIn("phone-390x844", data["site_findings"])  # 20x20 icon buttons, only present after load
+        self.assertTrue(any("Join" in x for x in data["site_findings"]["phone-390x844"]))
+        tap = [c for c in us1["checks"] if c["check"] == "tap-targets"][0]
+        self.assertEqual(tap["scope"], "site")
+        report = (self.d / "out/REPORT.md").read_text()
+        self.assertEqual(report.count("## Site-wide persona checks"), 1)
+
+    def test_explore_crawls_hash_routes_and_attributes_events(self):
+        """L3-D3: #/routes are pages. L3-D11: the back-check target's errors stay off the parent page."""
+        code, out = self.run_script("explore.py", "--url", f"{self.base}/spa.html", "--max-pages", "6")
+        data = json.loads((self.d / ".qa/explore/findings.json").read_text())
+        urls = [p["url"] for p in data["pages"]]
+        self.assertIn(f"{self.base}/spa.html#/a", urls, out)
+        self.assertIn(f"{self.base}/spa.html#/b", urls, out)
+        self.assertFalse(any("logout" in u for u in urls), urls)
+        self.assertFalse(any(u.endswith("#top") for u in urls), urls)
+        by_url = {p["url"]: p for p in data["pages"]}
+        kinds_b = {f["kind"] for f in by_url[f"{self.base}/spa.html#/b"]["findings"]}
+        self.assertIn("uncaught", kinds_b)
+        kinds_a = {f["kind"] for f in by_url[f"{self.base}/spa.html#/a"]["findings"]}
+        self.assertIn("img-no-alt", kinds_a)
+        start = by_url[f"{self.base}/spa.html"]
+        self.assertFalse([f for f in start["findings"] if "boom from fixture" in f["detail"]], start["findings"])
+        self.assertTrue(any("boom from fixture" in f["detail"] for f in by_url[f"{self.base}/broken.html"]["findings"]))
+        self.assertEqual(code, 1, out)
+
+    def test_signed_in_session_in_every_script(self):
+        """L1-D8: storage state, cookies, headers and login_steps reach every script."""
+        private = f"{self.base}/private.html"
+        journey = self.journey("name: account\nauth_wall: [login.html]\nsteps:\n  - goto: /private.html\n"
+                               "assertions:\n  - visible: \"#secret\"\n")
+        code, out = self.run_script("done_gate.py", "--journey", journey, "--base-url", self.base)
+        self.assertEqual(code, 6, out)                       # signed out: bounced to sign-in, not a pass
+        code, out = self.run_script("done_gate.py", "--journey", journey, "--base-url", self.base,
+                                    "--header", "X-QA-Token: letmein")
+        self.assertEqual(code, 0, out)
+        crumb = self.d / "crumb.yaml"
+        crumb.write_text("name: account\nauth_wall: [login.html]\nauth:\n  cookies:\n    - {name: qa_session, value: ok}\n"
+                         "steps:\n  - goto: /private.html\nassertions:\n  - visible: \"#secret\"\n")
+        code, out = self.run_script("done_gate.py", "--journey", str(crumb), "--base-url", self.base)
+        self.assertEqual(code, 0, out)
+        steps = self.d / "login.yaml"
+        steps.write_text("login_steps:\n  - goto: /login.html\n  - click: \"#signin\"\n")
+        code, out = self.run_script("qa_session.py", "login", "--url", self.base, "--steps", str(steps),
+                                    "--wait-for", "#secret", "--out", ".qa/auth.json")
+        self.assertEqual(code, 0, out)
+        self.assertTrue((self.d / ".qa/auth.json").exists())
+        code, out = self.run_script("done_gate.py", "--journey", journey, "--base-url", self.base,
+                                    "--storage-state", ".qa/auth.json")
+        self.assertEqual(code, 0, out)
+        last = json.loads((self.d / ".qa/done-gate/last.json").read_text())
+        self.assertEqual(last["exit"], 0)
+        login_j = self.d / "loginsteps.yaml"
+        login_j.write_text("auth:\n  login_steps:\n    - goto: /login.html\n    - click: \"#signin\"\n"
+                           "    - wait_for: \"#secret\"\nsteps:\n  - goto: /private.html\nassertions:\n"
+                           "  - visible: \"#secret\"\n")
+        code, out = self.run_script("done_gate.py", "--journey", str(login_j), "--base-url", self.base, "--read-only")
+        self.assertEqual(code, 0, out)
+        persona = self.d / "p.md"
+        persona.write_text("---\nname: Member\ndevices: [desktop-1440x900]\npatience_seconds: 20\n---\nSigned in.\n")
+        stories = self.d / "s.json"
+        stories.write_text(json.dumps([{"id": "US-01", "title": "account", "acceptance": ["shows the account"],
+                                        "surfaces": ["/private.html"], "devices": [], "status": "BUILT", "waits_on": [],
+                                        "qa": {"assertions": [{"url_contains": "private"}]}}]))
+        code, out = self.run_script("persona_run.py", "--persona", str(persona), "--stories", str(stories),
+                                    "--base-url", self.base, "--storage-state", ".qa/auth.json", "--out", "pout")
+        self.assertEqual(code, 0, out)
+        code, out = self.run_script("explore.py", "--url", private, "--max-pages", "1", "--back-checks", "0",
+                                    "--header", "X-QA-Token: letmein")
+        pages = json.loads((self.d / ".qa/explore/findings.json").read_text())["pages"]
+        self.assertEqual(pages[0]["title"], "Your account", out)
+        code, out = self.run_script("visual_baseline.py", "capture", "--url", private, "--name", "account",
+                                    "--auth", str(crumb))
+        self.assertEqual(code, 0, out)
+        code, out = self.run_script("a11y_check.py", "--journey", str(crumb), "--base-url", self.base)
+        if not (code == 6 and "could not load axe-core" in out):
+            self.assertIn("journey:account", out)
+            self.assertNotIn("INCONCLUSIVE journey", out)
+
+    def test_a11y_target_size(self):
+        """L3-D10: 20x20 icon buttons side by side fail WCAG 2.5.8 even when axe passes them."""
+        code, out = self.run_script("a11y_check.py", "--url", f"{self.base}/slow.html", "--devices", "phone-390x844")
+        if code == 6 and "could not load axe-core" in out:
+            self.skipTest("axe-core download unavailable (offline)")
+        self.assertIn("target-size-2.5.8", out)
+        self.assertEqual(code, 1, out)
+        report = json.loads((self.d / ".qa/a11y/report.json").read_text())
+        ts = report["pages"][0]["target_size"]
+        self.assertTrue(any("Join" in x["target"] for x in ts["failing"]), ts)
+        code, out = self.run_script("a11y_check.py", "--url", f"{self.base}/broken.html")
+        self.assertIn("small-targets", out)          # a lone 10x10 button: spaced, so manual review
 
 
 if __name__ == "__main__":

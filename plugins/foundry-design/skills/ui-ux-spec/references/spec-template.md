@@ -65,7 +65,7 @@ Animate transform and opacity only.
 Include empty states, errors (what happened + what to do), toasts, aria-live phrases, placeholders.
 
 ## 11. Acceptance checks (machine-checkable)
-- [ ] No horizontal page scroll at 375 and 390 (documentElement.scrollWidth == innerWidth).
+- [ ] No horizontal page scroll at 375 and 390 (documentElement.scrollWidth <= documentElement.clientWidth; innerWidth is widened by mobile emulation).
 - [ ] Touch primaries >= 44x44 (list selectors); all pointer targets >= 24x24.
 - [ ] Text contrast >= 4.5:1 (3:1 for large text) for every text/surface pair used.
 - [ ] Inputs >= 16 px font-size on touch.

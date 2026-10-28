@@ -6,7 +6,7 @@
 # (Contents/Resources/worker.sh), where the code signature seals it. The client
 # (bin/iphone-mirror) launches the helper app through LaunchServices once per
 # action, so the helper app is its own "responsible process" and the macOS TCC
-# grants (Accessibility + Screen Recording) attach to the helper app, not to your
+# grants (Accessibility, Screen Recording, Automation) attach to the helper app, not to your
 # terminal, your editor, or the Python process running Claude Code.
 #
 # Performs ONE action, writes the result to $STATE/{result,rc,done}, exits.

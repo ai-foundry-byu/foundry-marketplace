@@ -18,7 +18,7 @@ Source codes in the table below: S1, S2, ... from this table.
 |---|---|---|---|---|---|---|
 | R-01 | TODO: "exact words of the ask" | S1 | {{DATE}} | must | (filled in stage 2) | OPEN |
 
-Status: OPEN (no story yet), STORIED (at least one story covers it), LIVE (its stories are LIVE), DROPPED (a decision in DECISIONS.md dropped it; cite the D-id).
+Status: OPEN (no story yet), STORIED (at least one story covers it), LIVE (its stories are LIVE), DROPPED (a decision in DECISIONS.md dropped it; write `DROPPED (D-03)`).
 
 ## Already exists
 
@@ -42,4 +42,4 @@ Each question names who can answer it. When answered, record the answer in `DECI
 
 ## Coverage check (stage 2 exit)
 
-Every R-id is STORIED, LIVE or DROPPED. An OPEN row at the end of stage 2 is a missing story.
+Every R-id is STORIED, LIVE or `DROPPED (D-xx)`. An OPEN row at the end of stage 2 is a missing story; the stage detector names it.

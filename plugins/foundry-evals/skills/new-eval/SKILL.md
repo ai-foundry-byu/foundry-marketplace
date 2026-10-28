@@ -16,6 +16,18 @@ form works. `evalkit init` copies `${CLAUDE_SKILL_DIR}/templates/example-suite/`
 `${CLAUDE_SKILL_DIR}/scripts/judge_claude.py` (as `judge.py`). For CI, copy `evalkit.py` into the repo
 (one file, no dependencies) so the gate does not depend on the plugin being installed.
 
+## You MUST
+
+1. **Read the target's implementation first** (its code, prompt or config) whenever you can,
+   and list the input kinds it is likely to mishandle. Those failure modes drive the cases.
+2. **Write at least 2 cases per failure mode**, plus normal cases and hold cases. A suite
+   built only from easy, typical inputs scores high and tells you nothing.
+3. **Tag every case with its slice** (`negation`, `sarcasm`, `emoji`, `malformed-input`, ...),
+   so the report's "By tag" table shows a score per slice. A single mixed `edge` tag hides
+   which weakness is failing.
+4. **Pass `evalkit check`** (oracles pass, empty output fails, controls score low) before the
+   first real run.
+
 ## Step 0: decide what "good" means, in one paragraph
 
 Before writing a case, write down who owns the definition of good (usually the person who
@@ -23,6 +35,13 @@ owns the product, often you) and the 3 to 6 behaviors that matter. If you have r
 or transcripts, read 20 to 30 of them first and note the FIRST thing that went wrong in each.
 Those notes become your cases. Do not ask a model to "write 50 test questions": they come
 out repetitive and test what the model already does well.
+
+Then read the target itself and think about its MECHANISM: how does it decide, and what input
+would fool that? For example, a keyword-based sentiment classifier will likely miss negation
+("not good"), sarcasm or irony ("great, it broke again"), emoji and non-ASCII text, mixed
+sentiment, words outside its list, and malformed input (empty, wrong type, huge). A prompt-based
+agent has its own list: instructions it was never given, conflicting instructions, inputs that
+ask it to ignore its rules. Write each failure mode down as a slice name; Step 3 uses them.
 
 ## Step 1: scaffold
 
@@ -100,6 +119,13 @@ One JSON object per line in `cases.jsonl` (lines starting with `#` are comments)
 | `expected` | optional | reference notes shown to the judge |
 | `tags` | optional | e.g. `do`, `refuse`, `ask`, `escalate`, `regression`, `edge`; reported per tag |
 | `split` | optional | `train`, `val` or `test`; otherwise assigned by a stable hash |
+
+Cover the failure modes from Step 0: at least 2 cases per slice, each tagged with the slice
+name (`"tags": ["sarcasm"]`), so `evalkit run` reports a score per slice and a fix that helps
+one slice and breaks another shows up. To test an error contract ("bad input must exit 2 with
+a JSON error"), note that evalkit records a crashing target as an error, not a graded result.
+Wrap it: have the target runner catch the failure and return
+`{"exit_code": 2, "stderr": "..."}` for those cases, then grade those fields with `json_field`.
 
 Balance the set. For every behavior, write cases where the agent SHOULD act and cases where
 it should hold (refuse, ask for information, escalate). If fewer than a third of your cases
@@ -191,6 +217,7 @@ unattended: an agent that passes 75% of single tries passes all 3 of 3 only abou
 ## Acceptance checks before you call the suite done
 
 - [ ] `evalkit check` prints `check: ok` (oracles pass, empty output fails, both controls low)
+- [ ] every failure mode you found in the target has at least 2 cases, tagged with its slice
 - [ ] at least a third of cases are hold cases (refuse, ask, escalate)
 - [ ] every judge grader has one criterion, a binary rubric, and a hand-labeled agreement number
 - [ ] the target cannot send, post, pay or write anything real

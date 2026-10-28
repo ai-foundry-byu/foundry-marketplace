@@ -1,6 +1,6 @@
 ---
 name: visual-baseline
-description: Screenshot baselines and pixel-diff visual regression for web pages. Captures pages on desktop, phone and tablet profiles with animations frozen and dynamic regions masked, compares them to approved baselines with a percentage threshold and per-channel noise tolerance, writes red-highlight diff images, and requires a deliberate approve step to change a baseline. Use when asked to "check for visual regressions", "did the layout change", "screenshot diff", "pixel diff", "update the baselines", or after CSS, layout, design-token or shared-component changes.
+description: Screenshot baselines and pixel-diff visual regression for web pages. Captures pages on desktop, phone and tablet profiles with animations frozen and dynamic regions masked, compares them to approved baselines with a percentage threshold and per-channel noise tolerance, writes red-highlight diff images, and requires a deliberate approve step to change a baseline. Use when asked "did anything visually change", "did anything change visually since the screenshots", "compare to the screenshots", "compare against the baseline", "did my CSS change break the layout", "take screenshots before I restyle", "check for visual regressions", "did the layout change", "screenshot diff", "pixel diff", "update the baselines", or after CSS, layout, design-token or shared-component changes.
 ---
 
 # visual-baseline
@@ -9,12 +9,22 @@ Tests tell you the button exists. A visual baseline tells you the button did not
 turn white on white, or push the footer over the form. Use it on pages you did not mean to
 change, which is where layout regressions hide.
 
+## You MUST
+
+1. Use `visual_baseline.py` (below); do not hand-roll a screenshot diff or search the disk for a script.
+2. Look at every screenshot before you `approve` it.
+3. Describe a change from `current/` versus `baselines/`, never from the diff image: the diff's
+   solid red is a marker, not a page color.
+
 ## Setup (once)
 
 ```bash
+python3 -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install playwright
 python3 -m playwright install chromium
 ```
+
+The script is `${CLAUDE_SKILL_DIR}/scripts/visual_baseline.py`.
 
 PNG decoding and diffing use only the Python standard library. If Pillow is installed it is
 used for decoding (faster on very tall pages).
@@ -56,8 +66,12 @@ Exit codes: **0** every screenshot within threshold, **1** visual regression (ov
 or the image size changed), **2** config error, **6** inconclusive: a page has no baseline yet
 or failed to load. 6 is not a pass.
 
-**3. When something differs:** open `.qa/visual/diff/<name>-<device>.png`. Changed pixels are
-solid red over a faded copy of the baseline.
+**3. When something differs:** open `.qa/visual/diff/<name>-<device>.png` to see WHERE. Changed
+pixels are solid red over a faded copy of the baseline. **The red is the diff marker, not a
+color on the page.** To say WHAT changed, open `.qa/visual/current/<name>-<device>.png` next to
+`.qa/visual/baselines/<name>-<device>.png` and compare those two; never report colors from a
+diff image. `report.json` gives each result's `changed_box` `[left, top, right, bottom]` in
+image pixels, so you can look at the right region of both screenshots.
 - Unintended: fix the code, re-run `check`.
 - Intended (you meant to change that page): look at the new screenshot, then approve just that
   one: `visual_baseline.py approve --only pricing-phone-390x844.png`. Commit the new baseline
@@ -74,6 +88,7 @@ solid red over a faded copy of the baseline.
 | `--viewport-only` | full page | screenshot only the first screen |
 | `--settle-ms` | `300` | extra wait after load for late layout |
 | `--browser` | chromium | `webkit` for a Safari-engine baseline (keep separate baselines per engine) |
+| `--storage-state FILE` / `--header` / `--auth FILE` | none | signed-in pages (see the done-gate skill, "Signed-in apps"; `scripts/qa_session.py login` makes the state) |
 
 Captures run with reduced motion, CSS animations and transitions frozen, the caret hidden,
 and `scale="css"` so phone screenshots are not 3x the size.

@@ -87,11 +87,34 @@ class EvaluatePageTests(unittest.TestCase):
         self.assertFalse(m["h_scroll"])
         self.assertEqual(m["inputs_under_16px"], 0)
 
-    def test_touch_vs_pointer_minimum(self):
+    def test_fail_threshold_is_wcag_24_on_every_viewport(self):
+        # 32 px passes the WCAG 2.5.8 floor (24) on touch and pointer alike; on touch it is
+        # only an advisory miss of the 44 px guidance, never a hard failure.
         raw = raw_page(targets=[{"w": 32, "h": 32, "label": "x"}])
-        self.assertEqual(g.evaluate_page(raw, {})[0]["small_target_count"], 1)   # touch: 44
+        m, d = g.evaluate_page(raw, {})
+        self.assertEqual(m["small_target_count"], 0)
+        self.assertEqual(d["touch_advisory_count"], 1)
+        self.assertNotIn("touch_advisory_count", m)  # advisory: never gated or baselined
         raw["touch"] = False
-        self.assertEqual(g.evaluate_page(raw, {})[0]["small_target_count"], 0)   # pointer: 24
+        m, d = g.evaluate_page(raw, {})
+        self.assertEqual((m["small_target_count"], d["touch_advisory_count"]), (0, 0))
+        # 20 px fails the floor on both
+        raw = raw_page(targets=[{"w": 20, "h": 20, "label": "icon"}])
+        self.assertEqual(g.evaluate_page(raw, {})[0]["small_target_count"], 1)
+        raw["touch"] = False
+        self.assertEqual(g.evaluate_page(raw, {})[0]["small_target_count"], 1)
+
+    def test_offscreen_targets_exempt(self):
+        raw = raw_page(targets=[{"w": 20, "h": 20, "offscreen": True, "label": "Skip to content"}])
+        self.assertEqual(g.evaluate_page(raw, {})[0]["small_target_count"], 0)
+
+    def test_h_scroll_uses_layout_viewport(self):
+        # Mobile emulation widens window.innerWidth to the content width (939); the layout
+        # viewport (documentElement.clientWidth, 390) is what the page must fit.
+        m, _ = g.evaluate_page(raw_page(inner_width=939, client_width=390, scroll_width=939), {})
+        self.assertTrue(m["h_scroll"])
+        m, _ = g.evaluate_page(raw_page(inner_width=939, client_width=390, scroll_width=390), {})
+        self.assertFalse(m["h_scroll"])
 
     def test_inline_links_and_hidden_targets_exempt(self):
         raw = raw_page(targets=[{"w": 30, "h": 18, "inline": True}, {"w": 1, "h": 1}])
@@ -227,6 +250,52 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(g.main(["run", "--config", cfg]), 3)
 
 
+class InfraTests(unittest.TestCase):
+    def test_infra_classifier(self):
+        for msg in ("Page.goto: Timeout 8000ms exceeded.",
+                    "Page.goto: net::ERR_CONNECTION_REFUSED at http://127.0.0.1:1/",
+                    "Page.goto: Target page, context or browser has been closed",
+                    "BrowserType.launch: Executable doesn't exist at /x/chrome",
+                    "Browser closed."):
+            self.assertTrue(g.is_infra_error(Exception(msg)), msg)
+        for msg in ("Locator.click: Timeout 8000ms exceeded.",
+                    "Locator.wait_for: Timeout 8000ms exceeded.", "boom"):
+            self.assertFalse(g.is_infra_error(Exception(msg)), msg)
+
+    def _main_with_measure_error(self, exc):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = os.path.join(tmp, "c.json")
+            with open(cfg, "w") as fh:
+                json.dump({"base_url": "http://localhost:3000", "pages": [{"name": "h", "path": "/"}]}, fh)
+            real = g.measure
+            def boom(*a, **k):
+                raise exc
+            g.measure = boom
+            out, err = io.StringIO(), io.StringIO()
+            try:
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = g.main(["run", "--config", cfg])
+            finally:
+                g.measure = real
+            return code, out.getvalue() + err.getvalue()
+
+    def test_navigation_timeout_is_inconclusive_not_regression(self):
+        code, text = self._main_with_measure_error(Exception("Page.goto: Timeout 8000ms exceeded."))
+        self.assertEqual(code, g.EXIT_INCONCLUSIVE)
+        self.assertIn("INCONCLUSIVE", text)
+        self.assertNotIn("DESIGN GATE: FAIL", text)
+
+    def test_missing_browser_is_inconclusive_with_install_hint(self):
+        code, text = self._main_with_measure_error(
+            Exception("BrowserType.launch: Executable doesn't exist at /x/chrome-headless-shell"))
+        self.assertEqual(code, g.EXIT_INCONCLUSIVE)
+        self.assertIn("playwright install chromium", text)
+
+    def test_other_measure_error_stays_config_error(self):
+        code, _ = self._main_with_measure_error(Exception("Locator.fill: Timeout 8000ms exceeded."))
+        self.assertEqual(code, 2)
+
+
 class CliTests(unittest.TestCase):
     def test_check_and_bless_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -275,8 +344,69 @@ button{min-width:48px;min-height:48px;font-size:16px} .faint{color:#bbb}</style>
 <button disabled>Archive</button><p class=faint>low contrast note</p><p id=out></p></main></body></html>"""
 
 
+WIDE_TABLE = """<!doctype html><html><head><meta name=viewport content="width=device-width">
+<style>body{margin:0;font:16px sans-serif;background:#fff;color:#111}</style></head>
+<body><main><table style="white-space:nowrap;width:900px"><tr><td>Name</td><td>A very long
+unwrapped row of member names that forces a sideways scroll on a phone</td></tr></table></main></body></html>"""
+
+TARGETS = """<!doctype html><html><head><meta name=viewport content="width=device-width">
+<style>body{margin:0;font:16px sans-serif;background:#fff;color:#111}
+.skip{position:absolute;top:-60px;left:0;padding:4px}
+.icon{width:20px;height:20px;padding:0;border:0}</style></head>
+<body><a class=skip href="#main">Skip to content</a>
+<main id=main><p>Read the <a href="/terms">terms</a> before you join a group.</p>
+<button class=icon aria-label="Close">x</button>
+<button style="width:32px;height:32px;padding:0" aria-label="More">m</button></main></body></html>"""
+
+
 @unittest.skipUnless(_playwright_ready(), "Playwright + chromium not installed")
 class EndToEndTests(unittest.TestCase):
+    def _serve(self, html):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        with open(os.path.join(tmp.name, "index.html"), "w") as fh:
+            fh.write(html)
+        class Quiet(http.server.SimpleHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=tmp.name))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.shutdown)
+        return f"http://127.0.0.1:{srv.server_address[1]}"
+
+    PHONE = {"phone": {"width": 390, "height": 844, "touch": True}}
+
+    def _measure(self, cfg):
+        # A browser that crashes under machine load is INCONCLUSIVE, the same rule the gate
+        # applies: skip rather than report it as a pass or a failure.
+        try:
+            return g.measure(cfg)
+        except Exception as e:
+            if g.is_infra_error(e):
+                self.skipTest(f"inconclusive, browser infra: {str(e).splitlines()[0][:120]}")
+            raise
+
+    def test_h_scroll_fires_on_phone(self):
+        base = self._serve(WIDE_TABLE)
+        m, _ = self._measure(g.validate_config({"base_url": base, "viewports": self.PHONE,
+                                            "pages": [{"name": "p", "path": "/"}]}))
+        self.assertTrue(m["page.p@phone.h_scroll"])
+
+    def test_small_targets_skip_offscreen_and_inline(self):
+        base = self._serve(TARGETS)
+        m, d = self._measure(g.validate_config({"base_url": base, "viewports": self.PHONE,
+                                            "pages": [{"name": "p", "path": "/"}]}))
+        self.assertEqual(m["page.p@phone.small_target_count"], 1, d)  # only the 20 px icon
+        self.assertEqual(d["page.p@phone"]["small_targets"][0]["label"], "Close")
+        self.assertEqual(d["page.p@phone"]["touch_advisory_count"], 1, d)  # the 32 px button
+
+    def test_unreachable_flow_navigation_raises_not_unreached(self):
+        base = self._serve(WIDE_TABLE)
+        cfg = g.validate_config({"base_url": base, "viewports": self.PHONE, "timeout_ms": 3000, "flows": [
+            {"name": "f", "start": "/", "steps": [{"goto": "http://127.0.0.1:9/"}], "goal": "main"}]})
+        with self.assertRaises(g.InfraError):
+            g.measure(cfg)
+
     def test_measure_fixture(self):
         with tempfile.TemporaryDirectory() as tmp:
             with open(os.path.join(tmp, "index.html"), "w") as fh:
@@ -296,7 +426,7 @@ class EndToEndTests(unittest.TestCase):
                         {"fill": "#title", "value": "Buy milk"}, {"click": "#save"}], "goal": "text=Buy milk"}],
                     "context_checks": [{"name": "nav", "path": "/", "selector": "nav"}],
                 })
-                m, d = g.measure(cfg)
+                m, d = self._measure(cfg)
             finally:
                 srv.shutdown()
         self.assertEqual(m["page.home@phone.dead_controls"], 1)

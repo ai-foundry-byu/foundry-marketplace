@@ -12,7 +12,9 @@ Exit codes (the contract; scripts and agents branch on these):
   0  PASS          SHA verified (when configured) and every journey passed
   1  JOURNEY FAIL  a step or assertion failed on at least one device
   2  CONFIG ERROR  bad arguments, unreadable or invalid journey file,
-                   Playwright missing, git could not resolve the expected SHA
+                   Playwright or its browser build missing (the fix is
+                   printed), a missing storage-state file, base_url still
+                   holding PORT with no --port, git could not resolve the SHA
   3  SHA MISMATCH  the deployed build serves a different commit
   6  INCONCLUSIVE  nothing was proven: the target or SHA endpoint was
                    unreachable, no SHA could be read, the browser could not
@@ -26,8 +28,14 @@ Usage:
       --sha-url https://<your-app>.example.com/api/version --sha-json-key commit \\
       --expected-sha HEAD --read-only
   python3 done_gate.py --journey qa/done-journey.yaml --validate   # parse only, no browser
+  python3 done_gate.py --journey qa/done-journey.yaml --port 5173   # base_url: http://localhost:PORT
+  python3 done_gate.py --journey qa/done-journey.yaml --storage-state .qa/auth.json   # signed-in app
 
-Requires: Python 3.9+, and for browser runs:
+After every run (not --validate) the gate writes .qa/done-gate/last.json:
+  {sha, exit, journey, devices, stories, time, failures[]}   (sha = git HEAD when available)
+and .qa/done-gate/latest.json (the full result).
+
+Requires: Python 3.9+, and for browser runs (inside a venv):
   pip install playwright && python3 -m playwright install chromium
 The journey file is YAML (a built-in subset, see qa_yaml.py) or JSON. PyYAML is
 not needed.
@@ -50,6 +58,7 @@ from typing import Any, Callable, Optional
 from urllib.parse import urljoin, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import qa_session  # noqa: E402
 import qa_yaml  # noqa: E402
 
 EXIT_PASS = 0
@@ -96,7 +105,7 @@ def context_kwargs(device: str, browser: str) -> dict[str, Any]:
 
 STEP_KINDS = {"goto", "click", "fill", "wait_for", "press"}
 ASSERT_KINDS = {"visible", "text", "url_contains", "no_console_errors"}
-JOURNEY_KEYS = {"name", "base_url", "steps", "assertions", "screenshot", "devices",
+JOURNEY_KEYS = {"name", "base_url", "steps", "assertions", "screenshot", "devices", "stories", "auth",
                 "timeout_ms", "auth_wall", "ignore_console", "sha_check", "read_only"}
 SHA_CHECK_KEYS = {"url", "header", "json_key", "regex"}
 
@@ -119,6 +128,8 @@ class Journey:
     sha_check: Optional[dict] = None
     read_only: bool = False
     source: str = ""
+    stories: list[str] = field(default_factory=list)
+    auth: Optional[dict] = None
 
 
 def _slug(text: str) -> str:
@@ -210,6 +221,11 @@ def validate_journey(data: Any, source: str = "") -> Journey:
             raise ConfigError(f"{source}: '{key}' must be a list of strings")
         return v
     ignore = _strlist("ignore_console")
+    stories = _strlist("stories")
+    try:
+        auth = qa_session.parse_auth(data.get("auth"), f"{source} auth", validate_step)
+    except qa_session.SessionError as exc:
+        raise ConfigError(str(exc))
     for pat in ignore:
         try:
             re.compile(pat)
@@ -228,6 +244,8 @@ def validate_journey(data: Any, source: str = "") -> Journey:
         sha_check=sha_check,
         read_only=bool(data.get("read_only", False)),
         source=source,
+        stories=stories,
+        auth=auth,
     )
 
 
@@ -239,6 +257,25 @@ def load_journey(path: str) -> Journey:
     except (qa_yaml.YamlError, json.JSONDecodeError) as exc:
         raise ConfigError(f"{path}: {exc}")
     return validate_journey(data, source=path)
+
+
+_PORT = re.compile(r"\bPORT\b")
+
+
+def resolve_base(base_url: str, port: Any = None) -> str:
+    """Fill a PORT placeholder (base_url: http://localhost:PORT) from --port.
+
+    Deliberately not from the PORT environment variable: a stray PORT in a shell
+    would point the gate at whatever else is listening there.
+    """
+    if not base_url or not _PORT.search(base_url):
+        return base_url
+    if not port:
+        raise ConfigError(f"base_url {base_url!r} holds PORT: pass --port N (the port your app is on) "
+                          "or pass --base-url")
+    if not str(port).isdigit():
+        raise ConfigError(f"port {port!r} is not a number")
+    return _PORT.sub(str(port), base_url)
 
 
 def resolve_url(target: str, base_url: str) -> str:
@@ -551,21 +588,29 @@ def run_on_device(pw: Any, browser_name: str, journey: Journey, device: str, bas
     res = DeviceResult(journey=journey.name, device=device, status="inconclusive")
     t0 = time.monotonic()
     try:
-        browser = getattr(pw, browser_name).launch(headless=not headed)
+        browser = qa_session.launch(pw, browser_name, headless=not headed)
+    except qa_session.BrowserMissing:
+        raise
     except Exception as exc:  # noqa: BLE001
         res.reason = f"browser could not launch ({browser_name}): {str(exc).splitlines()[0]}"
         return res
     try:
-        context = browser.new_context(**context_kwargs(device, browser_name))
-        if read_only:
-            install_read_only_guard(context, res.blocked_writes)
+        context = browser.new_context(**context_kwargs(device, browser_name),
+                                      **qa_session.context_options(journey.auth))
         page = context.new_page()
-        page.on("console", lambda m: res.console_errors.append(m.text) if m.type == "error" else None)
-        page.on("pageerror", lambda e: res.console_errors.append(f"uncaught: {e}"))
-        page.on("requestfailed", lambda r: res.failed_requests.append(f"{r.method} {r.url} ({r.failure})"))
-        page.on("response", lambda r: res.failed_requests.append(f"HTTP {r.status} {r.request.method} {r.url}")
-                if r.status >= 500 else None)
         try:
+            try:  # sign in first: login_steps run before the read-only guard, so a sign-in POST goes through
+                qa_session.apply_auth(context, page, journey.auth, base_url,
+                                      lambda pg, st: run_steps(pg, st, base_url, journey.timeout_ms, [], PWTimeout))
+            except StepFailure as sf:
+                raise StepFailure("inconclusive", f"sign-in (auth.login_steps) failed: {sf.message}") from None
+            if read_only:
+                install_read_only_guard(context, res.blocked_writes)
+            page.on("console", lambda m: res.console_errors.append(m.text) if m.type == "error" else None)
+            page.on("pageerror", lambda e: res.console_errors.append(f"uncaught: {e}"))
+            page.on("requestfailed", lambda r: res.failed_requests.append(f"{r.method} {r.url} ({r.failure})"))
+            page.on("response", lambda r: res.failed_requests.append(f"HTTP {r.status} {r.request.method} {r.url}")
+                    if r.status >= 500 else None)
             run_steps(page, journey.steps, base_url, journey.timeout_ms, journey.auth_wall, PWTimeout)
             res.assertions = check_assertions(page, journey.assertions, journey.timeout_ms,
                                               res.console_errors, journey.ignore_console)
@@ -574,8 +619,6 @@ def run_on_device(pw: Any, browser_name: str, journey: Journey, device: str, bas
             res.reason = failed[0]["detail"] if failed else "all assertions passed"
         except StepFailure as sf:
             res.status = "fail" if sf.status == "fail" else "inconclusive"
-            if sf.status == "config":
-                res.status = "inconclusive"
             res.reason, res.failed_step = sf.message, sf.step
         res.final_url = page.url
         shot = out_dir / f"{journey.screenshot}-{device}.png"
@@ -614,11 +657,67 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sha-retries", type=int, default=3)
     p.add_argument("--sha-wait", type=float, default=10.0, help="seconds between SHA retries")
     p.add_argument("--validate", action="store_true", help="parse and validate only; no network, no browser")
+    p.add_argument("--port", default=None, help="fills PORT in base_url, for example --port 5173")
+    qa_session.add_auth_args(p)
     return p
+
+
+def git_head() -> Optional[str]:
+    """The commit under test when run from a git checkout, else None. Never raises."""
+    try:
+        out = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    sha = out.stdout.strip()
+    return sha if out.returncode == 0 and _SHA_LIKE.match(sha) else None
+
+
+def last_record(code: int, journeys: list[Journey], sha: Optional[str], failures: list[dict],
+                when: Optional[datetime] = None, sha_result: Optional[ShaResult] = None) -> dict:
+    """The small, stable summary other tools read (.qa/done-gate/last.json). Pure."""
+    sources = [j.source for j in journeys]
+    devices = list(dict.fromkeys(d for j in journeys for d in j.devices))
+    stories = list(dict.fromkeys(s for j in journeys for s in j.stories))
+    return {
+        "sha": sha,
+        "exit": code,
+        "verdict": EXIT_LABELS[code],
+        "journey": ", ".join(sources),
+        "journeys": sources,
+        "devices": devices,
+        "stories": stories,
+        "time": (when or datetime.now(timezone.utc)).isoformat(timespec="seconds"),
+        "deployed_sha": (sha_result.found or None) if sha_result else None,
+        "failures": failures,
+    }
+
+
+def failures_from(results: list[DeviceResult], sha_result: Optional[ShaResult]) -> list[dict]:
+    out = []
+    if sha_result is not None and sha_result.status in ("mismatch", "unreadable"):
+        out.append({"journey": "", "device": "", "status": f"sha-{sha_result.status}", "reason": sha_result.detail})
+    out += [{"journey": r.journey, "device": r.device, "status": r.status, "reason": r.reason}
+            for r in results if r.status != "pass"]
+    return out
+
+
+def write_last(out_root: str, record: dict) -> None:
+    root = Path(out_root)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "last.json").write_text(json.dumps(record, indent=2))
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    journeys: list[Journey] = []
+
+    def config_error(msg: str) -> int:
+        print(f"DONE-GATE: CONFIG ERROR: {msg}", file=sys.stderr)
+        if not args.validate:
+            write_last(args.out, last_record(EXIT_CONFIG, journeys, git_head(),
+                                             [{"journey": "", "device": "", "status": "config", "reason": msg}]))
+        return EXIT_CONFIG
+
     try:
         journeys = [load_journey(j) for j in args.journey]
         if args.devices:
@@ -628,18 +727,29 @@ def main(argv: list[str] | None = None) -> int:
                 raise ConfigError(f"unknown device(s) {bad}; known: {sorted(DEVICE_PROFILES)}")
             for j in journeys:
                 j.devices = devs
+        cli_auth = qa_session.auth_from_args(args, validate_step)
         for j in journeys:
+            j.auth = qa_session.merge_auth(j.auth, cli_auth)
             base = args.base_url or j.base_url
             for s in j.steps:
                 if "goto" in s:
                     resolve_url(s["goto"], base)
-    except ConfigError as exc:
-        print(f"DONE-GATE: CONFIG ERROR: {exc}", file=sys.stderr)
-        return EXIT_CONFIG
+        if not args.validate:
+            for j in journeys:
+                base = resolve_base(args.base_url or j.base_url, args.port)
+                if "TODO" in base or "<your-app>" in base:
+                    raise ConfigError(f"{j.source}: base_url {base!r} is still the template placeholder; "
+                                      "set it, or pass --base-url")
+                qa_session.check_ready(j.auth)
+    except (ConfigError, qa_session.SessionError) as exc:
+        return config_error(str(exc))
 
     if args.validate:
         for j in journeys:
-            print(f"ok  {j.source}: '{j.name}' {len(j.steps)} steps, {len(j.assertions)} assertions, devices {j.devices}")
+            extra = f", stories {j.stories}" if j.stories else ""
+            extra += f", auth {sorted(j.auth)}" if j.auth else ""
+            print(f"ok  {j.source}: '{j.name}' {len(j.steps)} steps, {len(j.assertions)} assertions, "
+                  f"devices {j.devices}{extra}")
         return EXIT_PASS
 
     # SHA config: CLI wins, else the first journey that declares sha_check.
@@ -663,8 +773,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             expected = resolve_expected_sha(args.expected_sha)
         except ConfigError as exc:
-            print(f"DONE-GATE: CONFIG ERROR: {exc}", file=sys.stderr)
-            return EXIT_CONFIG
+            return config_error(str(exc))
         sha_result = check_sha(expected, sha_cfg["url"], sha_cfg["header"], sha_cfg["json_key"],
                                sha_cfg["regex"], retries=args.sha_retries, wait_s=args.sha_wait)
         print(f"sha: {sha_result.status} ({sha_result.detail})")
@@ -672,32 +781,34 @@ def main(argv: list[str] | None = None) -> int:
     results: list[DeviceResult] = []
     if sha_result is None or sha_result.status == "match":
         try:
-            from playwright.sync_api import sync_playwright
-        except ImportError:
-            print("DONE-GATE: CONFIG ERROR: Playwright is not installed. Run:\n"
-                  "  pip install playwright && python3 -m playwright install chromium", file=sys.stderr)
-            return EXIT_CONFIG
-        with sync_playwright() as pw:
-            for j in journeys:
-                base = args.base_url or j.base_url
-                for device in j.devices:
-                    r = run_on_device(pw, args.browser, j, device, base, out_dir,
-                                      read_only=args.read_only or j.read_only, headed=args.headed)
-                    results.append(r)
-                    print(f"{r.status.upper():13} {j.name} @ {device}: {r.reason}"
-                          + (f"  [{len(r.blocked_writes)} write(s) blocked]" if r.blocked_writes else ""))
+            sync_playwright = qa_session.import_sync_playwright(args.browser)
+            with sync_playwright() as pw:
+                for j in journeys:
+                    base = resolve_base(args.base_url or j.base_url, args.port)
+                    for device in j.devices:
+                        r = run_on_device(pw, args.browser, j, device, base, out_dir,
+                                          read_only=args.read_only or j.read_only, headed=args.headed)
+                        results.append(r)
+                        print(f"{r.status.upper():13} {j.name} @ {device}: {r.reason}"
+                              + (f"  [{len(r.blocked_writes)} write(s) blocked]" if r.blocked_writes else ""))
+        except qa_session.BrowserMissing as exc:
+            return config_error(str(exc))
 
     code = overall_exit(sha_result, results)
+    head = git_head()
     summary = {
         "exit_code": code,
         "verdict": EXIT_LABELS[code],
         "run_id": run_id,
         "browser": args.browser,
+        "git_head": head,
+        "stories": list(dict.fromkeys(s for j in journeys for s in j.stories)),
         "sha": asdict(sha_result) if sha_result else None,
         "results": [asdict(r) for r in results],
     }
     (out_dir / "result.json").write_text(json.dumps(summary, indent=2))
     (Path(args.out) / "latest.json").write_text(json.dumps(summary, indent=2))
+    write_last(args.out, last_record(code, journeys, head, failures_from(results, sha_result), sha_result=sha_result))
     print(f"DONE-GATE: {EXIT_LABELS[code]} (exit {code})  evidence: {out_dir}")
     if code == EXIT_INCONCLUSIVE:
         print("Nothing was proven. Do not report done. Fix the reason above and re-run.")

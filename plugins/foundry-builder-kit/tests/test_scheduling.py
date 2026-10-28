@@ -1,6 +1,7 @@
 """Tests for deadman.py and run_headless.py (a fake `claude` stands in for the real CLI)."""
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -67,6 +68,52 @@ class DeadmanTests(unittest.TestCase):
         rc = deadman.main(["check", "--file", self.beat, "--max-age", "1h", "--alert-cmd", "exit 7"])
         self.assertEqual(rc, 3)  # stale AND nobody was told
         self.assertEqual(deadman.main(["check", "--file", self.beat, "--max-age", "5d"]), 0)
+
+    def run_cli(self, *args):
+        import subprocess
+        return subprocess.run([sys.executable, os.path.join(SCRIPTS, "deadman.py"), *args],
+                              capture_output=True, text=True)
+
+    def test_no_alert_channel_is_loud_and_leaves_an_alert_file(self):
+        # L6-D8: stale/missing with no channel (or an EMPTY --webhook from an unset env var under cron)
+        # must not look like a delivered alert.
+        missing = os.path.join(self.dir, "jobs", "digest.heartbeat.json")
+        for extra in ([], ["--webhook", ""], ["--webhook", "  "]):
+            res = self.run_cli("check", "--name", "digest", "--file", missing, "--max-age", "1h", *extra)
+            self.assertEqual(res.returncode, 3, (extra, res.stdout, res.stderr))
+            self.assertIn("NO ALERT CHANNEL", res.stderr)
+            alert = os.path.join(self.dir, "jobs", "digest.DEADMAN-ALERT.txt")
+            self.assertTrue(os.path.exists(alert), extra)
+            with open(alert) as fh:
+                self.assertIn("heartbeat missing", fh.read())
+
+    def test_alert_file_written_on_stale_and_removed_when_fresh(self):
+        deadman.write_beat(self.beat, when=datetime.now(timezone.utc) - timedelta(days=2))
+        alert = os.path.join(os.path.dirname(self.beat), "job.DEADMAN-ALERT.txt")
+        rc = deadman.main(["check", "--file", self.beat, "--max-age", "1h", "--alert-cmd", "true"])
+        self.assertEqual(rc, 1)
+        self.assertTrue(os.path.exists(alert))
+        deadman.write_beat(self.beat)
+        self.assertEqual(deadman.main(["check", "--file", self.beat, "--max-age", "1h"]), 0)
+        self.assertFalse(os.path.exists(alert))
+
+    def test_webhook_file_is_read_and_empty_file_counts_as_no_channel(self):
+        url_file = os.path.join(self.dir, "webhook.url")
+        with open(url_file, "w") as fh:
+            fh.write("\n")
+        missing = os.path.join(self.dir, "none.heartbeat.json")
+        self.assertEqual(deadman.main(["check", "--file", missing, "--max-age", "1h", "--webhook-file", url_file]), 3)
+        with open(url_file, "w") as fh:
+            fh.write("https://hooks.example.invalid/abc\n")
+        sent = []
+        orig = deadman.send_webhook
+        deadman.send_webhook = lambda url, msg, timeout=15.0: sent.append(url) or True
+        try:
+            rc = deadman.main(["check", "--file", missing, "--max-age", "1h", "--webhook-file", url_file])
+        finally:
+            deadman.send_webhook = orig
+        self.assertEqual(rc, 2)
+        self.assertEqual(sent, ["https://hooks.example.invalid/abc"])
 
 
 FAKE_CLAUDE = """#!{py}
@@ -145,6 +192,35 @@ class RunHeadlessTests(unittest.TestCase):
     def test_judge_list_output(self):
         events = [{"type": "system"}, {"type": "result", "is_error": False, "result": "done"}]
         self.assertEqual(run_headless.judge(0, json.dumps(events)), (True, "done"))
+
+
+class SchedulerTemplateTests(unittest.TestCase):
+    """L6-D13: every scheduler template ships the deadman too, with a channel that works under the scheduler."""
+    TEMPLATES = os.path.join(os.path.dirname(SCRIPTS), "templates")
+
+    def read(self, name):
+        with open(os.path.join(self.TEMPLATES, name)) as fh:
+            return fh.read()
+
+    def test_launchd_deadman_plist(self):
+        import plistlib
+        with open(os.path.join(self.TEMPLATES, "launchd-deadman.plist"), "rb") as fh:
+            plist = plistlib.load(fh)
+        args = plist["ProgramArguments"]
+        self.assertTrue(args[1].endswith("deadman.py"))
+        self.assertIn("check", args)
+        self.assertIn("--webhook-file", args)
+        self.assertIn("StartCalendarInterval", plist)
+        self.assertNotIn("$", " ".join(args))  # launchd expands nothing
+
+    def test_no_template_relies_on_shell_env_for_the_alert(self):
+        for name in ("crontab.txt", "launchd.plist", "launchd-deadman.plist", "task-scheduler.ps1"):
+            self.assertIsNone(re.search(r'--webhook\s+"?\$\{?ALERT_WEBHOOK_URL', self.read(name)), name)
+        cron = [ln for ln in self.read("crontab.txt").splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+        self.assertEqual(len(cron), 2)
+        self.assertIn("deadman.py\" check", cron[1])
+        self.assertIn("--webhook-file", cron[1])
+        self.assertIn("daily-digest-deadman", self.read("task-scheduler.ps1"))
 
 
 if __name__ == "__main__":

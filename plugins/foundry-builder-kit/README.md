@@ -35,20 +35,20 @@ Not using plugins? See "Install one item on its own" below. Every script runs on
 | Item | Type | What it does | SDLC stage | Maturity |
 |---|---|---|---|---|
 | `add-auth` | skill | Audits the project, recommends an auth provider with the trade-off, implements sign-in, verifies with a build and a protected-route check | build | proven |
-| `scale-10k` | skill | Launch-readiness audit (auth cost, DB pooling, sessions, rate limits, email, compliance, monitoring) with a scorecard, cost table and ordered fixes | ship | proven |
+| `scale-10k` | skill | Launch-readiness audit (the app's own state and load, auth cost, DB pooling, sessions, rate limits, email, compliance, monitoring) with a scorecard, cost table and ordered fixes | ship | proven |
 | `secrets-hygiene` | skill | `.env` patterns, gitignore, gitleaks pre-commit and CI, and the probe-first rotation flow for a leaked key | build / operate | proven (rotation flow); new (templates) |
 | `cheap-llm-routing` | skill | Route schema-pinned extraction or classification to a free or cheap model, with a privacy bar and a paid fallback | build | proven |
 | `scheduled-agents` | skill | Headless `claude -p` on cron, launchd, Task Scheduler or GitHub Actions, with locks, timeouts, success-only heartbeats and a deadman | operate | proven (cron/launchd, deadman); new (Windows, GitHub Actions) |
-| `tmux-agents` | skill | Drive REPLs, dev servers, installers and parallel coding agents through tmux on a private socket | build / test | proven |
-| commit secret guard | hook | `skills/secrets-hygiene/scripts/commit_secret_guard.py`, wired in `hooks/hooks.json`. Blocks a `git commit` the agent runs when the staged change contains a secret (gitleaks if installed, stdlib scanner otherwise) | build | new |
-| `skills/secrets-hygiene/scripts/scan_secrets.py` | script | Stdlib secret scanner: `--staged`, `--worktree`, `--all`, or paths; redacted output | build | new |
+| `tmux-agents` | skill | Drive REPLs, dev servers, installers and parallel coding agents through tmux on a private, per-project socket | build / test | proven |
+| commit secret guard | hook | `skills/secrets-hygiene/scripts/commit_secret_guard.py`, wired in `hooks/hooks.json`. Blocks a `git commit` the agent runs when the commit would contain a secret: the index plus whatever the same command stages first (`git add -A && git commit`, `git commit -am`) | build | new |
+| `skills/secrets-hygiene/scripts/scan_secrets.py` | script | Stdlib secret scanner: `--staged`, `--worktree`, `--all` (tracked plus untracked, not gitignored), or paths; redacted output | build | new |
 | `skills/secrets-hygiene/scripts/probe_key.py` | script | Asks a provider whether a key still authenticates: LIVE, DEAD or ERR (ERR is never an all-clear) | operate | new |
-| `skills/cheap-llm-routing/scripts/structured_router.py` | script | Forced-tool-call structured extraction across a privacy-aware provider chain with schema validation | build | new |
+| `skills/cheap-llm-routing/scripts/structured_router.py` | script | Forced-tool-call structured extraction across a privacy-aware provider chain with schema validation; `--mock-response` runs the whole path offline with no keys | build | new |
 | `skills/scheduled-agents/scripts/run_headless.py` | script | Runs one `claude -p` job with a lock, timeout, saved transcript and success-only heartbeat | operate | new |
-| `skills/scheduled-agents/scripts/deadman.py` | script | Writes heartbeats and alerts (webhook or command) when the last success is too old; reports failed alert delivery | operate | new |
-| `skills/tmux-agents/scripts/tmux_agent.py` | script | start, send, keys, read, wait, run, ls, kill on a private tmux socket | build / test | new |
-| `skills/secrets-hygiene/templates/` | template | `.gitignore` block, `.env.example`, `.pre-commit-config.yaml`, plain git hook, GitHub Actions secret scan | build | new |
-| `skills/scheduled-agents/templates/` | template | crontab lines, LaunchAgent plist, Task Scheduler PowerShell, GitHub Actions workflow | operate | new |
+| `skills/scheduled-agents/scripts/deadman.py` | script | Writes heartbeats and alerts (webhook, webhook file, or command) when the last success is too old; exits 3 when the alert was not delivered or no channel is set, and leaves an alert file next to the heartbeat | operate | new |
+| `skills/tmux-agents/scripts/tmux_agent.py` | script | start, send, keys, read, wait, run, ls, kill, socket on a private tmux socket, one per project | build / test | new |
+| `skills/secrets-hygiene/templates/` | template | `.gitignore` block, `.env.example`, `.pre-commit-config.yaml`, plain git hook (install it with `scan_secrets.py` beside it), GitHub Actions secret scan | build | new |
+| `skills/scheduled-agents/templates/` | template | crontab lines (job and deadman), LaunchAgent plists for the job and its deadman, Task Scheduler PowerShell (both tasks), GitHub Actions workflow | operate | new |
 
 **Maturity labels.** "proven" means the skill is generalized from a tool or runbook that runs in production in our own harness today. "new" means it was written for this marketplace from documentation and best practice and has unit tests, but has not yet been battle-tested in production. Where a skill mixes both, the table says which part is which.
 
@@ -79,7 +79,9 @@ LEAKED=sk-... python3 "${CLAUDE_PLUGIN_ROOT}/skills/secrets-hygiene/scripts/prob
 
 ### Commit secret guard (hook)
 
-Enabled automatically with the plugin. It looks at every Bash command, ignores everything except `git commit`, and blocks the commit (with redacted findings) when the staged change, or the tracked changes for `git commit -a`, contain something that looks like a key. It guards commits the agent makes; install the git pre-commit hook from `secrets-hygiene` for the commits you type. Turn it off for a session with `export FOUNDRY_SECRETS_GUARD=0`. Mark a deliberate fake with the comment `secrets-hygiene: allow`.
+Enabled automatically with the plugin. It looks at every Bash command, ignores everything except `git commit`, and blocks the commit (with redacted findings) when what the commit WILL contain looks like a key: what is already staged, plus whatever the same command stages first. That covers `git add -A && git commit`, `git add . ; git commit`, `git add <file> && git commit`, `git add -f .env && git commit`, `git commit -a` / `-am` / `git commit <paths>`, and `git init && git add . && git commit`, across `&&`, `||`, `;`, pipes, newlines and subshells, with redirections (`2>/dev/null`, `2>&1 | tail`), `# comments` and heredocs read the way the shell reads them. It follows `cd`, `pushd`, `git -C DIR`, `bash -c '...'`, `eval`, runners such as `timeout`, `sudo`, `xargs` and `find -exec`, and git aliases (`git ci`, `!shell` aliases). A path known only at run time (`"$FILE"`, `$(...)`) counts as the whole tree. The command text is scanned too, so a key in a commit message, or in a file the same command writes with `echo` or a heredoc, is caught. The index is always scanned with the bundled scanner, and also with gitleaks when it is installed, so the verdict is the same whether a file was staged earlier or by this command; files the command is about to stage are scanned with the bundled scanner (untracked files over 2 MB are skipped, symlinks count as links, not as the file they point to). A command that copies a key in from outside the repo and commits it in the same call (`cp ~/key.pem . && git add . && git commit`) cannot be seen before it runs: the git pre-commit hook covers that. If the guard itself hits an error it lets the command run.
+
+It guards commits the agent makes; install the git pre-commit hook from `secrets-hygiene` for the commits you type. Turn it off for a session by starting Claude Code with it off: `export FOUNDRY_COMMIT_SECRET_GUARD=0` in your terminal, then `claude` (an `export` the agent runs in its Bash tool does not reach the hook). The old name `FOUNDRY_SECRETS_GUARD=0` still works but is deprecated. Not the same switch as `FOUNDRY_SECRET_GUARD` (singular), which belongs to the foundry-guardrails plugin's secret-guard hook. Mark a deliberate fake with the comment `secrets-hygiene: allow` (or `gitleaks:allow`; each is honored by both scanners). Obvious placeholders (`sk-ant-your-key-here`, `ghp_xxxx...`, a value marked FAKE), AWS's documentation key `AKIA...EXAMPLE` and database URLs on `localhost` are not flagged.
 
 ### cheap-llm-routing
 
@@ -89,13 +91,15 @@ Ask: "make this classification call free" or "use Groq for this, with a fallback
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/cheap-llm-routing/scripts/structured_router.py" --schema schema.json --data-class private --plan
 ```
 
+No keys yet? `--mock-response mock.json` runs the full call path offline (privacy bar, forced tool call, validation, fall-through); the skill's `examples/` folder has a plain and a fall-through mock.
+
 ### scheduled-agents
 
-Ask: "run this agent every morning" or "why did my cron job stop". The agent writes the job as one foreground turn, wraps it with `run_headless.py`, schedules it from a template, and adds a separate `deadman.py check` so a silent stop becomes an alert.
+Ask: "run this agent every morning" or "why did my cron job stop". The agent writes the job as one foreground turn, wraps it with `run_headless.py`, and schedules TWO entries from the templates: the job and a separate `deadman.py check`, so a silent stop becomes an alert. Under cron and launchd the deadman reads its webhook URL from a file (`--webhook-file`), because those schedulers do not see variables from your shell profile. With no working channel it exits 3, prints `NO ALERT CHANNEL`, and writes `<name>.DEADMAN-ALERT.txt` next to the heartbeat.
 
 ### tmux-agents
 
-Ask: "keep the dev server running while you test" or "drive this REPL". The agent uses `tmux_agent.py` to start a named session, wait for a prompt, send input, read output, and clean up.
+Ask: "keep the dev server running while you test" or "drive this REPL". The agent uses `tmux_agent.py` to start a named session, wait for a prompt, send input, read output, and clean up. Each project gets its own socket (keyed on the git top-level), so agents in different projects never share or kill each other's sessions; set `TMUX_AGENT_SOCKET` to share one on purpose.
 
 ## Install one item on its own
 

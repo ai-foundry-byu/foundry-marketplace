@@ -20,7 +20,11 @@ Install the plugin:
 /plugin install foundry-qa@ai-foundry
 ```
 
-Install the browser tooling the scripts use (once per machine):
+Install the browser tooling the scripts use (once per machine, inside a virtual environment):
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+```
 
 ```bash
 pip install playwright
@@ -55,12 +59,13 @@ python3 -m playwright install webkit
 | `skills/visual-baseline/scripts/visual_baseline.py` | script | capture / compare / check / approve | verify | proven |
 | `skills/explore/scripts/explore.py` | script | Same-origin read-only crawler | verify | proven (pattern) |
 | `skills/done-gate/scripts/qa_yaml.py` | script | Dependency-free YAML subset parser so students do not need PyYAML | support | new |
+| `skills/done-gate/scripts/qa_session.py` | script | Shared browser-session helper: the `auth` block for signed-in apps (storage state, headers, cookies, login steps), the `login` helper that saves a storage state, the settle wait, and the Playwright-missing fix | support | new |
 | `skills/done-gate/templates/done-journey.yaml` | template | Annotated journey to copy into your repo | ship | new |
-| `skills/persona-run/templates/stories.example.json` | template | Example user stories for persona runs | requirements / verify | new |
+| `skills/persona-run/templates/stories.example.json` | template | Example of the foundry-sdlc stories.json shape, with an optional `qa` block on scripted stories | requirements / verify | new |
 | `skills/persona-run/templates/personas/*.md` | template | Persona template plus two examples: first-time mobile user, power user on desktop | requirements / verify | new |
 
 Every script lives inside the skill that uses it, so each skill folder works on its own.
-`done_gate.py` and `qa_yaml.py` are shared: the canonical copies are in `skills/done-gate/scripts/`,
+`done_gate.py`, `qa_yaml.py` and `qa_session.py` are shared: the canonical copies are in `skills/done-gate/scripts/`,
 and byte-identical copies sit in the other skills that import them (`explore` also carries a
 copy of `persona_run.py`). `vendor.json` lists every copy and its canonical file, and
 `tests/test_vendor.py` fails if a copy drifts. Edit the canonical file, then re-copy.
@@ -96,7 +101,21 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/done-gate/scripts/done_gate.py" --journey 
 ```
 
 Exit codes: `0` pass, `1` journey fail, `2` config error, `3` SHA mismatch, `6` inconclusive.
-**Only say "done" on exit 0. Inconclusive is not a pass.** Evidence goes to `.qa/done-gate/`.
+**Only say "done" on exit 0. Inconclusive is not a pass.** Evidence goes to `.qa/done-gate/`;
+after every run the gate also writes `.qa/done-gate/last.json`
+(`{sha, exit, journey, devices, stories, time, failures[]}`, `sha` = the git HEAD it ran from),
+which the foundry-sdlc stage detector reads. The template's `base_url: http://localhost:PORT`
+takes `--port 5173` (never the PORT environment variable).
+
+Signed-in apps: add `auth` to the journey, or pass `--storage-state`, `--header` or `--auth FILE`
+to any script. Save a storage state once with the login helper:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/done-gate/scripts/qa_session.py" login --url http://localhost:3000/login --wait-for "[data-testid=dashboard]" --out .qa/auth.json
+```
+
+For magic-link or OAuth sign-in, add a test-only sign-in route behind an environment flag that
+is never set in production, and point `auth.login_steps` at it.
 
 Journey format (YAML subset or JSON):
 
@@ -114,6 +133,8 @@ assertions:
   - no_console_errors: true
 screenshot: signup
 devices: [desktop-1440x900, phone-390x844, tablet-820x1180]
+stories: [US-01]                      # optional metadata: the story ids this journey covers
+# auth: {storage_state: .qa/auth.json} # optional: a signed-in session
 ```
 
 ### regression-check (skill)
@@ -134,8 +155,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/a11y-check/scripts/a11y_check.py" --url ht
 ```
 
 Exit `0` clean at `--fail-on serious`, `1` blocking violations, `2` config, `6` inconclusive.
-Then the agent walks the manual WCAG 2.2 AA checklist in the skill (keyboard, focus, labels,
-contrast, zoom, target size, motion).
+Besides axe, the script runs its own WCAG 2.2 target-size check (2.5.8): a control under
+24x24 CSS px with another target inside its 24 px circle is a blocking `target-size-2.5.8`
+violation; a small but well-spaced one is listed as `small-targets` for manual review. Then the
+agent walks the manual WCAG 2.2 AA checklist in the skill and reports each section as DONE,
+FAILED or NOT DONE.
 
 ### visual-baseline (skill)
 
@@ -147,28 +171,39 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/visual-baseline/scripts/visual_baseline.py
 
 First run exits `6` (no baselines). Look at `.qa/visual/current/`, then `approve`. After that,
 `check` exits `1` on a diff over threshold and writes red-highlight images to `.qa/visual/diff/`.
+The red is a marker for changed pixels, not the page's color: compare `current/` with
+`baselines/` to say what changed (`report.json` gives the `changed_box`).
 
 ### web-qa (agent)
 
 Ask: "use web-qa to QA the checkout flow on localhost" or "QA prod after the deploy
-(read-only)". It plans journeys from your acceptance criteria, runs journeys, axe, visual and
-a crawl, reads the screenshots, re-runs failures, and files findings with numbered repro steps
-in `.qa/findings.md`.
+(read-only)". It plans journeys from your acceptance criteria (or one per core flow when there
+are none), runs the done gate on desktop and phone, axe, a visual check and a crawl, reads the
+screenshots, re-runs failures, and always writes `.qa/findings.md` with a Repro section per
+finding.
 
 ### persona-tester (agent)
 
-Copy the templates into your project:
+Copy the persona templates into your project:
 
 ```bash
-mkdir -p qa/personas && cp "${CLAUDE_PLUGIN_ROOT}"/skills/persona-run/templates/personas/*.md qa/personas/ && cp "${CLAUDE_PLUGIN_ROOT}/skills/persona-run/templates/stories.example.json" qa/stories.json
+mkdir -p qa/personas && cp "${CLAUDE_PLUGIN_ROOT}"/skills/persona-run/templates/personas/*.md qa/personas/
 ```
 
-Edit them to match your real users and stories, then ask: "use persona-tester to test every
-story as the first-time mobile user on staging". Under the hood it runs the `persona-run` skill:
+Edit them to match your real users, then ask: "use persona-tester to test every story as the
+first-time mobile user on staging". It reads the project's ONE stories.json as is (the
+foundry-sdlc format, `product/stories.json`; unknown keys are warnings, never errors). A story
+without a `qa` block opens `surfaces[0]` and is judged against its acceptance criteria; a
+`qa: {start, steps, assertions, wait_for}` block makes it scripted. Under the hood it runs the
+`persona-run` skill:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/persona-run/scripts/persona_run.py" --persona qa/personas/first-time-mobile-user.md --stories qa/stories.json --base-url <url>
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/persona-run/scripts/persona_run.py" --persona qa/personas/first-time-mobile-user.md --stories product/stories.json --base-url <url>
 ```
+
+Checks run after the page settles (network quiet, then `qa.wait_for`, then 800 ms), and the
+patience check measures navigation start to content ready. Tap targets under the persona's
+minimum are reported once per device as site-wide warnings, not as story failures.
 
 It is **read-only by default**: every POST/PUT/PATCH/DELETE is answered inside the browser and
 never sent, so it is safe against production. `--allow-writes` is refused for anything but
@@ -184,8 +219,11 @@ Ask: "use explorer to find bugs on localhost:3000". It runs the read-only crawle
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/explore/scripts/explore.py" --url http://localhost:3000 --max-pages 30
 ```
 
-then probes by hand (Back, refresh mid-flow, double submit, odd input, slow network, empty
-states), with submit and double-submit probes only on local or staging.
+It crawls hash routes (`#/group/1`) as pages and keeps each page's console and network errors
+on that page. Then the agent always runs four probes on the core flow (Back after a search keeps
+its state, a slow first load shows a loading indicator, the empty state has a message, double
+submit), then the rest of its list (refresh mid-flow, odd input, deep links), with submit and
+double-submit probes only on local or staging.
 
 ### Running the scripts without the plugin (CI)
 
@@ -233,11 +271,19 @@ From the plugin directory:
 cd tests && python3 -m unittest -v
 ```
 
-The unit tests (vendored copies match their canonical files, YAML parser, journey validation, SHA extraction and matching, the exit-code
-contract, PNG codec, pixel diff, persona and story parsing, read-only rules, ticket logic,
-crawler URL rules) need no browser. `test_browser_integration.py` starts a local fixture site
-and runs every script in headless Chromium; it skips itself if Playwright or Chromium is not
-installed, and the a11y case skips if axe-core cannot be downloaded.
+The unit tests (vendored copies match their canonical files, YAML parser, journey validation
+including the foundry-sdlc template keys, `last.json`, SHA extraction and matching, the
+exit-code contract, PNG codec, pixel diff, persona and foundry-sdlc stories.json parsing,
+site-wide checks, the auth block and login-step validation, the Playwright-missing fix,
+read-only rules, ticket logic, crawler URL rules for hash routes) need no browser. `test_browser_integration.py` starts a local fixture site
+and runs every script in headless Chromium, including a list that loads 1.2 s after the load
+event, a hash-routed page, and a page behind sign-in (headers, cookies, login steps and a saved
+storage state); it skips itself if Playwright or Chromium is not installed, and the a11y cases
+skip if axe-core cannot be downloaded.
+
+Maturity note: signed-in sessions (`qa_session.py`), the 2.5.8 target-size check, hash-route
+crawling and the settle wait are new in this release and so far tested only against the
+fixture site.
 
 ## Known limitations
 

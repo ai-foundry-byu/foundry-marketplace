@@ -1,56 +1,77 @@
 {
   "stories": [
     {
-      "id": "S-1",
+      "id": "US-01",
       "title": "A visitor understands what the app does from the home page",
-      "as_a": "first-time visitor",
-      "start": "/",
-      "assertions": [
-        {"visible": "h1"},
-        {"no_console_errors": true}
-      ],
       "acceptance": [
         "Within 5 seconds the visitor can say what the app is for",
         "There is one obvious primary action"
-      ]
+      ],
+      "surfaces": ["/"],
+      "devices": ["phone-390x844", "desktop-1440x900"],
+      "status": "BUILT",
+      "waits_on": [],
+      "covers": ["R-01"],
+      "notes": "No qa block: the run opens surfaces[0], screenshots it, and the persona-tester judges the acceptance criteria.",
+      "evidence": []
     },
     {
-      "id": "S-2",
+      "id": "US-02",
       "title": "A visitor can start sign-up from the home page",
-      "start": "/",
-      "steps": [
-        {"click": "text=Get started"},
-        {"wait_for": "form"}
-      ],
-      "assertions": [
-        {"visible": "input[type=email]"},
-        {"url_contains": "signup"}
-      ],
-      "acceptance": ["The form asks only for what it needs"]
+      "acceptance": ["The sign-up form asks only for an email"],
+      "surfaces": ["/", "/signup"],
+      "devices": ["phone-390x844", "desktop-1440x900"],
+      "status": "BUILT",
+      "waits_on": [],
+      "covers": ["R-02"],
+      "notes": "",
+      "evidence": [],
+      "qa": {
+        "start": "/",
+        "steps": [
+          {"click": "text=Get started"},
+          {"wait_for": "form"}
+        ],
+        "assertions": [
+          {"visible": "input[type=email]"},
+          {"url_contains": "signup"}
+        ]
+      }
     },
     {
-      "id": "S-3",
+      "id": "US-03",
       "title": "A returning user can search and open a result with the keyboard",
-      "start": "/search",
+      "acceptance": ["Results appear without a full page reload", "Focus moves somewhere sensible"],
+      "surfaces": ["/search"],
       "devices": ["desktop-1440x900"],
-      "steps": [
-        {"fill": {"selector": "input[type=search]", "value": "budget"}},
-        {"press": {"selector": "input[type=search]", "key": "Enter"}},
-        {"wait_for": "[data-testid=result]"}
-      ],
-      "assertions": [
-        {"visible": "[data-testid=result]"}
-      ],
-      "acceptance": ["Results appear without a full page reload", "Focus moves somewhere sensible"]
+      "status": "PARTIAL",
+      "waits_on": ["US-01"],
+      "covers": ["R-03"],
+      "notes": "",
+      "evidence": [],
+      "qa": {
+        "steps": [
+          {"fill": {"selector": "input[type=search]", "value": "budget"}},
+          {"press": {"selector": "input[type=search]", "key": "Enter"}}
+        ],
+        "wait_for": "[data-testid=result]",
+        "assertions": [{"visible": "[data-testid=result]"}]
+      }
     },
     {
-      "id": "S-4",
+      "id": "US-04",
       "title": "An empty account explains what to do next",
-      "start": "/dashboard",
       "acceptance": [
         "The empty state says what will appear here and offers the first action",
         "No spinner is left running"
-      ]
+      ],
+      "surfaces": ["/dashboard"],
+      "devices": ["phone-390x844", "desktop-1440x900"],
+      "status": "NOT_BUILT",
+      "waits_on": [],
+      "covers": ["R-04"],
+      "notes": "NOT_BUILT: skipped until it is built, unless named with --story.",
+      "evidence": []
     }
   ]
 }

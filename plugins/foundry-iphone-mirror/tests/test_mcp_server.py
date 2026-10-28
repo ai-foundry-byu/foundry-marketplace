@@ -78,6 +78,19 @@ esac
         self.assertEqual(tools["iphone_tap"]["inputSchema"]["required"], ["px", "py"])
         self.assertEqual(tools["iphone_type"]["inputSchema"]["properties"]["text"]["type"], "string")
 
+    def test_descriptions_carry_the_safety_rules(self):
+        # L8-D2 + L2-D2: the model reaches these tools without the skill, so the
+        # descriptions themselves must carry the grant count and the go-ahead rule.
+        tools = {t["name"]: t["description"] for t in self.rpc("tools/list")["result"]["tools"]}
+        doc = tools["iphone_doctor"]
+        for word in ("Accessibility", "Screen Recording", "Automation", "three"):
+            self.assertIn(word, doc)
+        self.assertNotIn("both", doc)
+        for name in ("iphone_open", "iphone_tap", "iphone_swipe", "iphone_type", "iphone_key",
+                     "iphone_home", "iphone_tapxy", "iphone_screenshot"):
+            self.assertIn("iphone_doctor", tools[name], name)
+            self.assertIn("go-ahead", tools[name], name)
+
     def test_tap_passes_integer_args(self):
         r = self.call("iphone_tap", {"px": 10, "py": 20})
         self.assertFalse(r["isError"])
@@ -114,7 +127,9 @@ esac
         img = r["content"][1]
         self.assertEqual(img["mimeType"], "image/png")
         self.assertEqual(base64.b64decode(img["data"]), PNG_1PX)
-        self.assertTrue(self.argv()[0].startswith("shot " + self.sb.state))
+        # L8-D3: outside the in-process test worker the state dir is always the default.
+        default = os.path.join(self.sb.dir, "Library", "Caches", "foundry-iphone-mirror")
+        self.assertTrue(self.argv()[0].startswith("shot " + default), self.argv())
 
     def test_unknown_tool_and_method(self):
         r = self.rpc("tools/call", {"name": "iphone_selfdestruct", "arguments": {}})

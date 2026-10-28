@@ -8,13 +8,15 @@ fresh clone with no tooling) or inside a Claude Code hook where startup time mat
 Modes:
   scan_secrets.py --staged            scan lines being added in the git index
   scan_secrets.py --worktree          scan unstaged changes to tracked files (git commit -a)
-  scan_secrets.py --all               scan every tracked file at HEAD of the work tree
+  scan_secrets.py --all               scan every file git would let you commit: tracked files plus
+                                      untracked files that are not gitignored (what `git add .` stages)
   scan_secrets.py PATH [PATH ...]     scan the given files
 
 Exit codes: 0 clean, 1 findings, 2 usage or git error.
 Findings print redacted (first 6 characters only), never the full value.
 
 Allow a line on purpose by adding the comment:  secrets-hygiene: allow
+(gitleaks' own inline marker, gitleaks:allow, is honored too, so one comment satisfies both.)
 """
 from __future__ import annotations
 
@@ -27,6 +29,9 @@ import sys
 from dataclasses import dataclass
 
 ALLOW_PRAGMA = "secrets-hygiene: allow"
+ALLOW_PRAGMAS = (ALLOW_PRAGMA, "gitleaks:allow")
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "[::1]", "host.docker.internal")
+DEFAULT_DB_PASSWORDS = ("postgres", "password")
 
 # (rule id, compiled regex, group index holding the secret)
 RULES: list[tuple[str, re.Pattern[str], int]] = [
@@ -100,31 +105,50 @@ def looks_like_placeholder(value: str, line: str) -> bool:
     return "replace_me" in line_low or "placeholder" in line_low
 
 
-def scan_line(path: str, lineno: int, line: str) -> list[Finding]:
-    if ALLOW_PRAGMA in line:
+def is_known_non_secret(rule: str, value: str, line: str) -> bool:
+    """Values that match a rule but are published examples or local-only defaults."""
+    if rule == "aws-access-key-id":
+        return value.endswith("EXAMPLE")  # AWS's documentation key, AKIAIOSFODNN7EXAMPLE
+    if rule == "postgres-url-with-password":
+        creds, _, rest = value.split("://", 1)[1].partition("@")
+        password = creds.split(":", 1)[1]
+        host = re.split(r"[:/?]", rest, 1)[0].lower() if not rest.startswith("[") else rest.split("]")[0] + "]"
+        return (host in LOOPBACK_HOSTS or password.lower() in DEFAULT_DB_PASSWORDS
+                or looks_like_placeholder(password, line))
+    return False
+
+
+def scan_line(path: str, lineno: int, line: str, skip_rules: tuple = ()) -> list[Finding]:
+    if any(p in line for p in ALLOW_PRAGMAS):
         return []
     out: list[Finding] = []
     seen_spans: list[tuple[int, int]] = []
     for rule, rx, grp in RULES:
+        if rule in skip_rules:
+            continue
         for m in rx.finditer(line):
             value = m.group(grp)
             span = m.span(grp)
             if any(s <= span[0] < e for s, e in seen_spans):
                 continue  # a more specific rule already reported this value
-            if rule in ("generic-assignment", "openai-key"):
+            # Every key-shaped rule skips obvious placeholders (sk-ant-your-key-here, ghp_xxxx...,
+            # a FAKE marker), the "empty or fake value" a .env.example is meant to hold.
+            if rule not in ("private-key-block", "postgres-url-with-password"):
                 if looks_like_placeholder(value, line):
                     continue
             if rule == "generic-assignment" and shannon_entropy(value) < 3.0:
+                continue
+            if is_known_non_secret(rule, value, line):
                 continue
             seen_spans.append(span)
             out.append(Finding(path, lineno, rule, redact(value)))
     return out
 
 
-def scan_text(path: str, text: str, start_line: int = 1) -> list[Finding]:
+def scan_text(path: str, text: str, start_line: int = 1, skip_rules: tuple = ()) -> list[Finding]:
     findings: list[Finding] = []
     for i, line in enumerate(text.splitlines(), start=start_line):
-        findings.extend(scan_line(path, i, line))
+        findings.extend(scan_line(path, i, line, skip_rules))
     return findings
 
 
@@ -166,25 +190,37 @@ def git(args: list[str], cwd: str | None) -> str:
     return res.stdout
 
 
-def scan_diff_mode(cached: bool, cwd: str | None) -> list[Finding]:
+def scan_diff_mode(cached: bool, cwd: str | None, pathspecs: list[str] | None = None) -> list[Finding]:
+    """Scan added lines in the index (cached=True) or in unstaged tracked changes (cached=False).
+
+    `pathspecs` limits the diff to those paths, relative to `cwd`, exactly as git reads them.
+    """
     base = ["diff", "--cached"] if cached else ["diff"]
-    names = git([*base, "--name-only", "--diff-filter=ACMR"], cwd).splitlines()
+    tail = ["--", *pathspecs] if pathspecs else []
+    names = git([*base, "--name-only", "--diff-filter=ACMR", *tail], cwd).splitlines()
     findings = [Finding(n, 0, "secret-file-staged", "(file name)") for n in names if is_secret_filename(n)]
-    diff = git([*base, "-U0", "--no-color", "--no-ext-diff", "--diff-filter=ACMR"], cwd)
+    diff = git([*base, "-U0", "--no-color", "--no-ext-diff", "--diff-filter=ACMR", *tail], cwd)
     for path, lineno, text in parse_unified_diff(diff):
         findings.extend(scan_line(path, lineno, text))
     return findings
 
 
-def scan_paths(paths: list[str]) -> list[Finding]:
+def scan_paths(paths: list[str], max_bytes: int | None = None, follow_symlinks: bool = True) -> list[Finding]:
+    """Scan files by content and name. Only regular files are read: a FIFO, a device, or a
+    symlink to one (/dev/zero) would block or never end. With follow_symlinks=False a symlink
+    is skipped, because git commits the link itself, not the file it points to."""
     findings: list[Finding] = []
     for p in paths:
         if is_secret_filename(p):
             findings.append(Finding(p, 0, "secret-file", "(file name)"))
         try:
+            if (not follow_symlinks and os.path.islink(p)) or not os.path.isfile(p):
+                continue
+            if max_bytes is not None and os.path.getsize(p) > max_bytes:
+                continue
             with open(p, "r", encoding="utf-8", errors="ignore") as fh:
                 text = fh.read()
-        except (IsADirectoryError, FileNotFoundError, PermissionError):
+        except (IsADirectoryError, FileNotFoundError, NotADirectoryError, PermissionError):
             continue
         if "\x00" in text[:4096]:
             continue  # binary
@@ -197,12 +233,14 @@ def main(argv: list[str] | None = None) -> int:
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--staged", action="store_true", help="scan lines added in the git index")
     g.add_argument("--worktree", action="store_true", help="scan unstaged changes to tracked files")
-    g.add_argument("--all", action="store_true", help="scan all tracked files")
+    g.add_argument("--all", action="store_true",
+                   help="scan tracked files plus untracked files that are not gitignored")
     ap.add_argument("--cwd", default=None, help="repository directory (default: current)")
     ap.add_argument("--quiet", action="store_true", help="print only the count")
     ap.add_argument("paths", nargs="*")
     a = ap.parse_args(argv)
 
+    note = ""
     try:
         if a.staged:
             findings = scan_diff_mode(True, a.cwd)
@@ -210,8 +248,12 @@ def main(argv: list[str] | None = None) -> int:
             findings = scan_diff_mode(False, a.cwd)
         elif a.all:
             root = a.cwd or "."
-            files = git(["ls-files"], a.cwd).splitlines()
-            findings = scan_paths([os.path.join(root, f) for f in files])
+            # --cached --others --exclude-standard: tracked files AND untracked files git would
+            # stage with `git add .`. Untracked files are the ones a careless add leaks.
+            out = git(["ls-files", "-z", "--cached", "--others", "--exclude-standard"], a.cwd)
+            files = sorted({f for f in out.split("\0") if f})
+            findings = scan_paths([os.path.join(root, f) for f in files], follow_symlinks=False)
+            note = f" ({len(files)} files: tracked and untracked; gitignored files skipped)"
         elif a.paths:
             findings = scan_paths(a.paths)
         else:
@@ -223,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not findings:
         if not a.quiet:
-            print("scan_secrets: clean")
+            print(f"scan_secrets: clean{note}")
         return 0
     if not a.quiet:
         for f in findings:

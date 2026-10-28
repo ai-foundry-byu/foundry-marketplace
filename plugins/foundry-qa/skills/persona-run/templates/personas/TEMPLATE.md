@@ -2,8 +2,8 @@
 # Machine-read fields (persona_run.py). Everything below the second --- is for the agent.
 name: <Persona name, e.g. "Commuter checking in on a phone">
 devices: [phone-390x844]            # any of: desktop-1440x900, phone-390x844, tablet-820x1180
-patience_seconds: 10                # a story slower than this FAILS the patience check
-min_tap_target_px: 24               # 24 = WCAG 2.2 AA (2.5.8); 44 = Apple/Google touch guidance
+patience_seconds: 10                # time to content above this FAILS the story (patience check)
+min_tap_target_px: 24               # reported once per device as a warning; 24 = WCAG 2.5.8, 44 = Apple/Google
 ---
 
 # <Persona name>

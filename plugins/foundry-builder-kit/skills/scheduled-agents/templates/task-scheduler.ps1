@@ -18,7 +18,9 @@ Register-ScheduledTask -TaskName "daily-digest" -Action $Action -Trigger $Trigge
 # Deadman on its own task:
 $Check = New-ScheduledTaskAction -Execute $Python -Argument (
   "`"$Kit\deadman.py`" check --name daily-digest --file `"$Project\.agent-jobs\daily-digest.heartbeat.json`" " +
-  "--max-age 26h --webhook https://hooks.slack.com/services/REPLACE_ME")
+  "--max-age 26h --webhook-file `"$env:USERPROFILE\.config\agent-alerts\webhook.url`"")
+# webhook.url holds the URL on one line. With no working channel the check exits 3 and writes
+# daily-digest.DEADMAN-ALERT.txt next to the heartbeat.
 Register-ScheduledTask -TaskName "daily-digest-deadman" -Action $Check -Trigger (New-ScheduledTaskTrigger -Daily -At 10:00am)
 
 # Test now:  Start-ScheduledTask -TaskName "daily-digest";  Get-ScheduledTaskInfo -TaskName "daily-digest"

@@ -103,7 +103,7 @@ edit files and does not run paid model calls unless you ask.
 evalkit init <dir>                       # copy the example suite (plus judge.py)
 evalkit check <suite> [--no-judge]       # oracles pass, empty output fails, controls score low
 evalkit run <suite> [--reps N] [--split train|val|test|all] [--cases a,b] [--tag t]
-                    [--label L] [--no-judge] [--target CMD] [--out .evals]
+                    [--label L] [--no-judge] [--target CMD] [--out DIR]
                     [--gate | --fail-under X] [--fail-metric score|pass_hat_k]
 evalkit compare <suite> | <a.json> <b.json>
 evalkit history <suite>
@@ -119,9 +119,18 @@ Graders: `exact`, `contains`, `regex`, `json_field` (`equals`, `one_of`, `exists
 Judge protocol: stdin `{"case_id", "input", "expected", "output", "criterion", "rubric"}`;
 stdout `{"pass": true|false|null, "reason": "..."}`. `null` (UNKNOWN) is an error, not a pass.
 
-Outputs: `.evals/<suite>/<run_id>.json` (every trial and grader verdict, fingerprints of the
-case set, graders, target command and surfaces) and `.evals/<suite>/<run_id>.md` (summary,
+Outputs: `<root>/<suite>/<run_id>.json` (every trial and grader verdict, fingerprints of the
+case set, graders, target command and surfaces) and `<root>/<suite>/<run_id>.md` (summary,
 comparison, failures, errors).
+
+Results root: `--out DIR` if given; otherwise `.evals` in the project root, the nearest folder
+above the suite that has a `.git` (else the suite's parent folder). It never depends on the
+directory you run from, so every run of a suite lands in one history and compares with the
+last one. `run` prints the absolute report path; `history` prints the folder first. If an older
+version left runs in `./.evals`, evalkit prints a `note:` pointing at them.
+
+`suite.json` `target` (and `judge`) is an object `{"command": ..., "timeout_s": n}`, or a bare
+command string or list as shorthand (`"target": "python3 run.py"`).
 
 Exit codes: 0 ok, 2 config error, 3 no scorable trial, 4 below gate, 5 check failed.
 
@@ -145,10 +154,11 @@ cd plugins/foundry-evals
 python3 -m unittest discover -s tests -v
 ```
 
-26 offline tests: every grader, pass@k and pass^k math, error handling (crash, junk stdout,
+32 offline tests: every grader, pass@k and pass^k math, error handling (crash, junk stdout,
 timeout), judge wiring and cost sums, the example suite end to end (baseline fails the gate,
 the one-line fix passes, comparison names the two fixed cases), case-set change detection,
-control and empty-output self-tests, CLI exit codes, vendored copies byte-identical to
+control and empty-output self-tests, CLI exit codes, one results history when the suite is
+run from two different directories (and `--out` still overriding it), a string `target`, vendored copies byte-identical to
 canonical, and a clear error when `init` runs without the example suite.
 
 ## Known limitations

@@ -81,7 +81,7 @@ fast unless someone asks for boldness.
 | AddRow | placeholder "Add a to-do, for example Call the dentist…" text-3 | 2px focus ring token focus-ring | n/a: optimistic | the list's only row, with the hint below | row turns error tint, "Couldn't save. Retry" inline button | wraps to 3 lines, then clamps with … |
 
 ## 11. Acceptance checks (excerpt)
-- [ ] No horizontal page scroll at 375 and 390 (documentElement.scrollWidth == innerWidth).
+- [ ] No horizontal page scroll at 375 and 390 (documentElement.scrollWidth <= documentElement.clientWidth; innerWidth is widened by mobile emulation).
 - [ ] `[data-testid=add-row] button` is at least 44x44 on touch.
 - [ ] Pasting 3 lines into `[data-testid=add-row] input` creates 3 `li[data-task]` within 300 ms.
 - [ ] After Enter, focus stays in the add input (document.activeElement is the input).

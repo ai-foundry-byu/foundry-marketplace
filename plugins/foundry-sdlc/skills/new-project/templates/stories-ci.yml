@@ -1,0 +1,10 @@
+# foundry-sdlc: fail the build when stories.json drifts from the PRD.
+# Written by new_project.py. Fix a red run with: python3 tools/gen_stories.py --prd {{PRD_PATH}} --out {{STORIES_PATH}}
+name: stories
+on: [push, pull_request]
+jobs:
+  stories:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/gen_stories.py --prd {{PRD_PATH}} --out {{STORIES_PATH}} --check

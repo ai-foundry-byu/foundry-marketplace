@@ -86,8 +86,12 @@ class StaleWriteGuard(HookCase):
             fh.write("x\n")
         self.assertAllowed(self.write(untracked))
 
-    def test_dirty_file_warns_by_default(self):
+    def test_dirty_file_denied_by_default_and_warns_with_enforce_0(self):
+        # 2026-10-28 live campaign (D4): a warning arrives after the write, when the
+        # uncommitted line is already gone, so the default is now deny.
         self.make_dirty()
+        self.assertDenied(self.write(self.f), "uncommitted")
+        self.env["FOUNDRY_STALE_WRITE_ENFORCE"] = "0"
         self.assertWarned(self.write(self.f), "uncommitted")
         self.assertEqual(self.log_lines()[-1]["action"], "warn")
 

@@ -1,11 +1,21 @@
 ---
 name: parallel-lanes
-description: Stage 4 of the Foundry SDLC. Execute the workplan as parallel lanes, one git worktree and one agent per independent task, with a branch naming scheme, a lane brief template, the "edit only inside your worktree" rule, reuse-before-build, and a merge-back procedure. Use when someone says "run these in parallel", "spin up agents for each task", "fan out the build", "git worktree", "work on several tasks at once", "execute the workplan", "merge the lanes back", or when sdlc_stage.py reports stage 4.
+description: Stage 4 of the Foundry SDLC. Execute the workplan, either as parallel lanes (one git worktree and one agent per independent task, with a branch naming scheme, a lane brief template, the "edit only inside your worktree" rule and a merge-back procedure) or in one session, and mark each task DONE with its commit sha as it lands. Use when someone says "build it", "execute the workplan", "run these in parallel", "spin up agents for each task", "fan out the build", "git worktree", "work on several tasks at once", "merge the lanes back", or when sdlc_stage.py reports stage 4.
 ---
 
 # Stage 4: execute in parallel lanes
 
 A **lane** is one task from WORKPLAN.md, built by one agent, in its own git worktree, on its own branch. Worktrees let several agents edit the same repo at the same time without overwriting each other's files, because each lane has its own working directory and the history is shared.
+
+## Rules (MUST, lanes or not)
+
+1. **Commit every task as it lands.** Uncommitted work is not done, and nothing later in the flow can be LIVE without a commit.
+2. **Mark the task in WORKPLAN.md in the same step:** `DONE 2026-11-04: commit 3f2a9c1` (or `PR #9`). The stage detector reads this column; stage 4 ends only when every task is DONE with evidence or PARKED.
+3. **Set the stories it built to BUILT** (`python3 tools/gen_stories.py --prd product/PRD.md --out product/stories.json --set US-04=BUILT`), never LIVE. LIVE needs stage 6.
+
+## Single-session build (no lanes)
+
+For a small app, or tasks that touch the same files, one session builds the tasks in dependency order. For each task: write the tests, build, run the tests, `git add -A && git commit -m "T-03: magic-link sign-in (US-01, US-02)"`, then apply rules 2 and 3 with that commit's short sha (`git rev-parse --short HEAD`). Then the next task.
 
 ## When to use lanes (and when not to)
 
@@ -91,7 +101,7 @@ Scott Murff's **agent-team-kit** (https://github.com/ai-foundry-byu/agent-team-k
 
 ## Exit gate
 
-- Every task in WORKPLAN.md is DONE (with evidence) or PARKED.
+- Every task in WORKPLAN.md is `DONE <date>: commit <sha>` (or a PR) or PARKED.
 - `git worktree list` shows only the main checkout (no forgotten lanes).
 - `python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .` reports past stage 4. Stage 5 (code QA) is checked by CI, not by files.
 

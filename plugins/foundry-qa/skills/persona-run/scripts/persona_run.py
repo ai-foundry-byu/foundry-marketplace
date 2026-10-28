@@ -2,8 +2,18 @@
 """persona_run: test every user story AS a persona, on that persona's devices, read-only.
 
   python3 persona_run.py --persona qa/personas/first-time-mobile-user.md \\
-      --stories qa/stories.json --base-url http://localhost:3000
-  python3 persona_run.py ... --story S-2 --story S-5 --devices phone-390x844
+      --stories product/stories.json --base-url http://localhost:3000
+  python3 persona_run.py ... --story US-02 --story US-05 --devices phone-390x844
+  python3 persona_run.py ... --storage-state .qa/auth.json   # a signed-in app (see qa_session.py)
+
+Stories: the project's ONE stories.json (the foundry-sdlc format, a list or
+{"stories": [...]}). Per story: id, title, acceptance, surfaces, devices, status,
+plus an optional "qa" block {start, steps, assertions, wait_for}. Without a qa
+block the run opens surfaces[0] (when it is a path), takes the screenshot and
+marks the row needs-judgment against the acceptance criteria. Unknown keys are
+ignored with a warning. NOT_BUILT and PARKED stories are skipped unless named
+with --story. Device ids that are not web profiles (ios-sim, android-emu) are
+skipped with a warning.
   python3 persona_run.py ... --plan            # print the story x device matrix, run nothing
   python3 persona_run.py ... --file-tickets    # write tickets for failures seen on 2 runs in a row
 
@@ -20,11 +30,16 @@ Each story x device gets one status:
                   acceptance criteria. Report these as JUDGED, never as passed.
   inconclusive    nothing was proven (target unreachable, sign-in wall, harness error)
 
-Persona checks (on top of the story's own assertions):
-  patience      story finished within the persona's patience_seconds
+Every check runs after the page settles: network quiet (no request for 500 ms),
+the story's wait_for selector visible, then --settle-ms (default 800).
+
+Story checks (they decide the story's status, with its assertions):
+  patience      navigation start to content ready (last data request done, or
+                wait_for visible) within the persona's patience_seconds
   no-overflow   on mobile/tablet profiles, no horizontal page scroll
-  tap-targets   no visible control smaller than min_tap_target_px (default 24, WCAG 2.5.8)
   console       no uncaught errors or console.error output
+Site-wide check (reported ONCE per device in REPORT.md, never a story failure):
+  tap-targets   visible controls smaller than the persona's min_tap_target_px
 
 Exit codes: 0 no failures, 1 at least one failure, 2 config error,
 6 nothing failed but something was inconclusive or no story ran.
@@ -46,6 +61,7 @@ from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import qa_yaml  # noqa: E402
+import qa_session  # noqa: E402
 from done_gate import (  # noqa: E402
     DEVICE_PROFILES, ConfigError, StepFailure, check_assertions, context_kwargs,
     install_read_only_guard, resolve_url, run_steps, validate_assertion, validate_step,
@@ -96,50 +112,123 @@ def parse_persona(text: str, source: str = "") -> Persona:
 class Story:
     id: str
     title: str
-    start: str
+    start: Optional[str]
     steps: list[dict]
     assertions: list[dict]
     acceptance: list[str]
     devices: Optional[list[str]] = None
     writes: bool = False
+    status: str = ""
+    wait_for: Optional[str] = None
+    scripted: bool = False             # True when the story carries a qa block (or legacy start/steps/assertions)
+    skip_reason: str = ""
 
 
-STORY_KEYS = {"id", "title", "start", "steps", "assertions", "acceptance", "devices", "writes", "as_a", "notes"}
+# The foundry-sdlc stories.json shape (contract C1), plus foundry-qa's optional keys.
+STORY_KEYS = {"id", "title", "acceptance", "surfaces", "devices", "status", "waits_on", "covers",
+              "notes", "evidence", "qa", "writes", "as_a",
+              "start", "steps", "assertions", "wait_for"}   # last row: legacy top-level qa keys
+QA_KEYS = {"start", "steps", "assertions", "wait_for"}
+SKIP_STATUSES = {"NOT_BUILT", "PARKED"}
 
 
-def parse_stories(data: Any, source: str = "") -> list[Story]:
+def _is_path(v: Any) -> bool:
+    return isinstance(v, str) and (v.startswith(("/", "#/", "#!/")) or re.match(r"^https?://", v) is not None)
+
+
+def parse_stories(data: Any, source: str = "", warnings: Optional[list[str]] = None) -> list[Story]:
+    """Read the project's stories.json. Unknown keys are warnings, never errors."""
+    warn = warnings if warnings is not None else []
     items = data.get("stories") if isinstance(data, dict) else data
     if not isinstance(items, list) or not items:
-        raise ConfigError(f"{source}: expected {{\"stories\": [...]}} with at least one story")
+        raise ConfigError(f"{source}: expected a list of stories or {{\"stories\": [...]}} with at least one story")
     out, seen = [], set()
     for i, s in enumerate(items):
         where = f"{source} stories[{i}]"
         if not isinstance(s, dict):
             raise ConfigError(f"{where}: each story must be an object")
-        unknown = set(s) - STORY_KEYS
-        if unknown:
-            raise ConfigError(f"{where}: unknown key(s) {sorted(unknown)}")
-        for k in ("id", "title", "start"):
+        for k in ("id", "title"):
             if not isinstance(s.get(k), str) or not s.get(k):
                 raise ConfigError(f"{where}: '{k}' is required")
-        if s["id"] in seen:
-            raise ConfigError(f"{where}: duplicate story id {s['id']}")
-        seen.add(s["id"])
-        steps = [validate_step(x, f"{where}.steps[{j}]") for j, x in enumerate(s.get("steps") or [])]
-        asserts = [validate_assertion(x, f"{where}.assertions[{j}]") for j, x in enumerate(s.get("assertions") or [])]
+        sid = s["id"]
+        if sid in seen:
+            raise ConfigError(f"{where}: duplicate story id {sid}")
+        seen.add(sid)
+        unknown = set(s) - STORY_KEYS
+        if unknown:
+            warn.append(f"{sid}: ignoring unknown key(s) {sorted(unknown)}")
+        qa = s.get("qa")
+        if qa is not None and not isinstance(qa, dict):
+            raise ConfigError(f"{where}: 'qa' must be an object {{start, steps, assertions, wait_for}}")
+        legacy = {k: s[k] for k in QA_KEYS if k in s}
+        if qa is None and legacy:
+            qa = legacy
+        elif qa is not None and legacy:
+            warn.append(f"{sid}: top-level {sorted(legacy)} ignored because a qa block is present")
+        qa = qa or {}
+        bad_qa = set(qa) - QA_KEYS
+        if bad_qa:
+            warn.append(f"{sid}: ignoring unknown qa key(s) {sorted(bad_qa)}")
+        steps = [validate_step(x, f"{where}.qa.steps[{j}]") for j, x in enumerate(qa.get("steps") or [])]
+        asserts = [validate_assertion(x, f"{where}.qa.assertions[{j}]") for j, x in enumerate(qa.get("assertions") or [])]
         acc = s.get("acceptance") or []
         if not isinstance(acc, list) or not all(isinstance(a, str) for a in acc):
             raise ConfigError(f"{where}: 'acceptance' must be a list of strings")
         if not asserts and not acc:
-            raise ConfigError(f"{where}: give mechanical 'assertions', human 'acceptance' criteria, or both")
+            raise ConfigError(f"{where}: give 'acceptance' criteria, qa 'assertions', or both")
+        wait_for = qa.get("wait_for")
+        if wait_for is not None and (not isinstance(wait_for, str) or not wait_for):
+            raise ConfigError(f"{where}: qa.wait_for must be a selector string")
+        surfaces = s.get("surfaces") or []
+        if not isinstance(surfaces, list):
+            raise ConfigError(f"{where}: 'surfaces' must be a list")
+        start = qa.get("start")
+        if start is not None and (not isinstance(start, str) or not start):
+            raise ConfigError(f"{where}: qa.start must be a path or URL")
+        skip = ""
+        if not start:
+            start = next((x for x in surfaces[:1] if _is_path(x)), None)
+            if not start:
+                skip = ("no start path: add qa.start, or make surfaces[0] a path like /login"
+                        if not surfaces else f"surfaces[0] {surfaces[0]!r} is not a path; add qa.start")
         devs = s.get("devices")
         if devs is not None:
-            bad = [d for d in devs if d not in DEVICE_PROFILES]
-            if bad:
-                raise ConfigError(f"{where}: unknown device(s) {bad}")
-        out.append(Story(id=s["id"], title=s["title"], start=s["start"], steps=steps, assertions=asserts,
-                         acceptance=acc, devices=devs, writes=bool(s.get("writes", False))))
+            if isinstance(devs, str):
+                devs = [devs]
+            if not isinstance(devs, list):
+                raise ConfigError(f"{where}: 'devices' must be a list")
+            other = [d for d in devs if d not in DEVICE_PROFILES]
+            if other:
+                warn.append(f"{sid}: skipping non-web device(s) {other} (persona_run drives web profiles only)")
+                devs = [d for d in devs if d in DEVICE_PROFILES]
+                if not devs:
+                    skip = skip or f"no web device in {other}"
+            elif not devs:
+                devs = None   # an empty list means "not narrowed"
+        status = str(s.get("status") or "")
+        out.append(Story(id=sid, title=s["title"], start=start, steps=steps, assertions=asserts,
+                         acceptance=acc, devices=devs, writes=bool(s.get("writes", False)), status=status,
+                         wait_for=wait_for, scripted=bool(qa), skip_reason=skip))
     return out
+
+
+def select_stories(stories: list[Story], wanted: Optional[list[str]]) -> tuple[list[Story], list[tuple[Story, str]]]:
+    """(stories to run, [(story, why skipped)]). Naming a story with --story runs it whatever its status."""
+    if wanted:
+        missing = set(wanted) - {s.id for s in stories}
+        if missing:
+            raise ConfigError(f"unknown story id(s): {sorted(missing)}")
+    run, skipped = [], []
+    for s in stories:
+        if wanted and s.id not in wanted:
+            continue
+        if s.skip_reason:
+            skipped.append((s, s.skip_reason))
+        elif not wanted and s.status in SKIP_STATUSES:
+            skipped.append((s, f"status {s.status}"))
+        else:
+            run.append(s)
+    return run, skipped
 
 
 def plan(stories: list[Story], persona: Persona, only_devices: list[str] | None) -> list[tuple[Story, str]]:
@@ -147,7 +236,7 @@ def plan(stories: list[Story], persona: Persona, only_devices: list[str] | None)
     pairs = []
     for s in stories:
         devs = only_devices or persona.devices
-        if s.devices:
+        if s.devices is not None:
             devs = [d for d in devs if d in s.devices]
         pairs.extend((s, d) for d in devs)
     return pairs
@@ -179,8 +268,9 @@ class StoryResult:
 
 
 def classify(assertions: list[dict], checks: list[dict], has_assertions: bool) -> tuple[str, str]:
+    """A story's status comes from its assertions and story-scoped checks; site-wide checks never fail it."""
     failed_a = [a for a in assertions if not a["passed"]]
-    failed_c = [c for c in checks if not c["passed"]]
+    failed_c = [c for c in checks if not c["passed"] and c.get("scope") != "site"]
     if failed_a:
         return "failed", failed_a[0]["detail"]
     if failed_c:
@@ -208,7 +298,8 @@ def reproduced_failures(previous: list[dict], current: list[dict]) -> list[dict]
 
 def render_ticket(r: dict, persona: str, base_url: str) -> str:
     steps = "\n".join(f"{i + 1}. {k} {json.dumps(v)}" for i, s in enumerate(r.get("steps", [])) for k, v in s.items())
-    failed = [c for c in r.get("checks", []) if not c["passed"]] + [a for a in r.get("assertions", []) if not a["passed"]]
+    failed = ([c for c in r.get("checks", []) if not c["passed"] and c.get("scope") != "site"]
+              + [a for a in r.get("assertions", []) if not a["passed"]])
     failed_lines = "\n".join(f"- {f.get('check') or f.get('assertion')}: {f['detail']}" for f in failed) or f"- {r['reason']}"
     acc = "\n".join(f"- {a}" for a in r.get("acceptance", [])) or "- (none written)"
     return f"""# [{r['story']}] {r['title']} fails on {r['device']} for {persona}
@@ -236,7 +327,21 @@ Reproduced on two consecutive persona runs.
 """
 
 
-def render_report(persona: Persona, results: list[StoryResult], base_url: str, read_only: bool) -> str:
+def site_findings(results: list[StoryResult]) -> dict[str, list[str]]:
+    """Site-wide check results, merged once per device (deduplicated across stories). Pure."""
+    out: dict[str, list[str]] = {}
+    for r in results:
+        for c in r.checks:
+            if c.get("scope") == "site" and not c["passed"]:
+                seen = out.setdefault(r.device, [])
+                for item in c.get("items", []):
+                    if item not in seen:
+                        seen.append(item)
+    return out
+
+
+def render_report(persona: Persona, results: list[StoryResult], base_url: str, read_only: bool,
+                  skipped: Optional[list[tuple[str, str]]] = None, warnings: Optional[list[str]] = None) -> str:
     counts = {k: sum(1 for r in results if r.status == k) for k in ("passed", "failed", "needs-judgment", "inconclusive")}
     lines = [
         f"# Persona run: {persona.name}",
@@ -255,6 +360,13 @@ def render_report(persona: Persona, results: list[StoryResult], base_url: str, r
     for r in sorted(results, key=lambda x: (order[x.status], x.story, x.device)):
         reason = r.reason.replace("|", "/")[:140]
         lines.append(f"| {r.story} | {r.device} | {r.status} | {reason} | {r.elapsed_s:.1f}s |")
+    site = site_findings(results)
+    if site:
+        lines += ["", "## Site-wide persona checks (once per device; warnings, not story failures)", ""]
+        for device, items in site.items():
+            lines.append(f"- **{device}**: {len(items)} control(s) under {persona.min_tap_target_px}px "
+                         f"(the persona's preference; WCAG 2.5.8 is 24px, see the a11y-check skill)")
+            lines += [f"  - {x}" for x in items[:25]]
     judge = [r for r in results if r.status == "needs-judgment"]
     if judge:
         lines += ["", "## Needs judgment (look at each screenshot, then report it as JUDGED pass or JUDGED fail)", ""]
@@ -266,6 +378,12 @@ def render_report(persona: Persona, results: list[StoryResult], base_url: str, r
         lines += ["", "## Writes the guard blocked (the UI may show success that did not happen)", ""]
         for r, w in writes[:50]:
             lines.append(f"- {r.story} @ {r.device}: {w['method']} {w['path']} ({w['body_bytes']} bytes)")
+    if skipped:
+        lines += ["", "## Not run", ""]
+        lines += [f"- {sid}: {why}" for sid, why in skipped]
+    if warnings:
+        lines += ["", "## Warnings (stories.json)", ""]
+        lines += [f"- {w}" for w in warnings]
     return "\n".join(lines) + "\n"
 
 
@@ -291,9 +409,11 @@ TAP_JS = """
 """
 
 
-def persona_checks(page: Any, persona: Persona, device: str, elapsed: float, console_errors: list[str]) -> list[dict]:
+def persona_checks(page: Any, persona: Persona, device: str, elapsed: float, console_errors: list[str],
+                   note: str = "") -> list[dict]:
     checks = [{"check": "patience", "passed": elapsed <= persona.patience_seconds,
-               "detail": f"{elapsed:.1f}s against a {persona.patience_seconds:g}s budget"}]
+               "detail": f"{elapsed:.1f}s to content against a {persona.patience_seconds:g}s budget"
+                         + (f" ({note})" if note else "")}]
     if DEVICE_PROFILES[device].get("is_mobile"):
         dims = page.evaluate(OVERFLOW_JS)
         ok = dims["sw"] <= dims["iw"] + 1
@@ -301,7 +421,7 @@ def persona_checks(page: Any, persona: Persona, device: str, elapsed: float, con
                        "detail": "no horizontal scroll" if ok else f"page is {dims['sw']}px wide in a {dims['iw']}px viewport"})
     if persona.min_tap_target_px:
         small = page.evaluate(TAP_JS, persona.min_tap_target_px)
-        checks.append({"check": "tap-targets", "passed": not small,
+        checks.append({"check": "tap-targets", "scope": "site", "passed": not small, "items": small,
                        "detail": "all controls large enough" if not small else
                        f"{len(small)} control(s) under {persona.min_tap_target_px}px, e.g. {small[0]}"})
     checks.append({"check": "console", "passed": not console_errors,
@@ -310,25 +430,38 @@ def persona_checks(page: Any, persona: Persona, device: str, elapsed: float, con
 
 
 def run_one(pw: Any, browser_name: str, persona: Persona, story: Story, device: str, base_url: str,
-            out_dir: Path, read_only: bool, timeout_ms: int) -> StoryResult:
+            out_dir: Path, read_only: bool, timeout_ms: int, auth: Optional[dict] = None,
+            settle_ms: int = qa_session.DEFAULT_SETTLE_MS, wait_for: Optional[str] = None) -> StoryResult:
     from playwright.sync_api import TimeoutError as PWTimeout
     steps = [{"goto": story.start}] + story.steps
     res = StoryResult(story=story.id, title=story.title, device=device, status="inconclusive",
                       acceptance=story.acceptance, steps=steps)
-    browser = getattr(pw, browser_name).launch()
+    browser = qa_session.launch(pw, browser_name)
     try:
-        ctx = browser.new_context(**context_kwargs(device, browser_name))
-        if read_only:
-            install_read_only_guard(ctx, res.blocked_writes)
+        ctx = browser.new_context(**context_kwargs(device, browser_name), **qa_session.context_options(auth))
         page = ctx.new_page()
-        page.on("console", lambda m: res.console_errors.append(m.text) if m.type == "error" else None)
-        page.on("pageerror", lambda e: res.console_errors.append(f"uncaught: {e}"))
         t0 = time.monotonic()
         try:
+            try:  # sign in before the read-only guard, so a sign-in POST goes through
+                qa_session.apply_auth(ctx, page, auth, base_url,
+                                      lambda pg, st: run_steps(pg, st, base_url, timeout_ms, [], PWTimeout))
+            except StepFailure as sf:
+                raise StepFailure("inconclusive", f"sign-in (auth.login_steps) failed: {sf.message}") from None
+            if read_only:
+                install_read_only_guard(ctx, res.blocked_writes)
+            page.on("console", lambda m: res.console_errors.append(m.text) if m.type == "error" else None)
+            page.on("pageerror", lambda e: res.console_errors.append(f"uncaught: {e}"))
+            tracker = qa_session.NetTracker(page)
+            t0 = time.monotonic()                      # navigation start
             run_steps(page, steps, base_url, timeout_ms, [], PWTimeout)
-            res.elapsed_s = round(time.monotonic() - t0, 2)
+            selector = story.wait_for or wait_for
+            try:
+                ready, note = qa_session.settle(page, tracker, timeout_ms, selector, settle_ms)
+            except PWTimeout:
+                raise StepFailure("fail", f"content never appeared: {selector} not visible within {timeout_ms} ms") from None
+            res.elapsed_s = round(ready - t0, 2)
             res.assertions = check_assertions(page, story.assertions, timeout_ms, res.console_errors, [])
-            res.checks = persona_checks(page, persona, device, res.elapsed_s, res.console_errors)
+            res.checks = persona_checks(page, persona, device, res.elapsed_s, res.console_errors, note)
             res.status, res.reason = classify(res.assertions, res.checks, bool(story.assertions))
             if story.writes and read_only and res.blocked_writes:
                 res.reason += " (writes were simulated by the read-only guard)"
@@ -345,6 +478,8 @@ def run_one(pw: Any, browser_name: str, persona: Persona, story: Story, device: 
         except Exception:  # noqa: BLE001
             pass
         ctx.close()
+    except qa_session.SessionError:
+        raise
     except Exception as exc:  # noqa: BLE001
         res.status, res.reason = "inconclusive", f"harness error: {str(exc).splitlines()[0] if str(exc) else type(exc).__name__}"
     finally:
@@ -356,27 +491,27 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="persona_run.py", description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--persona", required=True)
-    ap.add_argument("--stories", required=True)
+    ap.add_argument("--stories", required=True, help="the project's stories.json (for example product/stories.json)")
     ap.add_argument("--base-url", required=True)
-    ap.add_argument("--story", action="append", default=None, help="only these story ids")
+    ap.add_argument("--story", action="append", default=None, help="only these story ids (runs them whatever their status)")
     ap.add_argument("--devices", default="", help="comma list overriding the persona's devices")
     ap.add_argument("--browser", default="chromium", choices=["chromium", "webkit", "firefox"])
     ap.add_argument("--out", default=None, help="default .qa/persona/<persona-name>")
     ap.add_argument("--timeout-ms", type=int, default=10000)
+    ap.add_argument("--settle-ms", type=int, default=qa_session.DEFAULT_SETTLE_MS,
+                    help="extra wait after the network goes quiet, before checks and the screenshot")
+    ap.add_argument("--wait-for", default=None, help="selector that means 'content is here' for stories without qa.wait_for")
     ap.add_argument("--allow-writes", action="store_true", help="local targets only")
     ap.add_argument("--file-tickets", action="store_true", help="ticket failures that reproduced on the previous run")
     ap.add_argument("--plan", action="store_true", help="print the matrix and exit")
+    qa_session.add_auth_args(ap)
     args = ap.parse_args(argv)
 
+    warnings: list[str] = []
     try:
         persona = parse_persona(Path(args.persona).read_text(encoding="utf-8"), args.persona)
-        stories = parse_stories(qa_yaml.load_file(args.stories), args.stories)
-        if args.story:
-            wanted = set(args.story)
-            missing = wanted - {s.id for s in stories}
-            if missing:
-                raise ConfigError(f"unknown story id(s): {sorted(missing)}")
-            stories = [s for s in stories if s.id in wanted]
+        stories, skipped = select_stories(parse_stories(qa_yaml.load_file(args.stories), args.stories, warnings),
+                                          args.story)
         only = [d.strip() for d in args.devices.split(",") if d.strip()] or None
         if only and any(d not in DEVICE_PROFILES for d in only):
             raise ConfigError(f"unknown device in {only}; known: {sorted(DEVICE_PROFILES)}")
@@ -384,21 +519,29 @@ def main(argv: list[str] | None = None) -> int:
             resolve_url(s.start, args.base_url)
         if args.allow_writes and not writes_allowed(args.base_url):
             raise ConfigError(f"--allow-writes is refused for {args.base_url}: only localhost targets may take writes")
-    except (OSError, ConfigError, qa_yaml.YamlError, json.JSONDecodeError) as exc:
+        auth = qa_session.auth_from_args(args, validate_step)
+        if not args.plan:
+            qa_session.check_ready(auth)
+    except (OSError, ConfigError, qa_session.SessionError, qa_yaml.YamlError, json.JSONDecodeError) as exc:
         print(f"CONFIG ERROR: {exc}", file=sys.stderr)
         return EXIT_CONFIG
+    for w in warnings:
+        print(f"WARNING: {w}", file=sys.stderr)
+    skipped_rows = [(s.id, why) for s, why in skipped]
 
     matrix = plan(stories, persona, only)
     if args.plan:
         for s, d in matrix:
-            print(f"{s.id:10} {d:18} {s.title}")
+            mode = "scripted" if s.scripted else "judge acceptance"
+            print(f"{s.id:10} {d:18} {s.start:24} {mode:17} {s.title}")
+        for sid, why in skipped_rows:
+            print(f"{sid:10} {'(skipped)':18} {why}")
         print(f"{len(matrix)} run(s) for persona {persona.name}")
         return EXIT_PASS
     try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        print("CONFIG ERROR: Playwright is not installed. Run:\n"
-              "  pip install playwright && python3 -m playwright install chromium", file=sys.stderr)
+        sync_playwright = qa_session.import_sync_playwright(args.browser)
+    except qa_session.BrowserMissing as exc:
+        print(f"CONFIG ERROR: {exc}", file=sys.stderr)
         return EXIT_CONFIG
 
     slug = re.sub(r"[^a-z0-9]+", "-", persona.name.lower()).strip("-") or "persona"
@@ -406,11 +549,16 @@ def main(argv: list[str] | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     read_only = not args.allow_writes
     results: list[StoryResult] = []
-    with sync_playwright() as pw:
-        for story, device in matrix:
-            r = run_one(pw, args.browser, persona, story, device, args.base_url, out, read_only, args.timeout_ms)
-            results.append(r)
-            print(f"{r.status.upper():15} {story.id} @ {device}: {r.reason}")
+    try:
+        with sync_playwright() as pw:
+            for story, device in matrix:
+                r = run_one(pw, args.browser, persona, story, device, args.base_url, out, read_only, args.timeout_ms,
+                            auth=auth, settle_ms=args.settle_ms, wait_for=args.wait_for)
+                results.append(r)
+                print(f"{r.status.upper():15} {story.id} @ {device}: {r.reason}")
+    except (qa_session.BrowserMissing, qa_session.SessionError) as exc:
+        print(f"CONFIG ERROR: {exc}", file=sys.stderr)
+        return EXIT_CONFIG
 
     current = [asdict(r) for r in results]
     res_path, prev_path = out / "results.json", out / "previous-results.json"
@@ -422,10 +570,12 @@ def main(argv: list[str] | None = None) -> int:
             previous = []
         res_path.replace(prev_path)
     code = run_verdict(results)
+    site = site_findings(results)
     res_path.write_text(json.dumps({"persona": persona.name, "base_url": args.base_url, "read_only": read_only,
                                     "ran_at": datetime.now(timezone.utc).isoformat(), "exit_code": code,
-                                    "results": current}, indent=2))
-    (out / "REPORT.md").write_text(render_report(persona, results, args.base_url, read_only))
+                                    "site_findings": site, "skipped": [{"story": a, "why": b} for a, b in skipped_rows],
+                                    "warnings": warnings, "results": current}, indent=2))
+    (out / "REPORT.md").write_text(render_report(persona, results, args.base_url, read_only, skipped_rows, warnings))
     if args.file_tickets:
         repro = reproduced_failures(previous, current)
         tdir = out / "tickets"
@@ -434,8 +584,11 @@ def main(argv: list[str] | None = None) -> int:
             (tdir / f"{r['story']}-{r['device']}.md").write_text(render_ticket(r, persona.name, args.base_url))
         print(f"{len(repro)} ticket(s) written to {tdir} (failures seen on two runs in a row)")
     counts = {k: sum(1 for r in results if r.status == k) for k in ("passed", "failed", "needs-judgment", "inconclusive")}
+    for device, items in site.items():
+        print(f"SITE-WIDE  {device}: {len(items)} control(s) under {persona.min_tap_target_px}px (warning, see REPORT.md)")
     print(f"Tested as {persona.name}: {counts['passed']} of {len(results)} pass, {counts['failed']} fail, "
-          f"{counts['needs-judgment']} need judgment, {counts['inconclusive']} inconclusive.  report: {out / 'REPORT.md'}")
+          f"{counts['needs-judgment']} need judgment, {counts['inconclusive']} inconclusive"
+          + (f", {len(skipped_rows)} not run" if skipped_rows else "") + f".  report: {out / 'REPORT.md'}")
     return code
 
 

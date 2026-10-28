@@ -1,11 +1,21 @@
 ---
 name: iphone-mirror
-description: Drive a real iPhone from this Mac through macOS iPhone Mirroring, using a screenshot, read, act, verify loop (tap, type, swipe, home). Use when a task must happen ON the iPhone and has no Mac-side API, such as QA of an iOS app on a real device, walking through an onboarding flow, toggling a Setting, or building a Shortcut. Trigger phrases include "on my iPhone", "tap through the app on the phone", "test the iOS build on a real device", "iPhone Mirroring", "screenshot my phone", "drive the phone".
+description: Drive a real iPhone from this Mac through macOS iPhone Mirroring, using a screenshot, read, act, verify loop (tap, type, swipe, home), and check that a real-iPhone setup is ready (helper app plus Accessibility, Screen Recording and Automation permissions). Load it BEFORE calling any iphone_* MCP tool or the iphone-mirror CLI; it holds the doctor-first rule and the stop conditions. Use when a task must happen ON the iPhone and has no Mac-side API, such as QA of an iOS app on a real device, walking through an onboarding flow, toggling a Setting, or building a Shortcut. Trigger phrases include "on my iPhone", "on my actual phone", "QA on my real iPhone", "is my setup ready to test on my real iPhone", "set up iPhone Mirroring for Claude", "check the phone connection", "tap through the app on the phone", "test the iOS build on a real device", "iPhone Mirroring", "screenshot my phone", "drive the phone". For the iOS Simulator use foundry-devices instead. Long tasks go to the iphone-driver agent.
 ---
 
 # Drive an iPhone through iPhone Mirroring
 
 Install: plugin only. It drives the phone through the plugin's `iphone-mirror` CLI on PATH (bin/), its `iphone` MCP server, and the compiled helper app built from the plugin's engine/.
+
+Maturity: new (port of a proven engine; not yet run on a device).
+
+## You MUST
+
+1. Run `iphone-mirror doctor` (or the `iphone_doctor` tool) first, every session. On any `[FAIL]`, stop and give the user the fix from that line.
+2. Act on the phone only for a task the user asked for. A setup or readiness question gets the doctor and nothing else.
+3. Never click a System Settings permission dialog. The helper app needs three grants (Accessibility, Screen Recording, Automation to control System Events), and only the user can give them.
+4. One action, then one screenshot to verify. Never chain actions.
+5. Never buy, send, delete, or change account or security settings unless the user named that exact action.
 
 An iPhone has no Mac-side API for most apps. iPhone Mirroring (macOS 15+) shows the
 phone's screen in a Mac window and forwards clicks and keystrokes to the phone. This
@@ -124,8 +134,6 @@ did not screenshot is not verified.
 
 ## Rules
 
-- `doctor` first. On any FAIL, stop and report the fix.
-- One action, then one screenshot. Always.
 - Locked phone, "iPhone in Use", or a connect screen: the user must act on the physical
   phone (unlock it, or lock it again so Mirroring can take over). Report it, do not tap.
 - Secrets: `type` sends literal keystrokes that show on the mirror and may be captured

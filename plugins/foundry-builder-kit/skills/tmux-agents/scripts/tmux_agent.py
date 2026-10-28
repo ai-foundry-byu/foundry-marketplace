@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """tmux_agent.py: let an agent drive interactive programs through tmux.
 
-Every command uses a PRIVATE tmux socket, so an agent never types into the
-user's own tmux sessions by accident.
+Every command uses a PRIVATE tmux socket, one per project, so an agent never types
+into the user's own tmux sessions, and agents working in different projects never
+see (or kill) each other's sessions.
 
   tmux_agent.py start  NAME [--cwd DIR] [--cmd "python3 -q"]
   tmux_agent.py send   NAME "text to type"          (types it, then presses Enter separately)
@@ -12,14 +13,18 @@ user's own tmux sessions by accident.
   tmux_agent.py wait   NAME "regex" [--timeout 30] [--fixed]   exit 0 on match, 1 on timeout
   tmux_agent.py run    NAME "command" [--timeout 600]          run a shell command, wait, print output and exit code
   tmux_agent.py ls
-  tmux_agent.py kill   NAME | --all
+  tmux_agent.py kill   NAME | --all                  (--all: every session on THIS project's socket)
+  tmux_agent.py socket                              print the socket path
 
-Socket: $TMUX_AGENT_SOCKET, else <tmp dir>/tmux-agent-<uid>/agent.sock
+Socket: $TMUX_AGENT_SOCKET if set (set it to share one socket on purpose), else
+<tmp dir>/tmux-agent-<uid>/<project>-<hash>.sock, where the project is the git
+top-level of the current directory (or the directory itself outside a repo).
 Watch along as a human:  tmux -S <socket> attach -t NAME   (detach: Ctrl-b d)
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -30,6 +35,19 @@ import time
 import uuid
 
 
+def project_root() -> str:
+    """The git top-level of the current directory, or the directory itself outside a repo."""
+    cwd = os.getcwd()
+    try:
+        res = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=cwd,
+                             capture_output=True, text=True, timeout=5)
+        if res.returncode == 0 and res.stdout.strip():
+            return os.path.realpath(res.stdout.strip())
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return os.path.realpath(cwd)
+
+
 def socket_path() -> str:
     env = os.environ.get("TMUX_AGENT_SOCKET")
     if env:
@@ -37,7 +55,10 @@ def socket_path() -> str:
     uid = os.getuid() if hasattr(os, "getuid") else "user"
     d = os.path.join(tempfile.gettempdir(), f"tmux-agent-{uid}")
     os.makedirs(d, mode=0o700, exist_ok=True)
-    return os.path.join(d, "agent.sock")
+    root = project_root()
+    slug = re.sub(r"[^A-Za-z0-9_-]", "", os.path.basename(root))[:12] or "root"
+    # Keep the name short: a Unix socket path is limited to about 104 bytes on macOS.
+    return os.path.join(d, f"{slug}-{hashlib.sha1(root.encode()).hexdigest()[:10]}.sock")
 
 
 def tmux(*args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -109,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     ru = sub.add_parser("run"); ru.add_argument("name"); ru.add_argument("command")
     ru.add_argument("--timeout", type=float, default=600.0)
     sub.add_parser("ls")
+    sub.add_parser("socket")
     kl = sub.add_parser("kill"); kl.add_argument("name", nargs="?"); kl.add_argument("--all", action="store_true")
     a = ap.parse_args(argv)
     sock = socket_path()
@@ -123,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         if a.launch:
             send_text(a.name, a.launch)
-        print(f"started {a.name}\n  watch: tmux -S {sock} attach -t {a.name}\n"
+        print(f"started {a.name}\n  socket: {sock}\n  watch: tmux -S {sock} attach -t {a.name}\n"
               f"  read:  tmux -S {sock} capture-pane -p -J -t {a.name}:0.0 -S -200")
         return 0
     if a.cmd == "send":
@@ -151,10 +173,14 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "ls":
         res = tmux("list-sessions", "-F", "#{session_name}\t#{session_windows} windows\tcreated #{t:session_created}", check=False)
         print(res.stdout.strip() or "(no sessions)")
+        print(f"socket: {sock}", file=sys.stderr)
+        return 0
+    if a.cmd == "socket":
+        print(sock)
         return 0
     if a.cmd == "kill":
         if a.all:
-            tmux("kill-server", check=False)
+            tmux("kill-server", check=False)  # only this socket's server: this project's sessions
             return 0
         if not a.name:
             print("kill needs a NAME or --all", file=sys.stderr)

@@ -19,23 +19,38 @@ each token, says when to use it, and records the rules a reviewer can check.
 
 ### If the project already has styles
 
-1. **Find the token source.** Look for CSS custom properties, a Tailwind config, or a theme file:
+1. **List the style and component files.** Never assume `src/`: styles live in `public/css/`,
+   `app/`, `assets/` and elsewhere. Use the tracked files, with `find` as the fallback outside
+   git. The extraction below repeats this list so each command block runs on its own:
 
    ```bash
-   grep -rlE -- '--[a-z0-9-]+:\s' src styles app 2>/dev/null | head
-   ls tailwind.config.* src/theme* src/styles 2>/dev/null
+   files() { { git ls-files -- '*.css' '*.scss' '*.sass' '*.less' '*.html' '*.tsx' '*.jsx' '*.vue' '*.svelte' '*.astro' 2>/dev/null | grep . ; } \
+     || find . \( -name node_modules -o -name .git -o -name dist -o -name build -o -name .next \) -prune -o -type f \
+          \( -name '*.css' -o -name '*.scss' -o -name '*.sass' -o -name '*.less' -o -name '*.html' -o -name '*.tsx' \
+             -o -name '*.jsx' -o -name '*.vue' -o -name '*.svelte' -o -name '*.astro' \) -print; }
+   files | head -40
+   # token source: CSS custom properties, plus a Tailwind config or theme file
+   files | tr '\n' '\0' | xargs -0 grep -lE -- '--[a-z0-9-]+:[[:space:]]' 2>/dev/null | head
+   ls -a | grep -iE '^tailwind\.config'; files | grep -iE 'theme|tokens' | head
    ```
 
-2. **Extract what is actually used**, not what you wish were used:
+   If the list is empty, the project has no style files yet: treat it as greenfield (below).
+
+2. **Extract what is actually used**, not what you wish were used (same `files` list):
 
    ```bash
-   # raw colors in components (each one is a token you are missing, or drift)
-   grep -rnoE '#[0-9a-fA-F]{3,8}\b' src --include='*.css' --include='*.tsx' --include='*.jsx' | sort | uniq -c | sort -rn | head -30
+   files() { { git ls-files -- '*.css' '*.scss' '*.sass' '*.less' '*.html' '*.tsx' '*.jsx' '*.vue' '*.svelte' '*.astro' 2>/dev/null | grep . ; } \
+     || find . \( -name node_modules -o -name .git -o -name dist -o -name build -o -name .next \) -prune -o -type f \
+          \( -name '*.css' -o -name '*.scss' -o -name '*.sass' -o -name '*.less' -o -name '*.html' -o -name '*.tsx' \
+             -o -name '*.jsx' -o -name '*.vue' -o -name '*.svelte' -o -name '*.astro' \) -print; }
+   g() { files | tr '\n' '\0' | xargs -0 grep -hoE "$1" 2>/dev/null; }
+   # raw colors (each one is a token you are missing, or drift)
+   g '#[0-9a-fA-F]{3,8}\b' | sort | uniq -c | sort -rn | head -30
    # font sizes and weights in use
-   grep -rnoE 'font-size:\s*[0-9.]+(px|rem)' src | sed 's/.*font-size:\s*//' | sort | uniq -c | sort -rn
-   grep -rnoE 'font-weight:\s*[0-9]+' src | sed 's/.*font-weight:\s*//' | sort | uniq -c | sort -rn
+   g 'font-size:[[:space:]]*[0-9.]+(px|rem|em)' | sed -E 's/font-size:[[:space:]]*//' | sort | uniq -c | sort -rn
+   g 'font-weight:[[:space:]]*[0-9]+' | sed -E 's/font-weight:[[:space:]]*//' | sort | uniq -c | sort -rn
    # spacing values in use
-   grep -rnoE '(margin|padding|gap)[a-z-]*:\s*[0-9]+px' src | grep -oE '[0-9]+px' | sort -n | uniq -c
+   g '(margin|padding|gap)[a-z-]*:[[:space:]]*[0-9]+px' | grep -oE '[0-9]+px' | sort -n | uniq -c
    ```
 
 3. **Collapse to a system.** Pick the smallest set that covers real use: usually 4-6 surface

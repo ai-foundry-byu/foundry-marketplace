@@ -98,6 +98,18 @@ class TestDiff(unittest.TestCase):
         r2 = vb.compare_images("x", self.d / "cur.png", self.d / "base.png", self.d / "diff.png", threshold=25.0)
         self.assertEqual(r2.status, "pass")
 
+    def test_changed_box_locates_the_change(self):
+        base = solid(10, 10, (255, 228, 225))
+        cur = [bytearray(r) for r in base]
+        for y in (3, 4):
+            for x in (2, 5):
+                cur[y][x * 3:x * 3 + 3] = b"\x10\x10\x10"
+        write_png(self.d / "cur.png", 10, 10, [bytes(r) for r in cur])
+        write_png(self.d / "base.png", 10, 10, base)
+        r = vb.compare_images("x", self.d / "cur.png", self.d / "base.png", self.d / "diff.png")
+        self.assertEqual(r.changed_box, [2, 3, 5, 4])
+        self.assertIn("marker, not the page color", r.message)
+
     def test_size_change_fails(self):
         write_png(self.d / "a.png", 10, 12, solid(10, 12, (0, 0, 0)))
         write_png(self.d / "b.png", 10, 10, solid(10, 10, (0, 0, 0)))

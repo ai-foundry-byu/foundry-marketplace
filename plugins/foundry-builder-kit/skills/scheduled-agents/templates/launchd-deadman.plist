@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The deadman for com.example.daily-digest, as its OWN LaunchAgent (a broken job cannot silence it).
+  Save as ~/Library/LaunchAgents/com.example.daily-digest-deadman.plist
+  Replace every /Users/YOU path (launchd does not expand $HOME or ~).
+  Alert channel: launchd does NOT see variables exported in your shell profile, so an
+  "$ALERT_WEBHOOK_URL" here would be empty. Put the webhook URL on one line in a file instead:
+           mkdir -p ~/.config/agent-alerts && chmod 700 ~/.config/agent-alerts
+           printf '%s\n' 'https://hooks.slack.com/services/...' > ~/.config/agent-alerts/webhook.url
+           chmod 600 ~/.config/agent-alerts/webhook.url
+  With no working channel the check exits 3, prints NO ALERT CHANNEL to launchd.err.log, and
+  writes daily-digest.DEADMAN-ALERT.txt next to the heartbeat.
+  Check:   plutil -lint ~/Library/LaunchAgents/com.example.daily-digest-deadman.plist
+  Load:    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.daily-digest-deadman.plist
+  Fire it: launchctl kickstart gui/$(id -u)/com.example.daily-digest-deadman
+  OFF condition: bootout and delete this file together with the job's plist.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.example.daily-digest-deadman</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/YOU/projects/your-app/scripts/deadman.py</string>
+    <string>check</string>
+    <string>--name</string><string>daily-digest</string>
+    <string>--file</string><string>/Users/YOU/projects/your-app/.agent-jobs/daily-digest.heartbeat.json</string>
+    <string>--max-age</string><string>26h</string>
+    <string>--webhook-file</string><string>/Users/YOU/.config/agent-alerts/webhook.url</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+  <key>StandardOutPath</key><string>/Users/YOU/projects/your-app/.agent-jobs/deadman.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/projects/your-app/.agent-jobs/deadman.err.log</string>
+</dict>
+</plist>

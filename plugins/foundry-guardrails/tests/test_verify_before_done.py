@@ -65,8 +65,9 @@ class Flow(HookCase):
         code, out, _ = result
         self.assertEqual(code, 0)
         self.assertIsNotNone(out)
-        self.assertEqual(out["decision"], "block")
-        self.assertIn("test", out["reason"])
+        # non-error Stop feedback (2026-10-28): decision:block is shown as "Stop hook error"
+        self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "Stop")
+        self.assertIn("test", out["hookSpecificOutput"]["additionalContext"])
 
     def test_no_edits_no_block(self):
         self.assertAllowed(self.stop())
@@ -122,8 +123,12 @@ class Flow(HookCase):
                           "VERIFY_OK=1")
         self.assertEqual(self.log_lines()[-1]["action"], "deny")
 
-    def test_push_allowed_with_token_and_satisfies_stop(self):
+    def test_push_token_only_after_tests(self):
+        # 2026-10-28 live campaign (D5): the token was typed with no tests run
         self.edit("app.py")
+        self.assertDenied(self.run_hook(S, self.bash("VERIFY_OK=1 git push", cwd=self.proj)),
+                          "run the tests first")
+        self.run_hook(S, self.bash("pytest", cwd=self.proj))
         self.assertAllowed(self.run_hook(S, self.bash("VERIFY_OK=1 git push", cwd=self.proj)))
         self.assertAllowed(self.stop())
 

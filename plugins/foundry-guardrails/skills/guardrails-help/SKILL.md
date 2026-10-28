@@ -14,31 +14,38 @@ The foundry-guardrails plugin runs six hooks. A blocked call is a decision a hum
 1. Read the reason. Every message names the hook and usually the rule, for example `[foundry-guardrails/destructive-guard] ... (rule git-reset-hard)`.
 2. Do the safe alternative the message names. Do **not** try another spelling of the same command (`bash -c`, `eval`, a script file, a different reader tool). Getting around a guard defeats the reason it exists, and the attempt is logged.
 3. If no safe path exists, stop and tell the human what you wanted to do, why, and which rule blocked it. Quote the rule name so they can allow it if they decide to.
+4. Never type `VERIFY_OK=1` before a test or typecheck run has passed. If there are no tests, hand the command to the human.
+5. When two guards deny the same call, Claude Code passes only one reason to you. After fixing that one, expect the other.
 
 ## Per hook
 
 | Message from | What it means | Do this |
 |---|---|---|
 | `destructive-guard` | the command could destroy data or history | `git stash` instead of `reset --hard`; `--force-with-lease` on a feature branch instead of `--force`; name the exact directory to delete; add a `WHERE` clause; download a script to a file and read it before you run it |
-| `secret-guard` | the command or Read would put a secret value in the transcript | load secrets with `source .env && <cmd>`; check presence with `test -f .env` or `grep -q KEY .env`; read `.env.example` for key names; ask the human to set a missing value |
-| `verify-before-done` (PreToolUse) | a push, deploy, publish or merge needs evidence first | run the tests or typecheck, look at the result, report it, then re-run the same command with `VERIFY_OK=1` in front, for example `VERIFY_OK=1 git push origin feature`. Use the token only after you really verified |
-| `verify-before-done` (Stop) | you edited code and ran no test or typecheck after the last edit | run the project's test command (`pytest`, `python -m unittest`, `npm test`, `npx tsc --noEmit`, `go test ./...`) and report the command and its result. If there is no way to test this change, say so plainly and explain why. The stop is allowed on the next try |
+| `secret-guard` | the command or Read would put a secret value in the transcript | load secrets with `source .env && <cmd>`; check presence with `test -f .env`, `grep -q KEY .env` or `test -n "$VAR" && echo set`; list key names only with `cut -d= -f1 .env` (or `env \| cut -d= -f1`); ask the human to set a missing value |
+| `verify-before-done` (PreToolUse) | a push, deploy, publish or merge needs evidence first | run the tests or typecheck and report the result. Only after a passing run, re-run the command with `VERIFY_OK=1` in front, for example `VERIFY_OK=1 git push origin feature`. The token is refused while code changed since the last test run; in one command a test counts only as `<test> && VERIFY_OK=1 <command>` (not after `;`, `||`, `&` or a pipe). No tests, or you could not verify: do not add the token; tell the human what is unverified and let them run it |
+| `verify-before-done` (Stop) | you changed code (with any tool, including `sed -i`, heredocs or scripts) and ran no test or typecheck after the change | run the project's test command (`pytest`, `python -m unittest`, `npm test`, `npx tsc --noEmit`, `go test ./...`) and report the command and its result. If there is no way to test this change, say so plainly and explain why. The stop is allowed on the next try |
 | `worktree-guard` | you are in a linked worktree but edited the main checkout | redo the edit at the path the message suggests, inside your worktree |
-| `stale-write-guard` | the file has uncommitted changes and Write would replace all of it | Read the file again, then use Edit for a targeted change |
-| `ship-stop` | the workplan milestone is still `- [ ]` | keep working until its acceptance notes pass, then change it to `- [x]`. If it is truly blocked on a human (a credential, a decision, access), change it to `- [!]` with the reason on the same line, and report |
+| `stale-write-guard` | the file has uncommitted changes this session did not make, and Write would replace all of it | use Edit for a targeted change that keeps those lines, or ask the human to commit or stash first. A Read does not lift this block |
+| `ship-stop` | the workplan milestone is still `- [ ]` | keep working until its acceptance notes pass, then change it to `- [x]`. If it is truly blocked on a human (a credential, a decision, access), change it to `- [!]` with the reason on the same line, and report. After 8 continuations the stop is allowed and the human is told to look |
 
 ## Configuring (for the human)
 
 All switches are environment variables. Set them in the `env` block of `.claude/settings.json` or `.claude/settings.local.json`, not inside a command:
 
 ```json
-{ "env": { "FOUNDRY_DESTRUCTIVE_ALLOW": "git-clean", "FOUNDRY_STALE_WRITE_ENFORCE": "1" } }
+{ "env": { "FOUNDRY_DESTRUCTIVE_ALLOW": "git-clean", "FOUNDRY_STALE_WRITE_ENFORCE": "0" } }
 ```
 
 - Turn everything off: `FOUNDRY_GUARDRAILS=0`. Turn one hook off: `FOUNDRY_DESTRUCTIVE_GUARD=0`, `FOUNDRY_SECRET_GUARD=0`, `FOUNDRY_VERIFY=0`, `FOUNDRY_WORKTREE_GUARD=0`, `FOUNDRY_STALE_WRITE_GUARD=0`, `FOUNDRY_SHIP_STOP=0`.
 - Allow one destructive rule: `FOUNDRY_DESTRUCTIVE_ALLOW=<rule>`, using the rule name from the deny message.
+- Let a push go out with no test run: `FOUNDRY_VERIFY=0`. Let stale-write-guard warn instead of deny: `FOUNDRY_STALE_WRITE_ENFORCE=0` (the warning comes after the write, so it protects nothing).
 - Teach verify-before-done your test runner: `FOUNDRY_VERIFY_TEST_PATTERN='^just test'`. Exclude non-code files: `FOUNDRY_VERIFY_IGNORE='*.json,*.lock'`.
 - Ship mode: `FOUNDRY_SHIP_WORKPLAN=WORKPLAN.md` plus an optional `FOUNDRY_SHIP_MILESTONE=M3.2`. Milestones are `- [ ] M<n>[.<n>] title` lines, and indented lines under one are its acceptance notes.
+
+## "Stop hook error occurred" (for the human)
+
+When a Stop guard keeps Claude working, that is the guard working, not a crash. This plugin sends it as Stop hook feedback, which Claude Code documents as the non-error path. Older plugin builds used `decision: "block"`, which Claude Code labels "Stop hook error occurred · ctrl+o to see". In either case press ctrl+o to read the reason, or check `guardrails.log`. Claude Code also ends a turn on its own once Stop hooks have continued it 8 times in a row without a tool call (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` raises that).
 
 ## Checking what happened
 

@@ -2,7 +2,7 @@
 import os
 import unittest
 
-from _support import Sandbox, run_cli, CLI
+from _support import Sandbox, run_cli, write_exe, CLI
 
 
 class ClientTests(unittest.TestCase):
@@ -61,8 +61,50 @@ class ClientTests(unittest.TestCase):
         self.assertNotEqual(rc, 0)
         self.assertIn("helper app missing", out)
 
+    def _stub_open(self):
+        """Put a recording `open` first on PATH; return the log path."""
+        bindir = os.path.join(self.sb.dir, "stubbin")
+        os.makedirs(bindir, exist_ok=True)
+        log = os.path.join(self.sb.dir, "open.log")
+        write_exe(os.path.join(bindir, "open"), f'#!/bin/bash\necho "STUB-open $*" >> "{log}"\n')
+        self.sb.env["PATH"] = bindir + os.pathsep + self.sb.env.get("PATH", "")
+        self.sb.env["IPHONE_MIRROR_HELPER"] = os.path.join(self.sb.dir, "Nope.app")
+        return log
+
+    def test_missing_helper_never_raises_mirroring(self):
+        # L8-D1: every action must check the helper BEFORE `open -a "iPhone Mirroring"`.
+        log = self._stub_open()
+        for args in (("info",), ("shot",), ("tap", "1", "1"), ("tapxy", "1", "1"),
+                     ("swipe", "1", "1", "2", "2"), ("home",), ("type", "x"), ("key", "return")):
+            rc, out = run_cli(self.sb, *args, direct=False)
+            self.assertNotEqual(rc, 0, args)
+            self.assertIn("helper app missing", out, args)
+        self.assertFalse(os.path.exists(log), read_or_empty(log))
+
+    def test_state_override_ignored_outside_tests(self):
+        # L8-D3: the in-bundle worker always uses $HOME/Library/Caches/foundry-iphone-mirror,
+        # so the client must too unless the worker runs in-process (tests).
+        self._stub_open()
+        run_cli(self.sb, "map", "1", "1", direct=False)
+        default = os.path.join(self.sb.dir, "Library", "Caches", "foundry-iphone-mirror")
+        self.assertTrue(os.path.isdir(os.path.join(default, "shots")))
+        self.assertFalse(os.path.exists(os.path.join(self.sb.state, "shots")))
+
+    def test_doctor_names_all_three_grants_when_helper_missing(self):
+        # L8-D2: with no helper the doctor still says which three grants come next.
+        log = self._stub_open()
+        rc, out = run_cli(self.sb, "doctor", direct=False)
+        self.assertNotEqual(rc, 0)
+        for grant in ("Accessibility", "Screen Recording", "Automation"):
+            self.assertIn(grant, out)
+        self.assertFalse(os.path.exists(log))
+
     def test_cli_is_executable(self):
         self.assertTrue(os.access(CLI, os.X_OK))
+
+
+def read_or_empty(path):
+    return open(path).read() if os.path.exists(path) else ""
 
 
 if __name__ == "__main__":

@@ -5,6 +5,13 @@ attention on judgment.
 
   python3 explore.py --url http://localhost:3000 --max-pages 40
   python3 explore.py --url https://<your-app>.example.com --max-pages 25 --devices phone-390x844
+  python3 explore.py --url http://localhost:3000 --storage-state .qa/auth.json   # signed-in pages
+
+Hash-routed apps (#/group/1, #!/settings) are crawled: a fragment that looks
+like a route is kept as its own page; a plain anchor (#top) is not. Pages are
+deduplicated on the full URL and the crawl stops at --max-pages. After each
+navigation the crawler waits for the network to go quiet plus --settle-ms, so
+data that loads after the load event is on the page when it is checked.
 
 READ-ONLY by default (every non-GET/HEAD/OPTIONS request is answered locally,
 never sent). It never submits forms. Double-submit and edge-case input testing
@@ -29,9 +36,10 @@ import sys
 from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from urllib.parse import urldefrag, urljoin, urlsplit
+from urllib.parse import urldefrag, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import qa_session  # noqa: E402
 
 EXIT_PASS, EXIT_FAIL, EXIT_CONFIG, EXIT_INCONCLUSIVE = 0, 1, 2, 6
 SKIP_EXT = (".pdf", ".zip", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".mp4", ".mp3", ".dmg", ".exe")
@@ -58,12 +66,20 @@ class PageVisit:
     findings: list[Finding] = field(default_factory=list)
 
 
+def route_fragment(frag: str) -> str:
+    """'#/a/b' for a hash route (#/... or #!/...), '' for a plain anchor or an empty route. Pure."""
+    if frag.startswith(("/", "!/")) and frag.strip("/!"):
+        return "#" + frag.rstrip("/")
+    return ""
+
+
 def normalize(url: str) -> str:
-    """Drop the fragment and a trailing slash so /a and /a/ are one page. Pure."""
-    u, _ = urldefrag(url)
+    """One key per page: drop a plain #anchor and a trailing slash, keep a #/route. Pure."""
+    u, frag = urldefrag(url)
     parts = urlsplit(u)
     path = parts.path.rstrip("/") or "/"
-    return f"{parts.scheme}://{parts.netloc}{path}" + (f"?{parts.query}" if parts.query else "")
+    return (f"{parts.scheme}://{parts.netloc}{path}" + (f"?{parts.query}" if parts.query else "")
+            + route_fragment(frag))
 
 
 def should_visit(url: str, origin: str) -> bool:
@@ -76,7 +92,8 @@ def should_visit(url: str, origin: str) -> bool:
     low = parts.path.lower()
     if low.endswith(SKIP_EXT):
         return False
-    return not any(w in low for w in SKIP_WORDS)
+    route = parts.fragment.lower()
+    return not any(w in low or w in route for w in SKIP_WORDS)
 
 
 def verdict(visits: list[PageVisit], start_reached: bool) -> int:
@@ -87,7 +104,12 @@ def verdict(visits: list[PageVisit], start_reached: bool) -> int:
 
 CLICK_LINK_JS = """
 (as, t) => {
-  const norm = (h) => h.replace(/#.*$/, '').replace(/\\/$/, '');
+  const norm = (h) => {
+    const u = new URL(h, location.href);
+    const frag = u.hash.slice(1);
+    const route = (frag.startsWith('/') || frag.startsWith('!/')) && frag.replace(/[\\/!]/g, '') ? '#' + frag.replace(/\\/+$/, '') : '';
+    return u.protocol + '//' + u.host + (u.pathname.replace(/\\/+$/, '') || '/') + u.search + route;
+  };
   const a = as.find(x => norm(x.href) === norm(t));
   if (a) { a.removeAttribute('target'); a.click(); }
 }
@@ -109,22 +131,34 @@ PAGE_FACTS_JS = """
 
 
 def crawl(start: str, max_pages: int, devices: list[str], browser_name: str, out: Path,
-          read_only: bool, back_checks: int) -> tuple[list[PageVisit], bool]:
-    from playwright.sync_api import sync_playwright
-    from done_gate import DEVICE_PROFILES, context_kwargs, install_read_only_guard
+          read_only: bool, back_checks: int, auth: dict | None = None,
+          settle_ms: int = 300) -> tuple[list[PageVisit], bool]:
+    from playwright.sync_api import TimeoutError as PWTimeout
+    from done_gate import DEVICE_PROFILES, context_kwargs, install_read_only_guard, run_steps
+    sync_playwright = qa_session.import_sync_playwright(browser_name)
     origin = "{0.scheme}://{0.netloc}".format(urlsplit(start))
     visits: list[PageVisit] = []
     start_reached = False
     (out / "screenshots").mkdir(parents=True, exist_ok=True)
     with sync_playwright() as pw:
-        browser = getattr(pw, browser_name).launch()
+        browser = qa_session.launch(pw, browser_name)
         try:
             for device in devices:
-                ctx = browser.new_context(**context_kwargs(device, browser_name))
+                ctx = browser.new_context(**context_kwargs(device, browser_name), **qa_session.context_options(auth))
                 blocked: list[dict] = []
+                page = ctx.new_page()
+                try:  # sign in before the read-only guard, so a sign-in POST goes through
+                    qa_session.apply_auth(ctx, page, auth, start,
+                                          lambda pg, st: run_steps(pg, st, start, 15000, [], PWTimeout))
+                except Exception as exc:  # noqa: BLE001
+                    msg = getattr(exc, "message", None) or str(exc).splitlines()[0]
+                    visits.append(PageVisit(url=start, device=device, findings=[
+                        Finding("error", "sign-in-failed", start, f"auth.login_steps failed: {msg}", device)]))
+                    ctx.close()
+                    continue
                 if read_only:
                     install_read_only_guard(ctx, blocked)
-                page = ctx.new_page()
+                tracker = qa_session.NetTracker(page)
                 events: list[Finding] = []
                 page.on("console", lambda m: events.append(Finding("error", "console", page.url, m.text[:300], device))
                         if m.type == "error" else None)
@@ -146,7 +180,9 @@ def crawl(start: str, max_pages: int, devices: list[str], browser_name: str, out
                     events.clear()
                     try:
                         resp = page.goto(url, wait_until="networkidle", timeout=20000)
-                        visit.status = resp.status if resp else 0
+                        # a hash-route goto is a same-document navigation: no response, rendered client-side
+                        visit.status = resp.status if resp else 200
+                        qa_session.settle(page, tracker, 10000, None, settle_ms)
                         if url == normalize(start):
                             start_reached = True
                     except Exception as exc:  # noqa: BLE001
@@ -184,6 +220,9 @@ def crawl(start: str, max_pages: int, devices: list[str], browser_name: str, out
                         if link not in seen and should_visit(link, origin):
                             seen.add(link)
                             queue.append((link, url))
+                    # Events so far belong to this page. The back-check opens another page; what that
+                    # page logs is not this page's fault (it is crawled on its own), so it is dropped.
+                    own = list(events)
                     # back-button check: click the first unvisited-in-this-check link, go back, compare.
                     if backs_done < back_checks:
                         target = next((l for l in links if should_visit(l, origin) and l != url), None)
@@ -195,13 +234,14 @@ def crawl(start: str, max_pages: int, devices: list[str], browser_name: str, out
                                 page.wait_for_load_state("networkidle", timeout=10000)
                                 if normalize(page.url) != url:
                                     page.go_back(wait_until="networkidle", timeout=10000)
+                                    qa_session.settle(page, tracker, 10000, None, settle_ms)
                                     if normalize(page.url) != url:
                                         visit.findings.append(Finding("warn", "back-button", url,
                                                                       f"after opening {target}, Back landed on {page.url}", device))
                             except Exception as exc:  # noqa: BLE001
                                 visit.findings.append(Finding("look", "back-button", url,
                                                               f"could not complete the back check: {str(exc).splitlines()[0]}", device))
-                    visit.findings.extend(events)
+                    visit.findings.extend(own)
                     visits.append(visit)
                 if blocked:
                     visits.append(PageVisit(url="(read-only guard)", device=device, findings=[
@@ -224,6 +264,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--back-checks", type=int, default=10)
     ap.add_argument("--out", default=".qa/explore")
     ap.add_argument("--allow-writes", action="store_true", help="local targets only")
+    ap.add_argument("--settle-ms", type=int, default=300, help="extra wait after the network goes quiet on each page")
+    qa_session.add_auth_args(ap)
     args = ap.parse_args(argv)
     devices = [d.strip() for d in args.devices.split(",") if d.strip()]
     if any(d not in DEVICE_PROFILES for d in devices) or args.max_pages < 1:
@@ -232,13 +274,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.allow_writes and not writes_allowed(args.url):
         print("CONFIG ERROR: --allow-writes is only allowed against localhost", file=sys.stderr)
         return EXIT_CONFIG
+    from done_gate import validate_step
     try:
-        import playwright  # noqa: F401
-    except ImportError:
-        print("CONFIG ERROR: pip install playwright && python3 -m playwright install chromium", file=sys.stderr)
+        auth = qa_session.auth_from_args(args, validate_step)
+        qa_session.check_ready(auth)
+    except qa_session.SessionError as exc:
+        print(f"CONFIG ERROR: {exc}", file=sys.stderr)
         return EXIT_CONFIG
     out = Path(args.out)
-    visits, reached = crawl(args.url, args.max_pages, devices, args.browser, out, not args.allow_writes, args.back_checks)
+    try:
+        visits, reached = crawl(args.url, args.max_pages, devices, args.browser, out, not args.allow_writes,
+                                args.back_checks, auth=auth, settle_ms=args.settle_ms)
+    except qa_session.BrowserMissing as exc:
+        print(f"CONFIG ERROR: {exc}", file=sys.stderr)
+        return EXIT_CONFIG
     code = verdict(visits, reached)
     findings = [asdict(f) for v in visits for f in v.findings]
     (out / "findings.json").write_text(json.dumps({"exit_code": code, "pages": [asdict(v) for v in visits]}, indent=2))

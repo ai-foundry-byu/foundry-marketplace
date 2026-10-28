@@ -1,9 +1,25 @@
 ---
 name: design-critique
-description: Run the design gate on a UI change. A ruthless editor that asks "can this be removed" of every prompt, button, step and screen, grounded in an 8-question constitution (C1-C8), and resolves its own findings with a four-tier resolver instead of asking a human per decision. Use before building a UI change (critique the plan) and after building it (critique real screenshots), and to audit an existing surface. Triggers - "design critique", "design gate", "critique this UI", "is this screen too busy", "too many clicks", "simplify this flow", "can we cut a step", "review the UX before ship", "why does this feel cluttered".
+description: Critique the design of a screen or app and simplify it. A ruthless subtract-only editor that asks "can this be removed" of every prompt, button, step and screen, grounded in an 8-question constitution (C1-C8), backed by a deterministic design gate script (clicks, dead controls, tap targets, contrast, phone overflow), and resolves its own findings without asking a human per decision. Use before building a UI change (critique the plan), after building it, and as the design pass before we ship. Triggers - "critique the design of my app", "design critique", "critique this UI", "simplify this UI", "what can I remove", "what should we cut", "is this screen too busy", "too many clicks", "can we cut a step", "design pass before we ship", "design gate", "why does this feel cluttered". For a scored rubric review (rate or score the UI, what to fix first) use the ui-reviewer agent.
 ---
 
 # Design critique: the subtract-only editor
+
+## MUST, every run (an answer that skips one of these is not a critique)
+
+1. **Run the deterministic gate on any built UI** (post-build and audits). If
+   `design/design-gate.json` or the baseline is missing, create them first ("First run" below).
+   A missing file is never a reason to skip. Only a missing Playwright ("not run") or exit 6
+   ("INCONCLUSIVE") excuses it, and you say which.
+2. **Write the verdict file**: one line per question per surface, 8 lines per surface,
+   `C3 route:/settings - clean` or `C3 route:/settings - finding df-7`, to
+   `design/findings/<date>-<surface>.verdicts.md`. Paste the lines in your reply.
+3. **Write the findings file** `design/findings/<date>-<surface>.json` and validate both:
+   `validate_findings.py <findings> --verdicts <verdicts>` must exit 0.
+4. **Severity `block`** for any accessibility, contrast, target-size or vocabulary violation
+   and any objective regression. Never `flag` or `nit` for those.
+5. **Write a decision file** in `design/decisions/` for every finding you resolve.
+6. **Subtract only.** Verbs: remove, merge, relabel, inline, escalate. Never add.
 
 ## Why this exists
 
@@ -56,10 +72,31 @@ Goal: a new task is visible in the list.
 Today: open app -> tap "+" -> type -> tap "Save"  (3 taps after first paint)
 ```
 
-Optional but strongly recommended: the deterministic half (`${CLAUDE_SKILL_DIR}/scripts/design_gate.py`,
-see "Post-build, part 1"). Start its config from the template:
-`cp "${CLAUDE_SKILL_DIR}/templates/design-gate.config.json" design/design-gate.json`.
 An example findings run is `${CLAUDE_SKILL_DIR}/templates/findings.example.json`.
+
+### First run: create the gate config and baseline (do not skip)
+
+When `design/design-gate.json` does not exist, create it:
+
+1. `cp "${CLAUDE_SKILL_DIR}/templates/design-gate.config.json" design/design-gate.json`
+2. Edit it for THIS app: `base_url` (the local server you started), real `pages` (every route
+   of the core flows), one `flow` per core flow in `core-flows.md` (its steps and a `goal`
+   selector), `setup_steps` only if the app has sign-in (otherwise delete them), and the
+   `primary_button` selector the app actually uses. Delete the template's example entries.
+
+When the baseline (`baseline` in the config, default `design/design-baseline.json`) does not
+exist, measure once, check the hard limits, then record today as the baseline:
+
+```bash
+G="${CLAUDE_SKILL_DIR}/scripts/design_gate.py"
+python3 "$G" measure --config design/design-gate.json --out design/captures/gate-current.json --screenshots design/captures
+python3 "$G" check --current design/captures/gate-current.json --config design/design-gate.json
+[ -f design/design-baseline.json ] || python3 "$G" bless --current design/captures/gate-current.json --baseline design/design-baseline.json
+```
+
+Blessing never hides a hard-limit failure: limits are checked on every run. Write a decision
+file `design/decisions/<date>-initial-baseline.yaml` (tier 1, reason "first measurement") and
+report the hard-limit failures from the check as `block` findings.
 
 ## Pre-build run (cheapest: kill a surface for the price of a paragraph)
 
@@ -77,19 +114,24 @@ PROPOSED change:
 
 ### Part 1: objective, deterministic (the teeth, no model)
 
-Run the plugin's design gate against your local app. It measures clicks-to-goal on your core
-flows, dead controls, entry-point count, primary-button count, tap-target size, contrast and
-horizontal scroll, and FAILS on any regression against a committed baseline:
+Start the app locally, then run the gate. It measures clicks-to-goal on your core flows, dead
+controls, entry-point count, primary-button count, tap targets under 24 px, contrast and
+horizontal scroll, and FAILS on any regression against the baseline:
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/design_gate.py" run --config design/design-gate.json
 ```
 
-Setup and config format: the script's `--help` and docstring, the template
+Exit codes: 0 pass, 1 design regression or limit violation, 2 config error, 3 refused a
+non-local target, **6 INCONCLUSIVE** (browser missing or crashed, navigation timed out, app not
+reachable). 6 is an environment problem, never a design finding: fix it and rerun. Touch
+targets between 24 and 44 px print as `advisory (not gated)` notes; mention them, do not block.
+
+Config format: the script's docstring, the template
 `${CLAUDE_SKILL_DIR}/templates/design-gate.config.json`, and (when installed as a plugin) the
-plugin README, section "design_gate.py". A regression may only be
-accepted with `--bless` plus a decision-log entry that says why. If you cannot run Playwright,
-say so and skip to part 2; never report a gate number you did not measure.
+plugin README, section "design_gate.py". A regression may only be accepted with `--bless` plus a
+decision file that says why. If Playwright is not installed, say so and skip to part 2; never
+report a gate number you did not measure.
 
 ### Part 2: model pass (judgment)
 
@@ -99,24 +141,32 @@ say so and skip to part 2; never report a gate number you did not measure.
 2. Load `design/decisions/*.yaml`. Note every entry whose `surface` matches a surface you are
    about to critique. **Never re-raise a resolved finding on an unchanged surface.**
 3. For EACH of C1..C8, examine every surface and write a verdict line, even when it is clean:
-   `C3 route:/settings - clean` or `C3 route:/settings - finding df-007`. A per-question verdict
-   makes silent rubber-stamping impossible.
+   `C3 route:/settings - clean` or `C3 route:/settings - finding df-007`. Write them to
+   `design/findings/<date>-<surface>.verdicts.md` (8 lines per surface; the surface is one token
+   with no spaces) and paste them in your reply. A per-question verdict makes silent
+   rubber-stamping impossible.
 4. Emit findings as a JSON array that validates against `${CLAUDE_SKILL_DIR}/findings.schema.json`. Rules:
    - Propose a subtraction or `escalate`. Never an addition.
    - Questions 1, 5, 6 and 8 (flow shape) require a `delta` with before/after counts.
    - Every finding cites a question plus a grounding (`constitution_refs`, `log_refs`, or a gate
      metric). A finding with no grounding is taste, and is downgraded to `escalate`.
+   - An accessibility, contrast, target-size or vocabulary violation is `severity: block`,
+     never `flag` or `nit`.
    - At most 2 `nit` findings per run. Nits off the core flow can never block.
    - Do not claim anything about animation, latency or feel from a screenshot. Those are
      `escalate` only.
    - A clean pass (zero findings) is valid and common. Do not invent findings to look useful.
-5. Validate the array:
+   - Quote any UI label you name (`Delete the 'Create a group' FAB`), so the validator does not
+     read the label as a proposed addition.
+5. Validate the findings and the verdicts together:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/scripts/validate_findings.py" design/findings/2026-01-15-settings.json
+python3 "${CLAUDE_SKILL_DIR}/scripts/validate_findings.py" design/findings/2026-01-15-settings.json \
+  --verdicts design/findings/2026-01-15-settings.verdicts.md
 ```
 
-Exit 0 = valid. Exit 1 prints each violation (an `add` verb, a missing delta, a third nit).
+Exit 0 = valid. Exit 1 prints each violation (an `add` verb, a missing delta, a third nit, a
+surface missing a verdict line).
 
 ## Resolve every finding: the four-tier resolver (cheapest first, no per-decision human gate)
 
@@ -154,11 +204,13 @@ judge. It is auto-fixed or reverted.
 
 ## Acceptance check for one critique run
 
-- [ ] One verdict line per question per changed surface (8 x N lines).
-- [ ] Findings file validates (`validate_findings.py` exit 0).
+- [ ] Verdict file written, 8 lines per changed surface, pasted in the reply.
+- [ ] `validate_findings.py <findings> --verdicts <verdicts>` exit 0.
+- [ ] Gate config and baseline existed or were created this run.
 - [ ] Every flow-shape finding has before/after counts.
 - [ ] Every resolved finding has a decision file with its tier.
-- [ ] Gate part 1 either ran (numbers quoted) or is listed as "not run" with the reason.
+- [ ] Gate part 1 ran (numbers quoted), or is listed as "not run: Playwright missing" or
+      "INCONCLUSIVE (exit 6)" with the reason.
 
 ## Related
 

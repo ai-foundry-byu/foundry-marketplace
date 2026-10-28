@@ -1,0 +1,6 @@
+{
+  "category": "billing",
+  "urgency": 3,
+  "summary": "Charged twice for the monthly plan; wants the duplicate charge refunded.",
+  "tags": ["refund", "duplicate-charge"]
+}

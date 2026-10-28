@@ -19,6 +19,12 @@ Examples:
   python3 visual_baseline.py approve                    # first run: make the baselines
   python3 visual_baseline.py check --url http://localhost:3000/ --name home --devices desktop-1440x900,phone-390x844
   python3 visual_baseline.py compare --threshold 0.1 --tolerance 8
+  python3 visual_baseline.py check --url http://localhost:3000/account --storage-state .qa/auth.json
+
+Reading a diff: the solid red in .qa/visual/diff/*.png is a MARKER for changed
+pixels, not a color on the page. To say what changed, compare
+.qa/visual/current/<name>.png with .qa/visual/baselines/<name>.png. report.json
+gives each diff's changed_box [left, top, right, bottom] in image pixels.
 
 PNG decoding and diff images use only the standard library (zlib). If Pillow
 is installed it is used for decoding, which is faster on large images.
@@ -35,6 +41,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import qa_session  # noqa: E402
 
 EXIT_PASS, EXIT_FAIL, EXIT_CONFIG, EXIT_INCONCLUSIVE = 0, 1, 2, 6
 DEFAULT_THRESHOLD = 0.1   # percent of pixels allowed to differ
@@ -170,13 +177,32 @@ class DiffResult:
     baseline: str = ""
     diff_image: str = ""
     message: str = ""
+    changed_box: list[int] | None = None   # [left, top, right, bottom] of the changed pixels
+
+
+def changed_box(a: list[bytes], b: list[bytes], width: int, tolerance: int) -> list[int] | None:
+    """[left, top, right, bottom] around every pixel that differs beyond tolerance, or None. Pure."""
+    box = None
+    for y, (ra, rb) in enumerate(zip(a, b)):
+        if ra == rb:
+            continue
+        for x in range(width):
+            i = x * 3
+            if (abs(ra[i] - rb[i]) > tolerance or abs(ra[i + 1] - rb[i + 1]) > tolerance
+                    or abs(ra[i + 2] - rb[i + 2]) > tolerance):
+                if box is None:
+                    box = [x, y, x, y]
+                else:
+                    box = [min(box[0], x), box[1], max(box[2], x), y]
+    return box
 
 
 def diff_rows(a: list[bytes], b: list[bytes], width: int, tolerance: int) -> tuple[int, list[bytes]]:
     """Count differing pixels; return (count, diff image rows).
 
     Diff image: unchanged pixels are the baseline faded to light grey, changed
-    pixels are solid red, so a reviewer sees where the change is at a glance.
+    pixels are solid red (#ff0000). The red is a MARKER, never the page's
+    color: read colors from the current and baseline screenshots.
     """
     count = 0
     out: list[bytes] = []
@@ -224,8 +250,11 @@ def compare_images(name: str, current: Path, baseline: Path, diff_path: Path,
         diff_path.parent.mkdir(parents=True, exist_ok=True)
         diff_path.write_bytes(encode_png(wa, ha, rows))
         res.diff_image = str(diff_path)
+        res.changed_box = changed_box(ra, rb, wa, tolerance)
     res.status = "pass" if res.diff_percent <= threshold else "fail"
     res.message = f"{res.diff_percent:.4f}% of pixels differ (threshold {threshold}%)"
+    if res.changed_box:
+        res.message += f", changed area {res.changed_box} (red in the diff is a marker, not the page color)"
     return res
 
 
@@ -259,20 +288,25 @@ FREEZE_CSS = """
 
 
 def capture(urls: list[str], names: list[str], devices: list[str], out_dir: Path, browser: str,
-            masks: list[str], wait_for: str | None, full_page: bool, settle_ms: int) -> tuple[list[str], list[str]]:
-    from playwright.sync_api import sync_playwright
-    from done_gate import context_kwargs
+            masks: list[str], wait_for: str | None, full_page: bool, settle_ms: int,
+            auth: dict | None = None) -> tuple[list[str], list[str]]:
+    from playwright.sync_api import TimeoutError as PWTimeout
+    from done_gate import context_kwargs, run_steps
+    sync_playwright = qa_session.import_sync_playwright(browser)
     shots, errors = [], []
     out_dir.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as pw:
-        b = getattr(pw, browser).launch()
+        b = qa_session.launch(pw, browser)
         try:
             for url, name in zip(urls, names):
                 for device in devices:
-                    ctx = b.new_context(**context_kwargs(device, browser), reduced_motion="reduce")
+                    ctx = b.new_context(**context_kwargs(device, browser), reduced_motion="reduce",
+                                        **qa_session.context_options(auth))
                     page = ctx.new_page()
                     target = out_dir / f"{name}-{device}.png"
                     try:
+                        qa_session.apply_auth(ctx, page, auth, url,
+                                              lambda pg, st: run_steps(pg, st, url, 15000, [], PWTimeout))
                         page.goto(url, wait_until="networkidle", timeout=30000)
                         page.add_style_tag(content=FREEZE_CSS)
                         if wait_for:
@@ -284,7 +318,8 @@ def capture(urls: list[str], names: list[str], devices: list[str], out_dir: Path
                                         mask=[page.locator(m) for m in masks] or None)
                         shots.append(str(target))
                     except Exception as exc:  # noqa: BLE001
-                        errors.append(f"{name}@{device}: {str(exc).splitlines()[0]}")
+                        msg = getattr(exc, "message", None) or (str(exc).splitlines()[0] if str(exc) else type(exc).__name__)
+                        errors.append(f"{name}@{device}: {msg}")
                     finally:
                         ctx.close()
         finally:
@@ -322,6 +357,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--viewport-only", action="store_true", help="screenshot the viewport, not the full page")
     ap.add_argument("--settle-ms", type=int, default=300)
     ap.add_argument("--only", action="append", default=None, help="approve/compare only this file name")
+    qa_session.add_auth_args(ap)
     args = ap.parse_args(argv)
 
     root = Path(args.root)
@@ -361,16 +397,22 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(f"CONFIG ERROR: {exc}", file=sys.stderr)
             return EXIT_CONFIG
+        from done_gate import validate_step
         try:
-            import playwright  # noqa: F401
-        except ImportError:
-            print("CONFIG ERROR: Playwright is not installed. Run:\n"
-                  "  pip install playwright && python3 -m playwright install chromium", file=sys.stderr)
+            auth = qa_session.auth_from_args(args, validate_step)
+            qa_session.check_ready(auth)
+            qa_session.import_sync_playwright(args.browser)
+        except (qa_session.SessionError, qa_session.BrowserMissing) as exc:
+            print(f"CONFIG ERROR: {exc}", file=sys.stderr)
             return EXIT_CONFIG
         if cur.exists() and args.command == "check":
             shutil.rmtree(cur)
-        shots, capture_errors = capture(args.url, names, devices, cur, args.browser, args.mask,
-                                        args.wait_for, not args.viewport_only, args.settle_ms)
+        try:
+            shots, capture_errors = capture(args.url, names, devices, cur, args.browser, args.mask,
+                                            args.wait_for, not args.viewport_only, args.settle_ms, auth=auth)
+        except qa_session.BrowserMissing as exc:
+            print(f"CONFIG ERROR: {exc}", file=sys.stderr)
+            return EXIT_CONFIG
         captured = {Path(s).name for s in shots}
         for s in shots:
             print(f"captured {s}")

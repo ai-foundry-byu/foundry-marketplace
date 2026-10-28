@@ -79,7 +79,22 @@ SKIP openrouter-free  meta-llama/llama-3.3-70b-instruct:free  (fails privacy bar
 TRY  anthropic        claude-haiku-4-5  (key ok)
 ```
 
-Run it on synthetic input:
+See the whole call path work with no keys, no network and no spend (forced tool call, schema validation, privacy bar, fall-through). Unset keys get a fake one with the right prefix, and every eligible provider answers with the JSON in the file:
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/structured_router.py" \
+  --schema "${CLAUDE_SKILL_DIR}/examples/ticket-schema.json" \
+  --input "${CLAUDE_SKILL_DIR}/examples/ticket.txt" \
+  --mock-response "${CLAUDE_SKILL_DIR}/examples/mock.json"               # answered by groq (mock)
+python3 "${CLAUDE_SKILL_DIR}/scripts/structured_router.py" \
+  --schema "${CLAUDE_SKILL_DIR}/examples/ticket-schema.json" \
+  --input "${CLAUDE_SKILL_DIR}/examples/ticket.txt" \
+  --mock-response "${CLAUDE_SKILL_DIR}/examples/mock-fallthrough.json"   # groq off-schema, falls through to anthropic
+```
+
+`mock-fallthrough.json` uses `{"per_provider": {"<name>": {...}}}`; a provider missing from it fails as a simulated outage. Mock mode proves the plumbing, not the model: run one real call before you ship.
+
+Run it for real on synthetic input (needs a key; makes network calls):
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/structured_router.py" \

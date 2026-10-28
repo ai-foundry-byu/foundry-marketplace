@@ -7,7 +7,8 @@ git reset --hard / git checkout -- . / git restore . / git clean -f when they
 would destroy uncommitted work; DROP / TRUNCATE / DELETE-without-WHERE sent
 through a database client; dd to a disk device; mkfs; fork bombs;
 chmod/chown -R on / or $HOME; piping a download straight into a shell;
-shutdown / reboot / halt. Also (2026-10-28 review): rm -rf of .git, path
+shutdown / reboot / halt. A DELETE whose WHERE is always true (WHERE 1,
+1=1, true, 'x'='x', col=col, ... OR 1=1) counts as no WHERE. Also (2026-10-28 review): rm -rf of .git, path
 spellings that resolve to /, $HOME or the cwd (//, ~/.., $PWD, ../..), find
 <root> -delete with no -name/-path filter, git checkout -f / switch
 --discard-changes on a dirty tree, git stash clear, eval/source of a
@@ -329,7 +330,123 @@ def check_sql(cmd: str, argvs):
             return ("sql-delete-no-where",
                     "DELETE FROM without a WHERE clause deletes every row. Add a WHERE clause "
                     "(run the matching SELECT first to check the count).")
+    # the SQL text as the client receives it: shell quotes removed by the tokenizer; plus the raw
+    # text when a heredoc carries the SQL, since its lines are split into separate "commands"
+    texts = [" ".join(a) for a in argvs] + [t for a in argvs for t in a[1:]] + (["\n".join(
+        cmd.splitlines()[1:])] if "<<" in cmd else [])
+    for text in texts:
+        text = _SQL_COMMENT.sub(" ", text)  # WHERE 1=1 -- cleanup  is still WHERE 1=1
+        for m in _DELETE_WHERE.finditer(text):
+            if _always_true(m.group(1)):
+                return ("sql-delete-no-where",
+                        "DELETE with an always-true WHERE (WHERE 1, WHERE 1=1, WHERE true, "
+                        "WHERE col=col, WHERE ... OR 1=1) deletes every row, the same as no WHERE. "
+                        "Name the rows you mean (run the matching SELECT first to check the count).")
     return None
+
+
+_DELETE_WHERE = re.compile(r"(?is)\bdelete\s+from\s+[\w.\"`\[\]]+\s+where\s+(.*?)\s*"
+                           r"(?=;|$|\b(?:returning|order\s+by|limit)\b)")
+_NUM = re.compile(r"^[+-]?\d+(?:\.\d+)?$")
+_SQL_COMMENT = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
+
+
+def _split_top(expr: str, word: str) -> list[str]:
+    """Split expr on a keyword (OR / AND) outside quotes and parentheses."""
+    parts, buf, depth, quote, i = [], [], 0, "", 0
+    pat = re.compile(rf"(?i)\b{word}\b")
+    while i < len(expr):
+        ch = expr[i]
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = ""
+        elif ch in "'\"":
+            quote = ch
+            buf.append(ch)
+        elif ch == "(":
+            depth += 1
+            buf.append(ch)
+        elif ch == ")":
+            depth -= 1
+            buf.append(ch)
+        elif depth == 0 and pat.match(expr, i) and (i == 0 or not expr[i - 1].isalnum()):
+            parts.append("".join(buf))
+            buf = []
+            i += len(word)
+            continue
+        else:
+            buf.append(ch)
+        i += 1
+    parts.append("".join(buf))
+    return [p.strip() for p in parts]
+
+
+def _unwrap(expr: str) -> str:
+    expr = expr.strip()
+    while expr.startswith("(") and expr.endswith(")"):
+        inner = expr[1:-1]
+        depth = 0
+        for ch in inner:  # only strip when the outer parens enclose the whole expression
+            depth += (ch == "(") - (ch == ")")
+            if depth < 0:
+                return expr
+        expr = inner.strip()
+    return expr
+
+
+def _literal(tok: str):
+    tok = tok.strip()
+    if _NUM.match(tok):
+        return float(tok)
+    if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "'\"" and tok[0] not in tok[1:-1]:
+        return tok[1:-1]
+    if tok.lower() in ("true", "false"):
+        return tok.lower() == "true"
+    return None
+
+
+_CMP = re.compile(r"^(.+?)\s*(==|=|<>|!=|>=|<=|>|<|\bis\b)\s*(.+)$", re.I)
+
+
+def _atom_true(atom: str) -> bool:
+    atom = _unwrap(atom)
+    low = atom.lower()
+    if low == "true" or (_NUM.match(atom) and float(atom) != 0):
+        return True
+    if re.match(r"(?i)^not\s+(0|false)$", atom):
+        return True
+    if len(atom) >= 3 and atom[0] in "'\"" and _NUM.match(atom[1:-1] or "x") and float(atom[1:-1]) != 0:
+        return True  # WHERE '1'
+    m = _CMP.match(atom)
+    if not m:
+        return False
+    left, op, right = _unwrap(m.group(1)), m.group(2).lower(), _unwrap(m.group(3))  # (1)=(1)
+    if op in ("=", "==", ">=", "<=", "is") and left.lower() == right.lower() and not re.search(r"[()]", left):
+        return True  # col = col, 'x' = 'x', 1 = 1
+    a, b = _literal(left), _literal(right)
+    if a is None or b is None or type(a) is not type(b):
+        return False
+    try:
+        return {"=": a == b, "==": a == b, "is": a == b, "<>": a != b, "!=": a != b,
+                ">": a > b, "<": a < b, ">=": a >= b, "<=": a <= b}[op]
+    except TypeError:
+        return False
+
+
+def _always_true(clause: str) -> bool:
+    """True when a WHERE clause matches every row (WHERE 1, 1=1, x=x, ... OR true)."""
+    clause = (clause or "").strip()
+    if not clause:
+        return False
+    for disjunct in _split_top(_unwrap(clause), "or"):
+        conjuncts = _split_top(_unwrap(disjunct), "and")
+        def true(part: str) -> bool:
+            inner = _unwrap(part)
+            return _always_true(inner) if inner != part else _atom_true(part)
+        if conjuncts and all(part and true(part) for part in conjuncts):
+            return True
+    return False
 
 
 def check_misc(argv):

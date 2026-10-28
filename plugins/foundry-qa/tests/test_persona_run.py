@@ -64,7 +64,6 @@ class TestStories(unittest.TestCase):
             {"stories": [{"id": "a", "title": "t", "start": "/"}]},          # nothing to check
             {"stories": [{"id": "a", "title": "t", "start": "/", "acceptance": ["x"]},
                          {"id": "a", "title": "t", "start": "/", "acceptance": ["x"]}]},
-            {"stories": [{"id": "a", "title": "t", "start": "/", "acceptance": ["x"], "bogus": 1}]},
             {"stories": [{"id": "a", "title": "t", "start": "/", "steps": [{"hover": "x"}], "acceptance": ["x"]}]},
         ]
         for case in bad:
@@ -130,6 +129,82 @@ class TestVerdictAndTickets(unittest.TestCase):
         self.assertIn("## Steps to reproduce", t)
         self.assertIn('2. click "text=Sign up"', t)
         self.assertIn("no-overflow: page is 600px wide", t)
+
+
+# The foundry-sdlc stories.json (contract C1): one file per project, read as is.
+SDLC = [
+    {"id": "US-01", "title": "see the groups", "acceptance": ["The list shows every group"],
+     "surfaces": ["/"], "devices": ["phone-390x844", "desktop-1440x900"], "status": "BUILT",
+     "waits_on": [], "covers": ["R-01"], "notes": "", "evidence": [], "owner": "someone"},
+    {"id": "US-02", "title": "create a group", "acceptance": ["A new group appears"],
+     "surfaces": ["/create"], "devices": ["desktop-1440x900", "ios-sim"], "status": "PARTIAL", "waits_on": [],
+     "qa": {"start": "/#/create", "steps": [{"fill": {"selector": "#name", "value": "x"}}],
+            "assertions": [{"visible": "#name"}], "wait_for": "form", "retries": 2}},
+    {"id": "US-03", "title": "native only", "acceptance": ["works"], "surfaces": ["Home screen"],
+     "devices": ["ios-sim"], "status": "BUILT", "waits_on": []},
+    {"id": "US-04", "title": "later", "acceptance": ["later"], "surfaces": ["/later"], "devices": [],
+     "status": "NOT_BUILT", "waits_on": ["US-01"]},
+]
+
+
+class TestSdlcStories(unittest.TestCase):
+    def test_list_and_wrapped_shapes_parse_with_warnings_not_errors(self):
+        for data in (SDLC, {"stories": SDLC}):
+            warnings = []
+            stories = {s.id: s for s in pr.parse_stories(json.loads(json.dumps(data)), "s.json", warnings)}
+            self.assertEqual(set(stories), {"US-01", "US-02", "US-03", "US-04"})
+            self.assertTrue(any("owner" in w for w in warnings), warnings)
+            self.assertTrue(any("retries" in w for w in warnings), warnings)
+            self.assertTrue(any("ios-sim" in w for w in warnings), warnings)
+
+    def test_start_scripting_and_devices(self):
+        s = {x.id: x for x in pr.parse_stories(SDLC)}
+        self.assertEqual((s["US-01"].start, s["US-01"].scripted, s["US-01"].assertions), ("/", False, []))
+        self.assertEqual((s["US-02"].start, s["US-02"].scripted, s["US-02"].wait_for), ("/#/create", True, "form"))
+        self.assertEqual(s["US-02"].devices, ["desktop-1440x900"])        # ios-sim dropped
+        self.assertTrue(s["US-03"].skip_reason)                            # no path, no web device
+        self.assertIsNone(s["US-04"].devices)                              # [] = not narrowed
+
+    def test_select_skips_unbuilt_unless_named(self):
+        stories = pr.parse_stories(SDLC)
+        run, skipped = pr.select_stories(stories, None)
+        self.assertEqual([s.id for s in run], ["US-01", "US-02"])
+        self.assertEqual({s.id for s, _ in skipped}, {"US-03", "US-04"})
+        run, _ = pr.select_stories(stories, ["US-04"])
+        self.assertEqual([s.id for s in run], ["US-04"])
+        with self.assertRaises(ConfigError):
+            pr.select_stories(stories, ["US-99"])
+
+    def test_plan_cli_reads_the_sdlc_file(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "p.md"
+            p.write_text(PERSONA)
+            f = Path(td) / "stories.json"
+            f.write_text(json.dumps({"stories": SDLC}))
+            self.assertEqual(pr.main(["--persona", str(p), "--stories", str(f), "--base-url",
+                                      "http://localhost:3000", "--plan"]), 0)
+
+
+class TestSiteWideChecks(unittest.TestCase):
+    def test_site_scope_never_fails_a_story(self):
+        site = [{"check": "tap-targets", "scope": "site", "passed": False, "detail": "9 small", "items": ["a"]}]
+        ok = [{"check": "patience", "passed": True, "detail": ""}]
+        self.assertEqual(pr.classify([{"passed": True, "detail": ""}], ok + site, True)[0], "passed")
+        self.assertEqual(pr.classify([], ok + site, False)[0], "needs-judgment")
+
+    def test_reported_once_per_device(self):
+        def R(story, device, items):
+            r = pr.StoryResult(story, "t", device, "passed")
+            r.checks = [{"check": "tap-targets", "scope": "site", "passed": not items, "detail": "", "items": items}]
+            return r
+        results = [R("A", "phone-390x844", ["a x"]), R("B", "phone-390x844", ["a x", "b y"]), R("A", "tablet-820x1180", [])]
+        self.assertEqual(pr.site_findings(results), {"phone-390x844": ["a x", "b y"]})
+        report = pr.render_report(pr.parse_persona(PERSONA), results, "http://x", True, [("US-9", "status PARKED")], ["w1"])
+        self.assertEqual(report.count("## Site-wide persona checks"), 1)
+        self.assertIn("US-9: status PARKED", report)
+        self.assertIn("- w1", report)
 
 
 if __name__ == "__main__":

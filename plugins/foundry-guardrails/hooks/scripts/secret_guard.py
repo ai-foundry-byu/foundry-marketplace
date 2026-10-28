@@ -25,6 +25,14 @@ agent leaks a secret:
 Allowed on purpose: source .env / . .env (loads without printing),
 test -f .env, ls .env, cp .env.example .env, docker --env-file .env,
 echo ".env" >> .gitignore, cat .env.example, cat id_ed25519.pub.
+Names only (key names, never values), optionally piped into sort/uniq/wc/head/tail:
+cut -d= -f1 .env, sed 's/=.*//' .env (also -E, -n ...p), awk -F= '{print $1}' .env,
+grep -o '^[A-Za-z_][A-Za-z0-9_]*' .env, env | cut -d= -f1. A dotenv file with a
+multi-line value or a long token in a comment is still denied, since those forms
+would print part of it; so is env | cut when an environment value holds a newline, or
+when the command sources a file whose values are not one line each. Not vouched for
+(so denied as plain reads): awk with an FS=/RS= operand, grep classes with ranges such
+as [0-z] that span '=', and relative paths after a cd in the same command.
 
 Disable: FOUNDRY_SECRET_GUARD=0
 This is an accident-catcher, not a sandbox. See the plugin README.
@@ -319,10 +327,192 @@ def _recursive_grep_hits_env(argv: list[str], cwd: str) -> str | None:
     return None
 
 
+# Names-only forms: these print the part of each line before the first "=", so on a
+# file of single-line NAME=value lines they print key names and nothing else.
+_NAMES_FOLLOW = {"sort", "uniq", "wc", "head", "tail"}
+_SED_NAMES = re.compile(r"^s(.)=\.\*\$?\1\1(p?)$")
+_AWK_NAMES = re.compile(r"^\{\s*print\s+\$1\s*;?\s*\}$")
+_GREP_NAMES = re.compile(r"^\^((?:\[[A-Za-z0-9_-]+\]){1,2})[*+]=?$")
+# Inside a bracket only same-kind ranges (A-Z, a-z, 0-9) and name characters: [0-z] or [--z]
+# span '=' and the punctuation of a value, so grep -o '^[0-z]*' printed NAME=value whole.
+_GREP_CLASS = re.compile(r"^(?:[A-Z]-[A-Z]|[a-z]-[a-z]|[0-9]-[0-9]|[A-Za-z0-9_])+-?$")
+_AWK_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_ASSIGN_LINE = re.compile(r"^\s*(?:export\s+)?[A-Za-z_][A-Za-z0-9_.-]*\s*=(.*)$")
+
+
+def _names_only_files(argv: list[str]) -> list[str] | None:
+    """The files a names-only command reads, or None when argv is not one of those forms."""
+    head, a = os.path.basename(argv[0]), argv[1:]
+    files: list[str] = []
+    if head == "cut":
+        delim = field = None
+        i = 0
+        while i < len(a):
+            t = a[i]
+            if t in ("-d", "-f") and i + 1 < len(a):
+                delim, field = (a[i + 1], field) if t == "-d" else (delim, a[i + 1])
+                i += 2
+                continue
+            if t.startswith(("-d", "--delimiter=")):
+                delim = t.split("=", 1)[1] if t.startswith("--") else t[2:]
+            elif t.startswith(("-f", "--fields=")):
+                field = t.split("=", 1)[1] if t.startswith("--") else t[2:]
+            elif t in ("-s", "--only-delimited"):
+                pass
+            elif t.startswith("-"):
+                return None
+            else:
+                files.append(t)
+            i += 1
+        return files if delim == "=" and field == "1" else None
+    if head == "sed":
+        quiet, script, i = False, None, 0
+        while i < len(a):
+            t = a[i]
+            if t in ("-n", "--quiet", "--silent"):
+                quiet = True
+            elif t in ("-E", "-r", "--regexp-extended"):
+                pass
+            elif t == "-e" and i + 1 < len(a) and script is None:
+                script = a[i + 1]
+                i += 1
+            elif t.startswith("-"):
+                return None
+            elif script is None:
+                script = t
+            else:
+                files.append(t)
+            i += 1
+        m = _SED_NAMES.match(script or "")
+        return files if m and (m.group(2) == "p" or not quiet) else None
+    if head in ("awk", "gawk"):
+        sep, prog, i = None, None, 0
+        while i < len(a):
+            t = a[i]
+            if t == "-F" and i + 1 < len(a):
+                sep = a[i + 1]
+                i += 1
+            elif t.startswith("-F"):
+                sep = t[2:]
+            elif t.startswith("-"):
+                return None
+            elif prog is None:
+                prog = t
+            elif _AWK_ASSIGN.match(t):
+                return None  # an operand FS=x (or RS=, OFS=) resets the split: $1 is the whole line
+            else:
+                files.append(t)
+            i += 1
+        return files if sep == "=" and _AWK_NAMES.match(prog or "") else None
+    if head in ("grep", "egrep"):
+        flags, pat = "", None
+        for t in a:
+            if t.startswith("-") and not t.startswith("--"):
+                flags += t[1:]
+            elif t.startswith("-"):
+                return None
+            elif pat is None:
+                pat = t
+            else:
+                files.append(t)
+        m = _GREP_NAMES.match(pat or "")
+        ok = "o" in flags and set(flags) <= set("oEh") and m and all(
+            _GREP_CLASS.match(cls) for cls in re.findall(r"\[([^\]]+)\]", m.group(1)))
+        return files if ok else None
+    return None
+
+
+def _env_file_is_names_safe(path: str) -> bool:
+    """Every line is blank, a comment, or a one-line NAME=value, so names-only prints no value."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read(1_000_000)
+    except OSError:
+        return True  # missing or unreadable: the command prints nothing from it
+    for line in text.splitlines():
+        st = line.strip()
+        if not st:
+            continue
+        if st.startswith("#"):
+            if re.search(r"[A-Za-z0-9_+/-]{20,}", st.split("=", 1)[0]):
+                return False  # a long token in a comment would be printed whole
+            continue
+        m = _ASSIGN_LINE.match(line)
+        if not m:
+            return False
+        value = m.group(1).strip()
+        if value[:1] in ("'", '"') and value.find(value[0], 1) == -1:
+            return False  # a quoted value that runs onto the next lines
+    return True
+
+
+# A cd in the same command moves the shell: "cd sub && cut -d= -f1 .env" reads sub/.env while
+# the hook would vouch for ./.env. Relative paths are then not checked, so not vouched for.
+_CHDIR = re.compile(r"(?:^|[\s;&|(`])(?:cd|pushd|popd)(?=$|[\s;&|)])|--chdir\b|\benv\s+(?:-\S+\s+)*-C\b")
+
+
+def _sourced_names_safe(pipelines, cwd: str, moved: bool) -> bool:
+    """Every file the command sources is a dotenv whose values are one line each.
+
+    "source .env && env | cut -d= -f1" lists the sourced values too, so a PEM key held in
+    the sourced file printed its body lines (cut prints a line with no '=' whole)."""
+    for stages in pipelines:
+        for argv in stages:
+            if os.path.basename(argv[0]) not in ("source", ".") or len(argv) < 2:
+                continue
+            tok = os.path.expanduser(argv[1])
+            if not os.path.isabs(tok):
+                if moved:
+                    return False
+                tok = os.path.join(cwd or os.getcwd(), tok)
+            if secret_path(tok) not in ("dotenv file", "direnv file") or not _env_file_is_names_safe(tok):
+                return False
+    return True
+
+
+def _names_only_ok(pipelines, cwd: str, cmd: str = ""):
+    """ids of argvs that only list key names, plus a reason when a names-only form is unsafe."""
+    ok: set[int] = set()
+    moved = bool(_CHDIR.search(cmd or ""))
+    for stages in pipelines:
+        for i, argv in enumerate(stages):
+            if not all(os.path.basename(x[0]) in _NAMES_FOLLOW for x in stages[i + 1:]):
+                continue
+            files = _names_only_files(argv)
+            if files is None:
+                continue
+            for tok in files:
+                label = secret_path_glob(tok, cwd)
+                if label is None:
+                    continue
+                if label not in ("dotenv file", "direnv file"):
+                    break
+                path = os.path.expanduser(tok)
+                if not os.path.isabs(path) and moved:
+                    break  # the file read is not the one we can check
+                path = path if os.path.isabs(path) else os.path.join(cwd or os.getcwd(), path)
+                for hit in (glob.glob(path) if _GLOB_CHARS.search(tok) else [path]):
+                    if not _env_file_is_names_safe(hit):
+                        return ok, (f"would print part of a value: {tok} has lines that are not "
+                                    "NAME=value (a multi-line value or a long token in a comment)")
+            else:
+                ok.add(id(argv))
+                # env | cut -d= -f1 prints names only, unless some value spans several lines
+                if i == 1 and not files and stages[0] in (["env"], ["printenv"]) \
+                        and not any("\n" in v for v in os.environ.values()) \
+                        and _sourced_names_safe(pipelines, cwd, moved):
+                    ok.add(id(stages[0]))
+    return ok, None
+
+
 def evaluate_bash(cmd: str, cwd: str = "") -> str | None:
     if not isinstance(cmd, str) or not cmd.strip():
         return None
-    argvs = c.all_argvs(cmd)
+    pipelines = c.command_stages(cmd)
+    argvs = [a for p in pipelines for a in p]
+    names_ok, names_why = _names_only_ok(pipelines, cwd, cmd)
+    if names_why:
+        return names_why
     sourced = _sources_env(argvs)
     # input redirection like  cat < .env  or  $(< .env)
     for m in re.finditer(r"<\s*([^\s<>|;&()]+)", cmd):
@@ -331,6 +521,8 @@ def evaluate_bash(cmd: str, cwd: str = "") -> str | None:
             if label and not cmd[max(0, m.start() - 1):m.start()] == "<":
                 return f"reads a {label} through input redirection"
     for argv in argvs:
+        if id(argv) in names_ok:
+            continue
         head = os.path.basename(argv[0])
         why = _pw_manager(argv) or _token_printer(argv)
         if why:
@@ -422,10 +614,11 @@ def handle(event: dict) -> None:
     if not why:
         return
     c.emit_deny(HOOK, event,
-                f"Blocked: {why}. Secrets must not be printed into the transcript. Load them "
-                "without printing (source .env && <command>), check existence with test -f, or "
-                "read the .env.example file for key names. If you need a value, ask the human "
-                "to set it in the environment.",
+                f"Blocked: {why}. Secrets must not be printed into the transcript. Safe forms: "
+                "list key names only (cut -d= -f1 .env, or env | cut -d= -f1), check that one is "
+                "set (test -n \"$VAR\" && echo set; test -f .env), or load them without printing "
+                "(source .env && <command>). If you need a value, ask the human to set it in the "
+                "environment.",
                 command=str(tin.get("command") or tin.get("file_path") or ""))
 
 

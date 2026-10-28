@@ -5,6 +5,11 @@ Mirroring**: it screenshots the mirrored phone, lets the model read the screensh
 injects one tap, swipe or keystroke, and screenshots again to verify. Use it for
 real-device QA of your iOS app and for any on-phone task that has no Mac-side API.
 
+**Status: proven engine, port not yet device-tested.** The engine runs in production in
+our own harness today, driving a real iPhone. This marketplace port of it has passed its
+unit tests but has not yet been run on a real device. Expect rough edges on first setup,
+and please report what broke.
+
 It is the only real-device iOS path in this marketplace. It does not use the iOS
 Simulator, XCUITest or Appium, and it does not need a developer account or a cable.
 
@@ -12,20 +17,22 @@ Simulator, XCUITest or Appium, and it does not need a developer account or a cab
 
 | Item | Type | What it gives you | Maturity |
 |---|---|---|---|
-| `iphone-mirror` | skill | the screenshot, read, act, verify loop, command reference, recipes, rules | proven |
-| `iphone-driver` | agent | delegate a whole on-phone task; screenshots stay in its context, you get the outcome | proven |
-| `iphone-mirror` | script (CLI, on PATH) | `doctor`, `build`, `open`, `shot`, `tap`, `swipe`, `type`, `key`, `home`, `info`, `tapxy`, `map` | proven |
-| `engine/worker.sh` + `engine/launcher.c` | script | the privileged worker and the Mach-O launcher sealed inside the helper app | proven |
-| `engine/build-helper-app.sh` | script | builds, ad hoc signs and registers the helper app | proven |
-| `iphone` | MCP server (`mcp/server.py`) | typed `iphone_*` tools; `iphone_screenshot` returns the PNG inline | new |
+| `iphone-mirror` | skill | the screenshot, read, act, verify loop, command reference, recipes, rules | new (port of a proven engine; not yet run on a device) |
+| `iphone-driver` | agent | delegate a whole on-phone task; screenshots stay in its context, you get the outcome | new (port of a proven engine; not yet run on a device) |
+| `iphone-mirror` | script (CLI, on PATH) | `doctor`, `build`, `open`, `shot`, `tap`, `swipe`, `type`, `key`, `home`, `info`, `tapxy`, `map` | new (port of a proven engine; not yet run on a device) |
+| `engine/worker.sh` + `engine/launcher.c` | script | the privileged worker and the Mach-O launcher sealed inside the helper app | new (port of a proven engine; not yet run on a device) |
+| `engine/build-helper-app.sh` | script | builds, ad hoc signs and registers the helper app | new (port of a proven engine; not yet run on a device) |
+| `iphone` | MCP server (`mcp/server.py`) | typed `iphone_*` tools; `iphone_screenshot` returns the PNG inline | new (rewrite; not yet run on a device) |
 
-**What the labels mean.** "proven" means generalized from a tool that runs in
-production in our own harness today, driving a real iPhone. "new" means written for this marketplace and not yet battle-tested.
-The MCP server is new because it is a rewrite: our production server uses the `mcp`
-Python package, and this one is standard-library only so you install nothing. Its tool
-surface is the same, and it is covered by protocol tests, but it has not driven a
-phone in our harness yet. The port also changed the engine in small ways (listed under
-"Changes from the source" below) that are unit-tested but not yet re-run on a device.
+**What the labels mean.** "new" means written or changed for this marketplace and not
+yet run on a real device. Every item here is new for now. The CLI, worker, launcher,
+build script, skill and agent are a port of a tool that runs in production in our own
+harness today, driving a real iPhone; the port changed that engine in small ways
+(listed under "Changes from the source" below) that are unit-tested but not yet run on
+a device. The MCP server is a rewrite: our production server uses the `mcp` Python
+package, and this one is standard-library only so you install nothing. Its tool surface
+is the same and it is covered by protocol tests. The labels move to "proven" once a
+device run passes the acceptance check in the skill.
 
 ## Install one item on its own
 
@@ -176,8 +183,12 @@ between them: iOS animates and scrolls, so stale coordinates miss. `iphone-mirro
 
 ### From Claude Code
 
-- **Ask in plain words** ("open Settings on my iPhone and turn on Dark Mode"). The
-  `iphone-mirror` skill loads on its trigger phrases and runs the loop.
+- **Ask in plain words** ("open Settings on my iPhone and turn on Dark Mode", or "is my
+  setup ready to test on my real iPhone?"). The `iphone-mirror` skill is meant to load
+  on these phrasings, but the model may call the `iphone_*` MCP tools directly instead,
+  so those tool descriptions carry the same core rules: run `iphone_doctor` first, stop
+  on any FAIL, and act on the phone only for a task you asked for. If you want the full
+  loop for sure, say "use the iphone-mirror skill".
 - **Delegate long tasks** to the subagent: "Use the iphone-driver agent to walk
   through sign-up in my TestFlight build and screenshot each step." You get back an
   outcome, a step list and evidence paths, not 40 screenshots.
@@ -255,7 +266,10 @@ foundry-iphone-mirror/
 ```
 
 State lives in `$HOME/Library/Caches/foundry-iphone-mirror` (geometry cache, IPC
-files, default screenshots).
+files, default screenshots). It is fixed on purpose: LaunchServices does not pass
+environment variables to the helper app, so the client, the MCP server and the helper
+all derive it from `$HOME`. `IPHONE_MIRROR_STATE` is honored only by the unit tests,
+which run the worker in-process.
 
 ## Tests
 
@@ -269,7 +283,9 @@ cd <plugin-dir> && python3 -m unittest discover -s tests -v
 
 Covers pixel-to-point math (including Retina 2x and bounds), worker guards, the
 geom-cache injection guard, test hooks being ignored inside a bundle, client argument
-validation and locking, the launcher (compiled with clang, skipped without it), and the
+validation and locking, no `open -a "iPhone Mirroring"` when the helper app is missing
+(a stub `open` on PATH), the fixed state dir, the doctor naming all three grants,
+the safety rules in the MCP tool descriptions, the launcher (compiled with clang, skipped without it), and the
 MCP protocol (initialize, tools/list, tools/call, inline PNG, errors).
 
 ## Changes from the source
@@ -283,6 +299,9 @@ Ported from our production plugin. What changed and why:
   hooks inside the bundle, validates coordinates and bounds, and no longer echoes typed
   text back. A helper-function bug that could swallow error messages was fixed.
 - The client adds a lock (one action at a time), a `map` dry-run, and a `build` command.
+  It checks that the helper app exists before raising iPhone Mirroring, so a call that
+  is bound to fail never switches your screen to the phone, and `info` no longer raises
+  the window at all.
   `doctor` adds macOS version, signature and version-drift checks.
 - `cliclick`'s location is recorded at build time, since apps launched by LaunchServices
   get a minimal PATH.

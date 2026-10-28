@@ -6,8 +6,10 @@ every rep) evalkit runs YOUR target command, sends the case on stdin as JSON,
 reads one JSON object back from stdout, and grades it. Code graders first
 (exact, contains, regex, json_field); an optional judge command for the few
 criteria code cannot check. Each run is written to
-.evals/<suite>/<timestamp>.json plus a markdown summary, and compared with the
-previous comparable run.
+<project root>/.evals/<suite>/<timestamp>.json plus a markdown summary (the
+project root is the nearest folder above the suite with a .git, else the
+suite's parent; never the current directory), and compared with the previous
+comparable run.
 
 Commands:
   evalkit.py init <dir>                  copy the example suite to <dir>
@@ -44,6 +46,8 @@ EXIT_OK, EXIT_CONFIG, EXIT_INCOMPLETE, EXIT_BELOW, EXIT_CHECK = 0, 2, 3, 4, 5
 GRADER_TYPES = {"exact", "contains", "regex", "json_field", "judge"}
 DEFAULT_SPLITS = {"train": 0.4, "val": 0.2, "test": 0.4}
 OUTPUT_EXCERPT = 600
+OUT_HELP = ("results root (default: <project root>/.evals, where the project root is the nearest "
+            "folder above the suite with a .git; without one, the suite's parent folder)")
 
 
 class ConfigError(Exception):
@@ -62,6 +66,17 @@ def _parse_command(cmd, where: str) -> list[str]:
     if not parts:
         raise ConfigError(f"{where}: command is empty")
     return parts
+
+
+def _command_block(value, where: str) -> dict:
+    """A target or judge block: {"command": ..., "timeout_s": n}, or a bare command as shorthand."""
+    if isinstance(value, (str, list)):
+        value = {"command": value}
+    if not isinstance(value, dict):
+        raise ConfigError(f'{where}: must be an object like {{"command": ["python3", "run.py"]}} '
+                          f'or a command string like "python3 run.py"')
+    value["command"] = _parse_command(value.get("command"), where)
+    return value
 
 
 def validate_grader(g: dict, where: str) -> None:
@@ -105,8 +120,7 @@ def load_suite(path) -> dict:
         raise ConfigError(f"{f}: needs a 'name'")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", suite["name"]):
         raise ConfigError(f"{f}: name must be letters, digits, '.', '_' or '-'")
-    target = suite.get("target") or {}
-    target["command"] = _parse_command(target.get("command"), f"{f} target")
+    target = _command_block(suite.get("target") or {}, f"{f} target")
     target.setdefault("timeout_s", 120)
     suite["target"] = target
     suite.setdefault("cases", "cases.jsonl")
@@ -119,10 +133,10 @@ def load_suite(path) -> dict:
     for i, g in enumerate(suite["graders"]):
         validate_grader(g, f"{f} graders[{i}]")
     if suite.get("judge"):
-        suite["judge"]["command"] = _parse_command(suite["judge"].get("command"), f"{f} judge")
+        suite["judge"] = _command_block(suite["judge"], f"{f} judge")
         suite["judge"].setdefault("timeout_s", 180)
     for i, c in enumerate(suite["controls"]):
-        if not c.get("name"):
+        if not isinstance(c, dict) or not c.get("name"):
             raise ConfigError(f"{f} controls[{i}]: needs a name")
         c["command"] = _parse_command(c.get("command"), f"{f} controls[{i}]")
         c.setdefault("max_score", 0.3)
@@ -506,8 +520,33 @@ def fingerprint(suite, cases) -> dict:
 
 # ---------------------------------------------------------------- storage
 
-def out_dir_for(suite, out_root) -> Path:
-    return Path(out_root) / suite["name"]
+def default_out_root(suite_dir) -> Path:
+    """Where runs are stored when --out is not given: <project root>/.evals.
+
+    The project root is the nearest ancestor of the suite directory holding a .git
+    (directory or worktree file). Without one, the suite's parent directory is used.
+    Never the current directory: one suite must have one history wherever it is run from.
+    """
+    d = Path(suite_dir).resolve()
+    for p in (d, *d.parents):
+        if (p / ".git").exists():
+            return p / ".evals"
+    return d.parent / ".evals"
+
+
+def out_dir_for(suite, out_root=None) -> Path:
+    root = Path(out_root).resolve() if out_root else default_out_root(suite["_dir"])
+    return root / suite["name"]
+
+
+def warn_stray_history(suite, out_root, out: Path) -> None:
+    """Older evalkit versions wrote to ./.evals; point at a history left there."""
+    if out_root:
+        return
+    stray = (Path.cwd() / ".evals" / suite["name"]).resolve()
+    if stray != out and stray.is_dir() and any(stray.glob("*.json")):
+        print(f"note: earlier runs also exist at {stray}; this suite's history is {out} "
+              f"(move them there, or pass --out to read them)", file=sys.stderr)
 
 
 def write_run(record: dict, out: Path) -> Path:
@@ -710,6 +749,7 @@ def cmd_run(args) -> int:
     rec = execute_run(suite, sel, reps=reps, split=args.split, subset=subset, label=args.label,
                       use_judge=not args.no_judge, command=command, progress=progress)
     out = out_dir_for(suite, args.out)
+    warn_stray_history(suite, args.out, out)
     prev = previous_comparable(list_runs(out), rec)
     if prev and not subset:
         rec["comparison"] = compare(prev, rec)
@@ -721,7 +761,7 @@ def cmd_run(args) -> int:
         print(f"vs {rec['comparison']['previous_run']}: {rec['comparison']['reading']}")
     if s["judge_skipped"]:
         print(f"WARNING: {s['judge_skipped']} judge checks skipped; score is an upper bound")
-    print(f"report: {path.with_suffix('.md')}")
+    print(f"report: {path.with_suffix('.md').resolve()}")
     if s["n_ok"] == 0:
         return EXIT_INCOMPLETE
     gate = args.fail_under if args.fail_under is not None else (suite["threshold"] if args.gate else None)
@@ -803,7 +843,10 @@ def cmd_compare(args) -> int:
 
 def cmd_history(args) -> int:
     suite = load_suite(args.suite)
-    runs = list_runs(out_dir_for(suite, args.out))
+    out = out_dir_for(suite, args.out)
+    warn_stray_history(suite, args.out, out)
+    runs = list_runs(out)
+    print(f"history: {out}")
     if not runs:
         print("no runs stored")
         return EXIT_OK
@@ -845,7 +888,7 @@ def build_parser():
     r.add_argument("--label", help="a name for this run, e.g. baseline or v2-shorter-prompt")
     r.add_argument("--no-judge", action="store_true", help="skip judge graders (score becomes an upper bound)")
     r.add_argument("--target", help="override the target command for this run (recorded as a subset)")
-    r.add_argument("--out", default=".evals", help="results root (default .evals)")
+    r.add_argument("--out", help=OUT_HELP)
     r.add_argument("--gate", action="store_true", help="exit 4 if score is below the suite threshold")
     r.add_argument("--fail-under", type=float, help="exit 4 if the metric is below this value")
     r.add_argument("--fail-metric", default="score", choices=["score", "pass_hat_k"])
@@ -858,11 +901,11 @@ def build_parser():
     m = sub.add_parser("compare", help="compare the last two runs of a suite, or two run files")
     m.add_argument("a")
     m.add_argument("b", nargs="?")
-    m.add_argument("--out", default=".evals")
+    m.add_argument("--out", help=OUT_HELP)
     m.set_defaults(fn=cmd_compare)
     h = sub.add_parser("history", help="list stored runs")
     h.add_argument("suite")
-    h.add_argument("--out", default=".evals")
+    h.add_argument("--out", help=OUT_HELP)
     h.set_defaults(fn=cmd_history)
     i = sub.add_parser("init", help="copy the example suite to a directory")
     i.add_argument("dir")

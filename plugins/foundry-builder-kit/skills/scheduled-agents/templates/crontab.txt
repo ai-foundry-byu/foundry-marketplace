@@ -5,9 +5,14 @@
 # OFF condition: delete these two lines when <your-app> no longer needs the digest.
 #
 # m  h  dom mon dow  command
-  15 7  *   *   *    cd "$HOME/projects/<your-app>" && . ./.env.cron && /usr/bin/python3 "$HOME/bin/run_headless.py" --name daily-digest --prompt-file prompts/digest.md --claude-bin "$HOME/.local/bin/claude" --max-minutes 20 -- --max-turns 30 >> .agent-jobs/cron.log 2>&1
+  15 7  *   *   *    cd "$HOME/projects/<your-app>" && . ./.env.cron && /usr/bin/python3 scripts/run_headless.py --name daily-digest --prompt-file prompts/digest.md --claude-bin "$HOME/.local/bin/claude" --max-minutes 20 -- --max-turns 30 >> .agent-jobs/cron.log 2>&1
 # The deadman runs on its OWN schedule, so a broken digest job cannot silence it.
-  0  10 *   *   *    /usr/bin/python3 "$HOME/bin/deadman.py" check --name daily-digest --file "$HOME/projects/<your-app>/.agent-jobs/daily-digest.heartbeat.json" --max-age 26h --webhook "https://hooks.slack.com/services/REPLACE_ME" >> "$HOME/projects/<your-app>/.agent-jobs/deadman.log" 2>&1
+  0  10 *   *   *    /usr/bin/python3 "$HOME/projects/<your-app>/scripts/deadman.py" check --name daily-digest --file "$HOME/projects/<your-app>/.agent-jobs/daily-digest.heartbeat.json" --max-age 26h --webhook-file "$HOME/.config/agent-alerts/webhook.url" >> "$HOME/projects/<your-app>/.agent-jobs/deadman.log" 2>&1
 #
 # .env.cron (chmod 600, gitignored) holds:  export CLAUDE_CODE_OAUTH_TOKEN=...
+# Cron does not see variables exported in your shell profile, so "$ALERT_WEBHOOK_URL" would be
+# empty here. The deadman reads the URL from a file instead (one line, chmod 600):
+#   mkdir -p ~/.config/agent-alerts && printf '%s\n' 'https://hooks.slack.com/services/...' > ~/.config/agent-alerts/webhook.url
+# With no working channel the check exits 3, logs NO ALERT CHANNEL, and writes
+# daily-digest.DEADMAN-ALERT.txt next to the heartbeat.
 # In POSIX sh a failed `.` aborts the whole line, so the file must exist.

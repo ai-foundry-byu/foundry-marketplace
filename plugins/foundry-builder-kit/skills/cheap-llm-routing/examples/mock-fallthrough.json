@@ -1,0 +1,7 @@
+{
+  "per_provider": {
+    "groq": {"category": "payments", "urgency": 9, "summary": "Off-schema on purpose: bad enum and urgency out of range."},
+    "gemini-free": {"category": "billing", "urgency": 3, "summary": "Never used for private data: gemini-free fails the privacy bar."},
+    "anthropic": {"category": "billing", "urgency": 3, "summary": "Charged twice for the monthly plan; wants a refund.", "tags": ["refund"]}
+  }
+}

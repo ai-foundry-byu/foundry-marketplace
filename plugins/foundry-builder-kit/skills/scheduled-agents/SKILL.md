@@ -7,11 +7,17 @@ description: Run Claude Code as an unattended job on a schedule (cron, macOS lau
 
 A scheduled agent fails in two ways: loudly (it errors) and silently (it stops running, or runs and does nothing, and every dashboard stays green). This skill prevents both.
 
+You MUST, for every job you set up:
+
+1. Create TWO scheduler entries: the job AND its deadman check (Step 6). A job delivered without a scheduled deadman is not done.
+2. Give the deadman an alert channel that works under the scheduler: `--webhook-file` (the URL in a `chmod 600` file) or a literal URL. Never `--webhook "$ALERT_WEBHOOK_URL"`: cron and launchd do not see variables from your shell profile, so it arrives empty.
+3. Live-fire the deadman once (`--max-age 1s`) and see the alert arrive before you walk away.
+
 Bundled tools (Python 3 stdlib). Copy both into your project so the schedule does not depend on where the skill is installed (`run_headless.py` imports `deadman.py` from its own folder): `mkdir -p scripts && cp "${CLAUDE_SKILL_DIR}/scripts/run_headless.py" "${CLAUDE_SKILL_DIR}/scripts/deadman.py" scripts/`.
 
 - `${CLAUDE_SKILL_DIR}/scripts/run_headless.py`: runs one `claude -p` job with a lock, a hard timeout, a saved transcript, and a heartbeat written only on real success.
 - `${CLAUDE_SKILL_DIR}/scripts/deadman.py`: `beat` writes a heartbeat; `check` alerts when the last success is too old.
-- Templates in `${CLAUDE_SKILL_DIR}/templates/`: `crontab.txt`, `launchd.plist`, `task-scheduler.ps1`, `github-actions.yml`.
+- Templates in `${CLAUDE_SKILL_DIR}/templates/`: `crontab.txt` (job and deadman lines), `launchd.plist` (job) plus `launchd-deadman.plist` (its deadman), `task-scheduler.ps1` (registers both tasks), `github-actions.yml`.
 
 ## Step 1: pick the primitive
 
@@ -92,10 +98,12 @@ Exit codes: 0 ok, 1 failed, 4 already running, 5 timed out, 6 claude not found.
 
 ## Step 5: schedule it (copy a template)
 
-All templates use absolute paths. Schedulers run with a tiny `PATH` and no login shell, which is the most common reason a job "works when I run it" and fails on schedule.
+Generate BOTH entries, job and deadman, for the chosen scheduler; `crontab.txt` and `task-scheduler.ps1` already hold both, and launchd needs `launchd.plist` plus `launchd-deadman.plist`.
+
+All templates use absolute paths. Schedulers run with a tiny `PATH`, no login shell and none of your exported variables, which is the most common reason a job "works when I run it" and fails on schedule.
 
 - cron: `${CLAUDE_SKILL_DIR}/templates/crontab.txt`. `cd` into the project before anything relative; in POSIX `sh` a failed `. ./file` aborts the whole line.
-- launchd: `${CLAUDE_SKILL_DIR}/templates/launchd.plist`. `plutil -lint` it first; an unescaped `&` makes launchd ignore the file without an error. After changing `EnvironmentVariables`, `bootout` then `bootstrap`; `kickstart` does not re-read them.
+- launchd: `${CLAUDE_SKILL_DIR}/templates/launchd.plist` and `${CLAUDE_SKILL_DIR}/templates/launchd-deadman.plist`. `plutil -lint` both first; an unescaped `&` makes launchd ignore the file without an error. After changing `EnvironmentVariables`, `bootout` then `bootstrap`; `kickstart` does not re-read them.
 - Windows: `${CLAUDE_SKILL_DIR}/templates/task-scheduler.ps1`. `-MultipleInstances IgnoreNew` is the overlap guard.
 - GitHub Actions: `${CLAUDE_SKILL_DIR}/templates/github-actions.yml`. Times are UTC, runs can start late, and on public repos scheduled workflows are disabled after 60 days without activity.
 
@@ -106,14 +114,20 @@ Never schedule the same job in two systems (for example cron and launchd). It do
 The deadman is a **separate** scheduled entry that checks the heartbeat's content timestamp:
 
 ```bash
+# once: the alert URL in a file the scheduler can read (cron and launchd do not see your shell's env)
+mkdir -p ~/.config/agent-alerts && printf '%s\n' 'https://hooks.slack.com/services/...' > ~/.config/agent-alerts/webhook.url
+chmod 600 ~/.config/agent-alerts/webhook.url
+
 python3 scripts/deadman.py check --name daily-digest \
   --file "$HOME/projects/<your-app>/.agent-jobs/daily-digest.heartbeat.json" \
-  --max-age 26h --webhook "$ALERT_WEBHOOK_URL"
+  --max-age 26h --webhook-file "$HOME/.config/agent-alerts/webhook.url"
 ```
 
 - `--max-age` is about one period plus slack (daily job: 26h; hourly job: 2h).
 - It reads the `finished_at` written inside the file, not the file's modification time, which a copy or restore can refresh.
-- It exits 3 and says so when the alert itself fails to deliver. An alert that was never delivered is not an alert.
+- It exits 3 and says so when the alert itself fails to deliver, and also when no channel is set (no `--webhook`, `--webhook-file` or `--alert-cmd`, or only an empty one): stderr says `NO ALERT CHANNEL`. An alert that was never delivered is not an alert.
+- On every stale or missing check it also writes `<name>.DEADMAN-ALERT.txt` next to the heartbeat, and removes it on the next fresh check, so a failure leaves a trail on disk even when every channel is down.
+- `--alert-cmd` runs any command with the text in `$DEADMAN_MESSAGE` (for example a mail or notification command); it counts as delivered only when the command exits 0.
 - Run the deadman somewhere the job's failure cannot also take down: a different scheduler entry at minimum, a different machine or GitHub Actions if the job matters.
 
 Guard rules:
@@ -130,12 +144,13 @@ env -i HOME="$HOME" PATH=/usr/bin:/bin sh -c '<the exact line from your crontab>
 cat "$HOME/projects/<your-app>/.agent-jobs/daily-digest.heartbeat.json"
 
 # 2. the scheduler has it
-crontab -l | grep daily-digest                       # cron
-launchctl print gui/$(id -u)/com.example.daily-digest | head -5   # launchd
+crontab -l | grep daily-digest                       # cron: expect TWO lines, job and deadman
+launchctl print gui/$(id -u)/com.example.daily-digest | head -5           # launchd: the job
+launchctl print gui/$(id -u)/com.example.daily-digest-deadman | head -5   # launchd: its deadman
 # Windows: Get-ScheduledTaskInfo -TaskName daily-digest ; GitHub: Actions tab, run once with "Run workflow"
 
 # 3. the deadman fires: expect exit 1 and an alert that actually arrives
-python3 scripts/deadman.py check --file .agent-jobs/daily-digest.heartbeat.json --max-age 1s --webhook "$ALERT_WEBHOOK_URL"
+python3 scripts/deadman.py check --file .agent-jobs/daily-digest.heartbeat.json --max-age 1s --webhook-file ~/.config/agent-alerts/webhook.url
 ```
 
 Then write the off condition in the job's header comment.

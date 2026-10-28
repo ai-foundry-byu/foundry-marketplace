@@ -11,6 +11,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 SCRIPT_HOME = {
     "done_gate.py": SKILLS / "done-gate" / "scripts",
     "qa_yaml.py": SKILLS / "done-gate" / "scripts",
+    "qa_session.py": SKILLS / "done-gate" / "scripts",
     "a11y_check.py": SKILLS / "a11y-check" / "scripts",
     "visual_baseline.py": SKILLS / "visual-baseline" / "scripts",
     "persona_run.py": SKILLS / "persona-run" / "scripts",

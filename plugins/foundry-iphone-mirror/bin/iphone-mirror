@@ -4,8 +4,8 @@
 #
 # This is the CLIENT. The privileged work (screenshot, tap) runs inside the
 # helper app built by `iphone-mirror build`, launched per action through
-# LaunchServices so the helper's own Accessibility + Screen Recording grants
-# apply, whoever calls this. Results come back through files in the state dir.
+# LaunchServices so the helper's own Accessibility, Screen Recording and
+# Automation (System Events) grants apply, whoever calls this. Results come back through files in the state dir.
 #
 # Usage:
 #   iphone-mirror doctor                  preflight every requirement, prints N ok, M fail
@@ -25,6 +25,9 @@
 #   IPHONE_MIRROR_HELPER   path to the helper .app (default: the path recorded by build,
 #                          else $HOME/Applications/FoundryPhone.app)
 #   IPHONE_MIRROR_TIMEOUT  seconds to wait for one action (default 30)
+# State lives in $HOME/Library/Caches/foundry-iphone-mirror. It is not configurable:
+# the helper app is launched by LaunchServices, which does not pass environment
+# variables, so the client and the helper must both derive it from $HOME.
 
 set -o pipefail
 
@@ -32,7 +35,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 ENGINE="$ROOT/engine"
 MIRROR_APP="iPhone Mirroring"
-STATE="${IPHONE_MIRROR_STATE:-$HOME/Library/Caches/foundry-iphone-mirror}"
+STATE="$HOME/Library/Caches/foundry-iphone-mirror"
+# Only the unit tests (worker run in-process) may move it; see the note above.
+[ -n "${IPHONE_MIRROR_WORKER_DIRECT:-}" ] && STATE="${IPHONE_MIRROR_STATE:-$STATE}"
 CONF_DIR="$HOME/Library/Application Support/foundry-iphone-mirror"
 SHOTDIR="$STATE/shots"
 TIMEOUT="${IPHONE_MIRROR_TIMEOUT:-30}"
@@ -46,6 +51,12 @@ resolve_helper() {
 HELPER="$(resolve_helper)"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
+
+# Cheap requirement checks that must pass BEFORE anything touches the screen.
+require_helper() {
+  [ -n "${IPHONE_MIRROR_WORKER_DIRECT:-}" ] && return 0
+  [ -d "$HELPER" ] || die "helper app missing at $HELPER (run: iphone-mirror build)"
+}
 
 # One action at a time: the state files are a single mailbox, and there is one phone.
 LOCK="$STATE/lock"
@@ -71,7 +82,7 @@ run_worker() {
   if [ -n "${IPHONE_MIRROR_WORKER_DIRECT:-}" ]; then
     IPHONE_MIRROR_STATE="$STATE" /bin/bash "$IPHONE_MIRROR_WORKER_DIRECT" "$@" >/dev/null 2>&1
   else
-    [ -d "$HELPER" ] || die "helper app missing at $HELPER (run: iphone-mirror build)"
+    require_helper
     open -n -a "$HELPER" --args "$@" || die "could not launch the helper app at $HELPER"
   fi
   local i=0
@@ -84,8 +95,10 @@ run_worker() {
 }
 
 # Bring iPhone Mirroring to the front so captures and taps hit it, not a window
-# on top of it. `open -a` needs no TCC permission.
+# on top of it. `open -a` needs no TCC permission. It checks the helper first,
+# so a call that is bound to fail never switches the user's screen to the phone.
 raise_mirror() {
+  require_helper
   [ -n "${IPHONE_MIRROR_WORKER_DIRECT:-}" ] && return 0
   open -a "$MIRROR_APP" 2>/dev/null; sleep 0.4
 }
@@ -120,6 +133,7 @@ cmd_doctor() {
     fi
   else
     bad "helper app missing at $HELPER (run: iphone-mirror build)"
+    echo "[next] after building, grant the helper app three permissions: Accessibility, Screen Recording, and Automation (control System Events)"
   fi
 
   pgrep -xq "$MIRROR_APP" && pass "$MIRROR_APP running" || bad "$MIRROR_APP not running (iphone-mirror open, then unlock/approve on the phone)"
@@ -145,15 +159,15 @@ case "${1:-}" in
   build)  shift; exec "$ENGINE/build-helper-app.sh" "$@" ;;
   open)   open -a "$MIRROR_APP" || die "could not open $MIRROR_APP"; sleep 2
           echo "Launched $MIRROR_APP. If it shows a connect, passcode or 'iPhone in Use' screen, finish that on the phone (or lock the phone) first." ;;
-  info)   raise_mirror; run_worker geometry ;;
+  info)   require_helper; run_worker geometry ;;   # reads via System Events; needs no focus
   shot)   shift; raise_mirror; run_worker shot "${1:-$SHOTDIR/shot.png}" ;;
   tap)    shift; [ $# -eq 2 ] || die "usage: tap <px> <py>"; need_ints "$@"; raise_mirror; run_worker tap "$@" ;;
   tapxy)  shift; [ $# -eq 2 ] || die "usage: tapxy <gx> <gy>"; need_ints "$@"; raise_mirror; run_worker tapxy "$@" ;;
   swipe)  shift; [ $# -eq 4 ] || die "usage: swipe <px1> <py1> <px2> <py2>"; need_ints "$@"; raise_mirror; run_worker swipe "$@" ;;
   map)    shift; [ $# -eq 2 ] || die "usage: map <px> <py>"; need_ints "$@"; run_worker map "$@" ;;
-  type)   shift; [ -n "${1:-}" ] || die "usage: type \"text\""; run_worker type "$1" ;;
-  key)    shift; [ -n "${1:-}" ] || die "usage: key <name>"; run_worker key "$1" ;;
+  type)   shift; [ -n "${1:-}" ] || die "usage: type \"text\""; require_helper; run_worker type "$1" ;;
+  key)    shift; [ -n "${1:-}" ] || die "usage: key <name>"; require_helper; run_worker key "$1" ;;
   home)   raise_mirror; run_worker home ;;
-  ""|help|-h|--help) sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//' ;;
+  ""|help|-h|--help) sed -n '3,/^[^#]/{/^#/p;}' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try: iphone-mirror help)" ;;
 esac

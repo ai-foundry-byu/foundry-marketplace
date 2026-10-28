@@ -25,7 +25,7 @@ Gather every place the asks came from: meeting notes, a voice memo transcript, a
    - work by teammates, past cohorts, and open-source projects that do 80% of the job.
 
    One row per area: what exists, where (path or URL), and a verdict (reuse, extend, replace, ignore), with one line of why. If an outside search is needed, run it as a separate research step and cite the URLs.
-5. **Decisions.** Every time a human decides something ("yes, magic links", "skip the admin panel for now"), add a `DECISIONS.md` row with their exact words, what it authorizes, and what still needs them. Never write a decision they did not make. For anything still open, add it to "Pending decisions" as a question with your recommendation in bold, so they can answer in one word.
+5. **Decisions.** Every time a human decides something ("yes, magic links", "skip the admin panel for now"), add a `DECISIONS.md` row with their exact words, what it authorizes, and what still needs them. Never write a decision they did not make. For anything still open, add it to "Pending decisions" as a question with your recommendation in bold, so they can answer in one word. **When a pending decision is answered, move it in the same edit:** add the D-row, delete the question from "Pending decisions", and write the D-id in the Open questions table's Answer column. A pending list that still holds answered questions misleads the next session.
 6. **Constraints.** Deadline, budget, stack the course or client requires, data rules (student records, client NDAs), and the devices users actually carry.
 
 ## Example rows
@@ -45,6 +45,7 @@ Gather every place the asks came from: meeting notes, a voice memo transcript, a
 - Every source has a row. Every ask has an R-id, a verbatim text, a source code and a date.
 - "## Already exists" has at least one row per major area of the product.
 - No `TODO:` markers remain in REQUIREMENTS.md.
+- "Pending decisions" in DECISIONS.md holds only questions nobody has answered yet.
 - `python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .` reports stage 2.
 
 Then show the human the asks table and the Pending decisions, and ask: "Is anything missing or misquoted?" Their answer goes into DECISIONS.md.

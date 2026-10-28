@@ -10,6 +10,19 @@ class TestExplore(unittest.TestCase):
         self.assertEqual(ex.normalize("http://h"), "http://h/")
         self.assertEqual(ex.normalize("http://h/a?x=1#f"), "http://h/a?x=1")
 
+    def test_hash_routes_are_distinct_pages(self):
+        self.assertEqual(ex.normalize("http://h/#/group/1"), "http://h/#/group/1")
+        self.assertEqual(ex.normalize("http://h/index.html#/group/1/"), "http://h/index.html#/group/1")
+        self.assertEqual(ex.normalize("http://h/#!/settings"), "http://h/#!/settings")
+        self.assertEqual(ex.normalize("http://h/#/"), "http://h/")         # the empty route is the root
+        self.assertNotEqual(ex.normalize("http://h/#/group/1"), ex.normalize("http://h/#/group/2"))
+
+    def test_destructive_hash_routes_are_skipped(self):
+        o = "http://h:3000"
+        self.assertTrue(ex.should_visit("http://h:3000/#/group/1", o))
+        self.assertFalse(ex.should_visit("http://h:3000/#/logout", o))
+        self.assertFalse(ex.should_visit("http://h:3000/#/items/3/delete", o))
+
     def test_should_visit(self):
         o = "http://h:3000"
         self.assertTrue(ex.should_visit("http://h:3000/about", o))

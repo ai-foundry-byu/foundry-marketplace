@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Hash app</title></head>
+<body>
+<nav><a href="broken.html">Broken page</a> <a href="#/a">Route A</a> <a href="#/b">Route B</a> <a href="#top">Top</a> <a href="#/logout">Log out</a></nav>
+<main id="view"><h1>Home</h1><p>A hash-routed single page app used to test the crawler on routes.</p></main>
+<script>
+function render() {
+  const route = location.hash.replace(/^#/, '') || '/';
+  const view = document.getElementById('view');
+  if (route === '/a') view.innerHTML = '<h1>Route A</h1><p>Route A has an image with no alt text.</p><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">';
+  else if (route === '/b') { view.innerHTML = '<h1>Route B</h1><p>Route B throws while rendering its content.</p>'; setTimeout(() => { undefined.render(); }, 50); }
+  else if (route === '/logout') { document.cookie = 'crawled_logout=1; path=/'; view.innerHTML = '<h1>Logged out</h1>'; }
+  else view.innerHTML = '<h1>Home</h1><p>A hash-routed single page app used to test the crawler on routes.</p>';
+}
+window.addEventListener('hashchange', render);
+render();
+</script>
+</body></html>

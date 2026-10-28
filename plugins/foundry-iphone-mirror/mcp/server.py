@@ -34,7 +34,19 @@ CLI = os.environ.get("IPHONE_MIRROR_CLI") or os.path.join(os.path.dirname(HERE),
 
 
 def _state_dir() -> str:
-    return os.environ.get("IPHONE_MIRROR_STATE") or os.path.expanduser("~/Library/Caches/foundry-iphone-mirror")
+    """Same rule as bin/iphone-mirror: the helper app cannot receive environment
+    variables, so IPHONE_MIRROR_STATE only applies to the in-process test worker."""
+    default = os.path.expanduser("~/Library/Caches/foundry-iphone-mirror")
+    if os.environ.get("IPHONE_MIRROR_WORKER_DIRECT"):
+        return os.environ.get("IPHONE_MIRROR_STATE") or default
+    return default
+
+
+# Every tool that acts on the phone carries this, because the model often calls
+# these tools without loading the iphone-mirror skill first.
+GATE = (" Rules: run iphone_doctor first and stop on any [FAIL]; act on the phone only for a task the user "
+        "asked for (their go-ahead), and never buy, send, delete or change account settings unless they named "
+        "that exact action.")
 
 
 def run_cli(*args: str, timeout: int = 60) -> tuple[int, str]:
@@ -140,44 +152,50 @@ def _schema(props: dict[str, str] | None = None, kind: str = "integer") -> dict:
 
 TOOLS: dict[str, tuple[str, dict, Callable[[dict], dict]]] = {
     "iphone_doctor": (
-        "Preflight everything: macOS version, iPhone Mirroring installed and running, cliclick, the helper "
-        "app, and both TCC grants (Accessibility, Screen Recording) tested THROUGH the helper app. Run this "
-        "FIRST. If any line is [FAIL], stop and tell the user which grant or step is missing; granting TCC is "
-        "a GUI step only the user can do, never try to click it yourself.",
+        "Preflight a real iPhone setup; read-only, touches nothing. Checks macOS version, iPhone Mirroring "
+        "installed and running, cliclick, the helper app, and all three permissions the helper app needs "
+        "(Accessibility, Screen Recording, and Automation to control System Events), tested THROUGH the "
+        "helper app. Run this FIRST, before any other iphone_* tool. If any line is [FAIL], stop and tell the "
+        "user the exact fix from that line; granting a permission is a step only the user can do in System "
+        "Settings, never try to click it yourself. Load the foundry-iphone-mirror:iphone-mirror skill for the "
+        "full screenshot, act, verify loop.",
         _schema(), t_doctor),
     "iphone_open": (
         "Launch and focus iPhone Mirroring. If the mirror shows a connect, passcode or 'iPhone in Use' "
-        "screen, the user must act on the physical phone: report it, do not keep tapping.",
+        "screen, the user must act on the physical phone: report it, do not keep tapping." + GATE,
         _schema(), t_open),
     "iphone_info": (
-        "Return the iPhone Mirroring window geometry in screen points (x y width height). Debug only. "
-        "Note: this resets the pixel mapping, so take a fresh screenshot before the next tap.",
+        "Return the iPhone Mirroring window geometry in screen points (x y width height). Debug only; it does "
+        "not raise the window or touch the phone. Note: this resets the pixel mapping, so take a fresh "
+        "screenshot before the next tap.",
         _schema(), t_info),
     "iphone_screenshot": (
         "Screenshot the iPhone Mirroring window and return the PNG inline. Pick tap targets by their pixel "
         "position in THIS image (top-left origin). It also records the geometry that iphone_tap and "
-        "iphone_swipe use, so screenshot before acting and again after every action to verify.",
+        "iphone_swipe use, so screenshot before acting and again after every action to verify. It brings the "
+        "Mirroring window to the front." + GATE,
         _schema(), t_screenshot),
     "iphone_tap": (
-        "Tap at a pixel coordinate from the LAST iphone_screenshot. Verify with another screenshot.",
+        "Tap at a pixel coordinate from the LAST iphone_screenshot. Verify with another screenshot." + GATE,
         _schema({"px": "x pixel in the last screenshot", "py": "y pixel in the last screenshot"}), t_tap),
     "iphone_swipe": (
         "Drag from one screenshot pixel to another (scroll a list, move a slider). Pixels from the last "
-        "iphone_screenshot. To scroll content up, drag from a lower y to a higher-up y.",
+        "iphone_screenshot. To scroll content up, drag from a lower y to a higher-up y." + GATE,
         _schema({"px1": "start x", "py1": "start y", "px2": "end x", "py2": "end y"}), t_swipe),
     "iphone_type": (
         "Type literal text into the focused field. Tap the field first and confirm the cursor or keyboard "
-        "in a screenshot. Keystrokes show on the mirror, so avoid typing secrets.",
+        "in a screenshot. Keystrokes show on the mirror, so avoid typing secrets." + GATE,
         _schema({"text": "the text to type"}, kind="string"), t_type),
     "iphone_key": (
-        "Press one named key: return, esc, tab, space, delete, arrow-up, arrow-down, arrow-left, arrow-right.",
+        "Press one named key: return, esc, tab, space, delete, arrow-up, arrow-down, arrow-left, arrow-right."
+        + GATE,
         _schema({"name": "key name"}, kind="string"), t_key),
     "iphone_home": (
-        "Perform the swipe-up home gesture to return to the home screen.",
+        "Perform the swipe-up home gesture to return to the home screen." + GATE,
         _schema(), t_home),
     "iphone_tapxy": (
         "Tap at an ABSOLUTE global screen point (screen points, not screenshot pixels). Rarely needed; "
-        "prefer iphone_tap.",
+        "prefer iphone_tap." + GATE,
         _schema({"gx": "global x in screen points", "gy": "global y in screen points"}), t_tapxy),
 }
 

@@ -10,7 +10,12 @@ Hook IO contract (Claude Code docs, hooks reference):
   * PreToolUse deny: print {"hookSpecificOutput": {"hookEventName":
     "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason":
     "..."}} and exit 0.
-  * Stop block: print {"decision": "block", "reason": "..."} and exit 0.
+  * Stop "keep working": print {"hookSpecificOutput": {"hookEventName": "Stop",
+    "additionalContext": "..."}} and exit 0. This is the documented non-error
+    path: Claude Code labels it "Stop hook feedback" and keeps the same loop
+    protections as decision:block (stop_hook_active, the 8-continuation cap),
+    while decision:block is labeled "Stop hook error occurred".
+  * Message for the human only: {"systemMessage": "..."}. Nothing goes to stderr.
 """
 from __future__ import annotations
 
@@ -169,8 +174,51 @@ def emit_warn(hook: str, event: dict, text: str, **detail) -> None:
 
 
 def emit_stop_block(hook: str, event: dict, reason: str, **detail) -> None:
+    """Keep Claude working, through the non-error Stop feedback path."""
     log(hook, "block-stop", safe_session(event), reason=reason, **detail)
-    print(json.dumps({"decision": "block", "reason": f"[{PLUGIN}/{hook}] {reason}"}))
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "Stop",
+        "additionalContext": f"[{PLUGIN}/{hook}] {reason}",
+    }}))
+
+
+def emit_user_message(hook: str, text: str) -> None:
+    """Show a line to the human (not an error, not a block)."""
+    print(json.dumps({"systemMessage": f"[{PLUGIN}/{hook}] {text}"}))
+
+
+def read_json(path: str, default=None):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return default
+
+
+def write_json(path: str, data) -> None:
+    """Atomic write; never raises."""
+    try:
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def blob_hash(path: str) -> str:
+    """git's blob id for a file's bytes (so it compares with ls-tree output), "-" if absent."""
+    import hashlib
+    try:
+        if not os.path.isfile(path):
+            return "-"  # a FIFO or device named like source would block the read
+        h = hashlib.sha1(b"blob %d\0" % os.path.getsize(path))
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):  # a big dump.sql stays out of memory
+                h.update(chunk)
+    except OSError:
+        return "-"
+    return h.hexdigest()
 
 
 def run_hook(hook: str, fn) -> None:
@@ -320,13 +368,35 @@ def strip_prefixes(argv: list[str]) -> list[str]:
     return out
 
 
-_SUBST = re.compile(r"\$\(([^()]*)\)|`([^`]*)`")
+# $(...), `...` and process substitution <(...) / >(...): each runs a command whose output
+# lands in the transcript (diff <(cat .env) /dev/null printed the file).
+_SUBST = re.compile(r"\$\(([^()]*)\)|`([^`]*)`|[<>]\(([^()]*)\)")
+
+
+def strip_grouping(argv: list[str]) -> list[str]:
+    """Drop subshell and group syntax around a command: "(rm" -> "rm", ".env)" -> ".env",
+    "{" / "}" / "!" tokens. Without this, (cd /tmp && rm -rf ~), { cat .env; } and
+    (git push) had heads "(cd", "{" and "(git", and every guard let them through."""
+    out = list(argv)
+    while out and out[0] in ("(", "{", "!"):
+        out = out[1:]
+    if out and out[0].startswith("(") and not out[0].startswith("(("):  # (( )) is arithmetic
+        out[0] = out[0].lstrip("(")
+    while out and out[-1] in (")", "}", ";"):
+        out = out[:-1]
+    if out:
+        last = out[-1]
+        extra = last.count(")") - last.count("(")
+        while extra > 0 and last.endswith(")"):
+            last, extra = last[:-1], extra - 1
+        out[-1] = last
+    return [t for t in out if t]
 
 
 def command_stages(cmd: str, _depth: int = 0) -> list[list[list[str]]]:
     """Normalize a Bash command into pipelines of argv lists.
 
-    Unwraps `bash -c '...'`, `sh -c`, `eval '...'` and $(...) / backticks so
+    Unwraps `bash -c '...'`, `sh -c`, `eval '...'`, $(...) / backticks and <(...) so
     a wrapper cannot hide the real command. Depth limited.
     """
     if not isinstance(cmd, str) or not cmd.strip():
@@ -335,7 +405,7 @@ def command_stages(cmd: str, _depth: int = 0) -> list[list[list[str]]]:
     for pipeline in split_top_level(cmd):
         argvs: list[list[str]] = []
         for stage in pipeline:
-            argv = strip_prefixes(tokenize(stage))
+            argv = strip_prefixes(strip_grouping(tokenize(stage)))
             if not argv:
                 continue
             head = os.path.basename(argv[0])
@@ -355,7 +425,7 @@ def command_stages(cmd: str, _depth: int = 0) -> list[list[list[str]]]:
             result.append(argvs)
     if _depth < 4:
         for m in _SUBST.finditer(cmd):
-            inner = m.group(1) if m.group(1) is not None else m.group(2)
+            inner = next((g for g in m.groups() if g is not None), "")
             if inner and inner.strip():
                 result.extend(command_stages(inner, _depth + 1))
     return result

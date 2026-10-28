@@ -15,26 +15,28 @@ For a one-shot command that finishes on its own, just run it. tmux adds moving p
 
 Bundled helper: `${CLAUDE_SKILL_DIR}/scripts/tmux_agent.py` (Python 3 stdlib, calls `tmux`). Install tmux first: `brew install tmux` (macOS), `sudo apt install tmux` (Ubuntu/WSL). On Windows, use WSL.
 
-Every command uses a **private socket** (`$TMUX_AGENT_SOCKET`, or a per-user path under the temp dir), so the agent never types into the user's own tmux sessions.
+Every command uses a **private socket, one per project** (the git top-level of the current directory), so the agent never types into the user's own tmux sessions, and agents in different projects never collide on a session name or kill each other's sessions. `T socket` prints the path. Run every `T` call for a set of sessions from inside the same project (in another repo you are on another socket; use `--cwd` to start a pane elsewhere). To share one socket on purpose (for example two terminals on the same sessions), export `TMUX_AGENT_SOCKET=/some/path.sock` in both.
+
+The helper is a shell function, `T`. Define it at the top of every Bash command that uses it: a function does not survive into the next Bash tool call, and storing the command in a variable instead breaks in zsh, the macOS default shell, which does not word-split an unquoted variable into a command and its arguments.
 
 ## The five moves
 
 ```bash
-T="python3 ${CLAUDE_SKILL_DIR}/scripts/tmux_agent.py"
-
-$T start dev --cwd "$PWD" --cmd "npm run dev"      # 1. start a named session, optionally launch a program
-$T wait dev "Local:.*http://localhost:\d+" --timeout 60   # 2. wait for a line (regex; --fixed for plain text)
-$T read dev --lines 50                              # 3. read recent output
-$T send dev "rs"                                    # 4. type text; Enter is sent separately
-$T keys dev C-c                                     #    or send control keys: C-c, C-d, Escape, Up, Tab
-$T kill dev                                         # 5. clean up (or: kill --all)
+T() { python3 "${CLAUDE_SKILL_DIR}/scripts/tmux_agent.py" "$@"; }
+T start dev --cwd "$PWD" --cmd "npm run dev"      # 1. start a named session, optionally launch a program
+T wait dev "Local:.*http://localhost:\d+" --timeout 60   # 2. wait for a line (regex; --fixed for plain text)
+T read dev --lines 50                              # 3. read recent output
+T send dev "rs"                                    # 4. type text; Enter is sent separately
+T keys dev C-c                                     #    or send control keys: C-c, C-d, Escape, Up, Tab
+T kill dev                                         # 5. clean up (or: kill --all, this project's sessions only)
 ```
 
 Run a shell command in a pane and get its output and exit code back:
 
 ```bash
-$T start sh --cwd "$PWD"
-$T run sh "pytest -q tests/test_api.py" --timeout 300 ; echo "exit=$?"
+T() { python3 "${CLAUDE_SKILL_DIR}/scripts/tmux_agent.py" "$@"; }
+T start sh --cwd "$PWD"
+T run sh "pytest -q tests/test_api.py" --timeout 300 ; echo "exit=$?"
 ```
 
 `run` wraps the command in unique begin and end markers, waits for the end marker, and returns the real exit code (124 on timeout, and the command keeps running so you can inspect or `keys sh C-c`).
@@ -60,29 +62,33 @@ tmux -S <socket> attach -t dev      (detach with Ctrl-b then d)
 **Dev server plus tests against it**
 
 ```bash
-$T start web --cwd "$PWD" --cmd "npm run dev"
-$T wait web "ready|Local:" --timeout 90
+T() { python3 "${CLAUDE_SKILL_DIR}/scripts/tmux_agent.py" "$@"; }
+T start web --cwd "$PWD" --cmd "npm run dev"
+T wait web "ready|Local:" --timeout 90
 curl -fsS http://localhost:3000/api/health
-$T run sh "npx playwright test" --timeout 600
-$T kill web
+T start sh --cwd "$PWD"
+T run sh "npx playwright test" --timeout 600
+T kill web; T kill sh
 ```
 
 **Database shell**
 
 ```bash
-$T start db --cmd 'psql "$DATABASE_URL"'
-$T wait db "=[#>] $" --timeout 20
-$T send db "\dt"
-$T wait db "=[#>] $" && $T read db --lines 40
-$T send db "\q"
+T() { python3 "${CLAUDE_SKILL_DIR}/scripts/tmux_agent.py" "$@"; }
+T start db --cmd 'psql "$DATABASE_URL"'
+T wait db "=[#>] $" --timeout 20
+T send db "\dt"
+T wait db "=[#>] $" && T read db --lines 40
+T send db "\q"
 ```
 
 **An installer that asks questions**
 
 ```bash
-$T start setup --cwd "$PWD" --cmd "npx create-next-app@latest my-app"
-$T wait setup "TypeScript\?" --timeout 120 && $T send setup "y"
-$T wait setup "ESLint\?" && $T send setup "y"
+T() { python3 "${CLAUDE_SKILL_DIR}/scripts/tmux_agent.py" "$@"; }
+T start setup --cwd "$PWD" --cmd "npx create-next-app@latest my-app"
+T wait setup "TypeScript\?" --timeout 120 && T send setup "y"
+T wait setup "ESLint\?" && T send setup "y"
 ```
 
 (Many installers also accept flags such as `--yes` or `--ts`; prefer those when they exist.)
@@ -92,14 +98,15 @@ $T wait setup "ESLint\?" && $T send setup "y"
 Each agent gets its own git worktree, so they never edit the same checkout:
 
 ```bash
+T() { python3 "${CLAUDE_SKILL_DIR}/scripts/tmux_agent.py" "$@"; }
 for n in 1 2 3; do
   git worktree add "../<your-app>-task$n" -b "task$n"
-  $T start "agent$n" --cwd "../<your-app>-task$n" --cmd "claude"
+  T start "agent$n" --cwd "../<your-app>-task$n" --cmd "claude"
 done
-$T wait agent1 "for shortcuts|>" --timeout 60          # the TUI is ready; the pattern depends on the version
-$T send agent1 "Fix the failing test in tests/test_dates.py. Run the tests before you stop."
-$T send agent2 "Add input validation to app/api/signup/route.ts with tests."
-$T read agent1 --lines 80                              # check progress
+T wait agent1 "for shortcuts|>" --timeout 60          # the TUI is ready; the pattern depends on the version
+T send agent1 "Fix the failing test in tests/test_dates.py. Run the tests before you stop."
+T send agent2 "Add input validation to app/api/signup/route.ts with tests."
+T read agent1 --lines 80                              # check progress
 ```
 
 Notes for parallel agents:
@@ -112,7 +119,7 @@ Notes for parallel agents:
 ## Raw tmux equivalents (when the helper is not available)
 
 ```bash
-S="${TMPDIR:-/tmp}/tmux-agent.sock"
+S="${TMPDIR:-/tmp}/tmux-agent-$(id -u)-$(basename "$PWD").sock"   # one socket per project
 tmux -S "$S" new-session -d -s dev -c "$PWD"
 tmux -S "$S" send-keys -t dev:0.0 -l -- 'npm run dev' && sleep 0.3 && tmux -S "$S" send-keys -t dev:0.0 Enter
 tmux -S "$S" capture-pane -p -J -t dev:0.0 -S -200
@@ -124,12 +131,13 @@ tmux -S "$S" list-sessions
 ## Verify
 
 ```bash
-$T start check --cmd "PYTHON_BASIC_REPL=1 python3 -q"
-$T wait check ">>> " --timeout 10
-$T send check "print(6*7)"
-$T wait check "^42$" --timeout 10 && echo PASS
-$T kill check
-$T ls      # expect: (no sessions)
+T() { python3 "${CLAUDE_SKILL_DIR}/scripts/tmux_agent.py" "$@"; }
+T start check --cmd "PYTHON_BASIC_REPL=1 python3 -q"
+T wait check ">>> " --timeout 10
+T send check "print(6*7)"
+T wait check "^42$" --timeout 10 && echo PASS
+T kill check
+T ls      # expect: (no sessions)
 ```
 
 Credit: the send-text-then-Enter timing and the private-socket convention follow the tmux skill published by the OpenClaw project (MIT). The helper here is a fresh implementation.

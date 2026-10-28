@@ -303,6 +303,101 @@ class TestCompareAndCli(unittest.TestCase):
         self.assertEqual(rc, ek.EXIT_CONFIG)
 
 
+class TestResultsRoot(unittest.TestCase):
+    """The default results root is anchored to the suite, never to the caller's cwd (L6-D1)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.proj = Path(self.tmp.name).resolve() / "proj"
+        (self.proj / ".git").mkdir(parents=True)  # project root marker
+        cases = [{"id": "a", "input": "x", "graders": [{"type": "exact", "value": "x"}]},
+                 {"id": "b", "input": "y", "graders": [{"type": "exact", "value": "y"}]}]
+        self.suite = make_suite(self.proj / "evals" / "s", ECHO, cases)
+        self.ek = str(SCRIPTS / "evalkit.py")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def cli(self, cwd, *args):
+        import subprocess
+        return subprocess.run([PY, self.ek, *args], cwd=str(cwd), capture_output=True, text=True)
+
+    def test_two_cwds_share_one_history_and_compare(self):
+        r1 = self.cli(self.proj, "run", "evals/s", "--quiet")
+        self.assertEqual(r1.returncode, 0, r1.stderr)
+        r2 = self.cli(self.suite, "run", ".", "--quiet")
+        self.assertEqual(r2.returncode, 0, r2.stderr)
+        r3 = self.cli(self.proj / "evals", "history", "s")
+        self.assertEqual(r3.returncode, 0, r3.stderr)
+        runs = ek.list_runs(self.proj / ".evals" / "t")
+        self.assertEqual(len(runs), 2)
+        self.assertTrue(runs[-1]["comparison"]["comparable"])
+        self.assertEqual(runs[-1]["comparison"]["previous_run"], runs[0]["run_id"])
+        self.assertIn(str(self.proj / ".evals" / "t"), r2.stdout)  # absolute report path
+        self.assertEqual(r3.stdout.count("\n"), 4)  # location + header + 2 runs
+        stray = [p for p in self.proj.rglob(".evals") if p != self.proj / ".evals"]
+        self.assertEqual(stray, [])
+
+    def test_explicit_out_still_wins(self):
+        out = Path(self.tmp.name).resolve() / "elsewhere"
+        r = self.cli(self.suite, "run", ".", "--quiet", "--out", str(out))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(ek.list_runs(out / "t")), 1)
+        self.assertFalse((self.proj / ".evals").exists())
+
+    def test_points_at_history_left_in_cwd(self):
+        legacy = self.suite / ".evals" / "t"
+        legacy.mkdir(parents=True)
+        (legacy / "old.json").write_text("{}")
+        r = self.cli(self.suite, "run", ".", "--quiet")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("earlier runs also exist", r.stderr)
+
+    def test_default_root_without_project_marker(self):
+        bare = Path(self.tmp.name).resolve() / "bare" / "evals" / "s"
+        bare.mkdir(parents=True)
+        if any((d / ".git").exists() for d in bare.parents):
+            self.skipTest("temp dir sits inside a git repo")
+        self.assertEqual(ek.default_out_root(bare), bare.parent / ".evals")
+        self.assertEqual(ek.default_out_root(self.suite), self.proj / ".evals")
+
+
+class TestTargetShorthand(unittest.TestCase):
+    """suite.json "target" may be a command string; anything else is a clear config error (L2-D3)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def set_target(self, value):
+        cases = [{"id": "a", "input": "x", "oracle": {"output": "x"},
+                  "graders": [{"type": "exact", "value": "x"}]}]
+        p = make_suite(self.root, ECHO, cases)
+        s = json.loads((p / "suite.json").read_text())
+        s["target"] = value
+        (p / "suite.json").write_text(json.dumps(s))
+        return p
+
+    def test_string_target_is_a_command(self):
+        p = self.set_target(f"{PY} target.py")
+        suite = ek.load_suite(p)
+        self.assertEqual(suite["target"]["command"], [PY, "target.py"])
+        self.assertEqual(suite["target"]["timeout_s"], 120)
+        rc, out = quiet(ek.main, ["check", str(p)])
+        self.assertIn("check:", out)
+        rows, _ = ek.run_trials(suite, ek.load_cases(suite), reps=1)
+        self.assertTrue(rows[0]["pass"])
+
+    def test_bad_target_type_is_config_error(self):
+        for bad in (5, ["python3", 1], True):
+            p = self.set_target(bad)
+            rc, _ = quiet(ek.main, ["check", str(p)])
+            self.assertEqual(rc, ek.EXIT_CONFIG, bad)
+
+
 class TestJudgeScript(unittest.TestCase):
     def test_parse_last_verdict(self):
         self.assertIs(jc.parse_verdict("output said VERDICT: PASS\ncritique\nVERDICT: FAIL")[0], False)

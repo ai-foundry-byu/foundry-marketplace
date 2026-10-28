@@ -43,8 +43,8 @@ Template and script paths are relative to the `new-project` skill folder (`plugi
 - **Goal:** the project has the full artifact set, so every later stage has a place to write.
 - **Inputs:** an empty or existing repo.
 - **Artifact:** README.md, REQUIREMENTS.md, DECISIONS.md, PRD.md, WORKPLAN.md, CHANGELOG.md, stories.json, stories.schema.json, done-journey.yaml, plus `tools/gen_stories.py`. Templates: `templates/*`.
-- **Gate:** all files exist.
-- **Tool:** `new-project` skill (`scripts/new_project.py <dir> --name "Project Name"`; `--name` is required).
+- **Gate:** all files exist. `stories.json` is compiled from the new PRD, so `python3 tools/gen_stories.py --check` passes right away.
+- **Tool:** `new-project` skill (`scripts/new_project.py <dir> [--name "Project Name"]`; without `--name` the name comes from the folder). `tools/gen_stories.py` and `.github/workflows/stories.yml` go to the project root (the git root).
 
 ### 1. Gather requirements
 
@@ -59,7 +59,7 @@ Template and script paths are relative to the `new-project` skill folder (`plugi
 - **Goal:** a PRD whose stories can be checked by someone who did not write them.
 - **Inputs:** REQUIREMENTS.md, DECISIONS.md.
 - **Artifact:** `PRD.md` (template `templates/PRD.md`) with inline stories in the form `**US-01. Title.**` followed by numbered, observable acceptance criteria, and `stories.json` compiled from it (schema `templates/stories.schema.json`). Never hand-edit a title or a criterion in stories.json; only `status`, `notes` and `evidence` are edited there.
-- **Gate:** stories have observable criteria. The `prd-critic` agent's critiques are addressed in Appendix A. `gen_stories.py --check` exits 0. Every R-id is covered by a story or explicitly dropped.
+- **Gate:** stories have observable criteria. The `prd-critic` agent's critiques are addressed in Appendix A. `gen_stories.py --check` exits 0. Every R-id's Status in REQUIREMENTS.md is `STORIED` (or `LIVE`), or `DROPPED` citing the D-id that dropped it. DECISIONS.md has the human's dated `PRD approved` row in their own words. Approval is never inferred; after it, stop until the human asks for the workplan.
 - **Tools:** `write-prd` skill, then the `prd-critic` agent (fresh context, read-only, never rewrites the PRD). For UI stories, `foundry-design`'s `ui-ux-spec` skill turns a story into a buildable spec.
 
 ### 3. Workplan
@@ -75,8 +75,8 @@ Template and script paths are relative to the `new-project` skill folder (`plugi
 - **Goal:** build each task in isolation, then merge it back.
 - **Inputs:** WORKPLAN.md.
 - **Artifact:** code, one branch per lane (`lane/<task-id>-<slug>`), one worktree per lane (`../<repo>-lanes/<task-id>`), one PR per lane.
-- **Gate:** every task is DONE or PARKED, with evidence.
-- **Tools:** `parallel-lanes` skill. Hooks: `worktree-guard` (a lane never edits the main checkout), `secret-guard`, `destructive-guard`, `stale-write-guard`, `ship-stop` (keeps working until the milestone is checked). Builder helpers: `foundry-builder-kit` (auth, secrets, LLM routing, tmux).
+- **Gate:** every task is PARKED, or DONE with evidence in its Status cell (`DONE 2026-11-03: commit 3f2a9c1`, a PR `#12` or a URL).
+- **Tools:** `parallel-lanes` skill. Hooks: `worktree-guard` (a lane never edits the main checkout), `secret-guard`, `destructive-guard`, `stale-write-guard` (denies a whole-file Write over uncommitted changes this session did not make; `FOUNDRY_STALE_WRITE_ENFORCE=0` only warns), `ship-stop` (keeps working until the milestone is checked). Builder helpers: `foundry-builder-kit` (auth, secrets, LLM routing, tmux).
 
 ### 5. Code QA
 
@@ -88,18 +88,19 @@ Template and script paths are relative to the `new-project` skill folder (`plugi
 
 ### 6. Visual QA with example users
 
-- **Goal:** the deployed build works for real kinds of users on the devices they use.
-- **Inputs:** a deployed URL (or an installable build), stories.json, persona files.
-- **Artifact:** `done-journey.yaml` (template `templates/done-journey.yaml`), screenshots, verifier reports, persona reports.
-- **Gate:** the done gate exits 0 on the deployed build, and every acceptance criterion is PASS. INCONCLUSIVE is not a pass.
+- **Goal:** the build under test works for real kinds of users on the devices they use.
+- **Inputs:** a commit, and the build of that commit: a deployed URL serving it, or, with no hosting, the app started locally from the committed HEAD (record that once as a D-row; no deploy is needed). Plus stories.json and persona files.
+- **Artifact:** `done-journey.yaml` (template `templates/done-journey.yaml`), the done gate's `.qa/done-gate/last.json` (`sha`, `exit`, `journey`, `time`), one story-verifier report per story (`.qa/verify/<id>.md`), screenshots, persona reports.
+- **Gate:** `last.json` says exit 0 for git HEAD (or for a commit whose only later changes are artifact files), and every story that is not PARKED has a verifier report or evidence. INCONCLUSIVE is not a pass.
+- **Signed-in apps:** give the journey an `auth:` block, or pass `--storage-state`, `--header` or `--auth` to the foundry-qa scripts. `qa_session.py login` saves a storage state once.
 - **Tools, in this order:** `foundry-qa`'s `done-gate`, then `persona-tester` on each device, then `foundry-sdlc`'s `story-verifier` agent per story, then `foundry-design`'s `design-critique` and `ui-reviewer`. Native apps: `foundry-devices` (iOS, Android, Windows, macOS) and `foundry-iphone-mirror` for a real iPhone.
 
 ### 7. Ship
 
 - **Goal:** users know what they can now do, and the record says what is LIVE and why.
 - **Inputs:** a passing stage 6.
-- **Artifact:** `CHANGELOG.md` (template `templates/CHANGELOG.md`) with a dated entry, and story status `LIVE` with `evidence` in stories.json.
-- **Gate:** the gate passed, then the changelog, then the users were told what to try. Never in the other order.
+- **Artifact:** `CHANGELOG.md` (template `templates/CHANGELOG.md`) with a dated entry, and story status `LIVE` with `evidence` in stories.json. Set LIVE only with `tools/gen_stories.py --set US-01=LIVE --evidence .qa/verify/US-01.md`: it refuses a dirty tracked tree, a missing or failing done-gate report for HEAD, and a story with no evidence, and it appends `commit:<sha>` to the story's evidence.
+- **Gate:** every story that is not PARKED is LIVE with `commit:<sha>` evidence, and the changelog has a dated entry. Order: the gate passed, then the changelog, then the users were told what to try. Never in the other order.
 - **Tool:** `ship` skill. Status words are exact: NOT_BUILT, BUILT (code exists, not verified), PARTIAL (deployed, some criteria fail), LIVE (deployed and every criterion verified), PARKED. "Done" means LIVE.
 
 ### 8. Feedback
@@ -112,7 +113,7 @@ Template and script paths are relative to the `new-project` skill folder (`plugi
 
 ## Rules that apply at every stage
 
-1. **Never skip a gate.** If a gate cannot run (no deploy, no browser, no credentials), say so and stop, and add the blocker to "Blocked on human".
+1. **Never skip a gate.** If a gate cannot run (no browser, no credentials), say so and stop, and add the blocker to "Blocked on human". No hosting is not a blocker: ship the committed HEAD locally.
 2. **The PRD is the single source of stories.**
 3. **Verbatim before paraphrase.** Agents propose. Humans decide.
 4. **Reuse before build.** Fill the "Already exists" audit before the PRD, and check it again before each lane.
@@ -127,7 +128,7 @@ Each layer catches what the one before it cannot. Passing one says nothing about
 | Layer | What it is | What it catches | Tool |
 |---|---|---|---|
 | 1. Code tests | Unit and integration tests in CI, plus a blast-radius check on shared code | Logic bugs, broken contracts, a consumer you forgot | your test runner, `regression-check`, `verify-before-done` hook |
-| 2. Deterministic journey gate | A scripted journey (steps and assertions) run with Playwright on desktop, phone and tablet against the deployed build, after confirming the deploy serves the commit you merged | "Works on my machine", a stale deploy, a page that crashes on phone width | `done-gate` (`done_gate.py`, exit 0 only) |
+| 2. Deterministic journey gate | A scripted journey (steps and assertions) run with Playwright on desktop, phone and tablet against the build under test: a deploy, after confirming it serves the commit you merged, or the committed HEAD run locally | "Works on my machine", a stale deploy, a page that crashes on phone width | `done-gate` (`done_gate.py`, exit 0 only) |
 | 3. Independent story verifier | A fresh-context agent that gets only a story's criteria, the URL and screenshots, never the builder's claims, and returns PASS, FAIL or INCONCLUSIVE per criterion | The builder grading its own homework, criteria the journey does not script | `story-verifier` agent |
 | 4. Persona testers across devices | Agents that use the app as a described person (patience, device, goals) on each device in the story's `devices` list | Confusing copy, dead ends, tap targets too small, a flow that is technically correct and still loses people | `persona-tester`, `explorer`, `foundry-devices`, `iphone-driver` |
 | Plus: design review | A subtract-only critic and a rubric review from screenshots and code, with a deterministic design gate for objective regressions | Clutter, an extra click, contrast and target-size failures, a second primary button | `design-critique`, `ui-reviewer`, `design_gate.py`, `a11y-check`, `visual-baseline` |

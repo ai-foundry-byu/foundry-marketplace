@@ -25,6 +25,10 @@ CLI:
   structured_router.py --schema schema.json --system "Classify the ticket." \
       --input ticket.txt --data-class private
   structured_router.py --schema schema.json --data-class private --plan   # show the route, call nothing
+  structured_router.py --schema schema.json --input ticket.txt --mock-response mock.json
+      # the full call path with no keys and no network: every eligible provider "answers" with
+      # the object in mock.json (or {"per_provider": {"groq": {...}, ...}}; a provider missing
+      # there fails as a simulated outage), so you can watch validation and fall-through work.
 
 Providers come from DEFAULT_PROVIDERS, or a JSON file given with --providers or
 the env var STRUCTURED_ROUTER_PROVIDERS. Check every provider's data policy and model
@@ -277,6 +281,35 @@ def call_structured(*, system: str, user: str, tool_name: str, schema: dict[str,
     raise RouterError("every eligible provider failed or was skipped", attempts)
 
 
+def mock_environ(providers: list[dict[str, Any]], environ=os.environ) -> dict[str, str]:
+    """A copy of environ where every unset provider key holds a fake key with the right prefix."""
+    env = dict(environ)
+    for p in providers:
+        if p.get("key_env") and not env.get(p["key_env"], "").strip():
+            env[p["key_env"]] = (p.get("key_prefix") or "") + "mock"
+    return env
+
+
+def mock_transport(spec: Any, providers: list[dict[str, Any]]) -> Transport:
+    """A transport that never opens a socket and answers like the provider's real API would."""
+    per = spec.get("per_provider") if isinstance(spec, dict) and "per_provider" in spec else None
+
+    def transport(url: str, headers: dict[str, str], body: dict[str, Any], timeout: float) -> dict[str, Any]:
+        p = next((p for p in providers if url.startswith(p["base_url"].rstrip("/"))), None)
+        name = p["name"] if p else url
+        args = spec if per is None else per.get(name)
+        if args is None:
+            raise RuntimeError(f"mock: no response for {name} (simulated outage)")
+        if url.endswith("/messages"):
+            tool = body["tools"][0]["name"]
+            return {"content": [{"type": "tool_use", "name": tool, "input": args}]}
+        tool = body["tools"][0]["function"]["name"]
+        return {"choices": [{"message": {"tool_calls": [
+            {"function": {"name": tool, "arguments": json.dumps(args)}}]}}]}
+
+    return transport
+
+
 def load_providers(path: str | None) -> list[dict[str, Any]]:
     path = path or os.environ.get("STRUCTURED_ROUTER_PROVIDERS")
     if not path:
@@ -295,14 +328,27 @@ def main(argv: list[str] | None = None) -> int:
                     help="private = real user data (default, the safe choice)")
     ap.add_argument("--providers", help="JSON file with a provider list (overrides defaults)")
     ap.add_argument("--plan", action="store_true", help="print the route and exit without calling anything")
+    ap.add_argument("--mock-response", metavar="FILE",
+                    help="offline demo: no keys, no network; every eligible provider returns the JSON in FILE")
     a = ap.parse_args(argv)
 
     with open(a.schema, encoding="utf-8") as fh:
         schema = json.load(fh)
     providers = load_providers(a.providers)
+    environ: Any = os.environ
+    transport: Transport = http_post_json
+    if a.mock_response:
+        with open(a.mock_response, encoding="utf-8") as fh:
+            spec = json.load(fh)
+        real = dict(os.environ)
+        environ = mock_environ(providers, real)
+        transport = mock_transport(spec, providers)
+        print("structured_router: MOCK mode (no network, fake keys for unset variables)", file=sys.stderr)
 
     if a.plan:
-        for p, ok, why in plan_route(providers, a.data_class):
+        for p, ok, why in plan_route(providers, a.data_class, environ):
+            if ok and a.mock_response and p.get("key_env") and not os.environ.get(p["key_env"], "").strip():
+                why = "mock key"
             print(f"{'TRY ' if ok else 'SKIP'} {p['name']:16s} {p.get('model', '')}  ({why})")
         return 0
 
@@ -310,13 +356,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         data, name = call_structured(system=a.system, user=user, tool_name=a.tool_name, schema=schema,
                                      data_class=a.data_class, providers=providers,
+                                     transport=transport, environ=environ,
                                      log=lambda m: print(m, file=sys.stderr))
     except RouterError as exc:
         print(f"structured_router: {exc}", file=sys.stderr)
         for name, why in exc.attempts:
             print(f"  {name}: {why}", file=sys.stderr)
         return 1
-    print(f"provider: {name}", file=sys.stderr)
+    print(f"provider: {name}{' (mock)' if a.mock_response else ''}", file=sys.stderr)
     print(json.dumps(data, indent=2))
     return 0
 

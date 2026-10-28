@@ -44,11 +44,14 @@ Options:
 | `--gate` / `--fail-under X` | exit 4 when below the suite threshold / X |
 | `--fail-metric pass_hat_k` | gate on "every try passed" instead of the mean |
 | `--target "cmd"` | try another target once (recorded as a subset, never a baseline) |
-| `--out DIR` | results root, default `.evals` |
+| `--out DIR` | results root; default `<project root>/.evals` (see below) |
 
-Each run writes `.evals/<suite>/<run_id>.json` (every trial, every grader verdict, the
-fingerprint) and `.evals/<suite>/<run_id>.md` (the summary). Add `.evals/` to `.gitignore`,
-or commit only the baseline files you want to keep.
+Each run writes `<root>/<suite>/<run_id>.json` (every trial, every grader verdict, the
+fingerprint) and `<root>/<suite>/<run_id>.md` (the summary). The default root is `.evals` in
+the nearest folder above the suite that has a `.git` (else the suite's parent folder), so the
+history is the same whatever directory you run from. The run prints the absolute report path,
+and `evalkit history` prints the folder on its first line: quote those, do not guess. Add
+`.evals/` to `.gitignore`, or commit only the baseline files you want to keep.
 
 Exit codes: 0 ok, 2 config error, 3 no scorable trial at all, 4 below the gate.
 
@@ -102,7 +105,7 @@ Template (fill only with numbers from run files you produced in this session):
 Suite <name>, run <run_id> (<n> cases x <k> reps, split <split>):
 score <x>% (95% CI <lo>-<hi>%), pass^<k> <y>%, <e> errors, threshold <t>% -> <PASS|FAIL>.
 vs <previous run_id>: <reading>; newly failing: <ids or none>; newly passing: <ids or none>.
-Cost <$ or "not reported">. Report: .evals/<suite>/<run_id>.md
+Cost <$ or "not reported">. Report: <the absolute report path evalkit printed>
 Caveats: <judge skipped / errors / small sample / cases changed>.
 ```
 

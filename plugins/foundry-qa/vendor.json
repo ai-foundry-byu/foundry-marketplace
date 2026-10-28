@@ -7,5 +7,9 @@
   "skills/persona-run/scripts/qa_yaml.py": "skills/done-gate/scripts/qa_yaml.py",
   "skills/explore/scripts/done_gate.py": "skills/done-gate/scripts/done_gate.py",
   "skills/explore/scripts/qa_yaml.py": "skills/done-gate/scripts/qa_yaml.py",
-  "skills/explore/scripts/persona_run.py": "skills/persona-run/scripts/persona_run.py"
+  "skills/explore/scripts/persona_run.py": "skills/persona-run/scripts/persona_run.py",
+  "skills/a11y-check/scripts/qa_session.py": "skills/done-gate/scripts/qa_session.py",
+  "skills/visual-baseline/scripts/qa_session.py": "skills/done-gate/scripts/qa_session.py",
+  "skills/persona-run/scripts/qa_session.py": "skills/done-gate/scripts/qa_session.py",
+  "skills/explore/scripts/qa_session.py": "skills/done-gate/scripts/qa_session.py"
 }

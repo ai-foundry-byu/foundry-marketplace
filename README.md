@@ -116,17 +116,17 @@ Every item in every plugin. Stage numbers follow [SDLC.md](SDLC.md): 0 scaffold,
 | sdlc | skill | Router: the 8-stage map, the exit gate per stage, and current-stage detection | all | proven |
 | new-project | skill | Scaffolds the artifact set from templates into your project | 0 | proven |
 | gather-requirements | skill | Verbatim asks with R-ids and sources, a decisions log, and an "Already exists" audit | 1 | proven |
-| write-prd | skill | PRD with inline user stories and observable criteria, compiled to stories.json, critiqued | 2 | proven |
+| write-prd | skill | PRD with inline user stories and observable criteria, compiled to stories.json, critiqued, then a dated "PRD approved" D-row in the human's words before stage 3 | 2 | proven |
 | write-workplan | skill | Task table with owner, model, effort and review tier by blast radius, plus milestones | 3 | proven |
 | parallel-lanes | skill | One git worktree and one agent per task, lane brief, merge-back | 4 | proven |
-| ship | skill | The ship ritual: done gate, persona testers, independent verifier, then LIVE and changelog | 6, 7 | proven |
+| ship | skill | The ship ritual on a commit: done gate, persona testers, one verifier per story, then LIVE (only through the guarded `--set`) and changelog. No hosting needed: the committed HEAD run locally is the build under test | 6, 7 | proven (ritual), new (local path and LIVE guard) |
 | bug-to-story | skill | Every bug becomes a story plus a regression test that fails before the fix | 8 | proven |
 | prd-critic | agent | Adversarial read-only PRD reviewer in a fresh context | 2 | proven (pattern) |
 | story-verifier | agent | Verifies one story on the deployed build from criteria and evidence only | 6 | proven (pattern) |
 | SessionStart stage hint | hook | Prints the current stage and failing check when the project has a PRD.md or REQUIREMENTS.md | all | new |
-| gen_stories.py | script | Compiles PRD stories into stories.json; `--check` fails if stale or malformed | 2 | proven (generalized port) |
-| new_project.py | script | Scaffolds the artifact set, never overwrites without `--force` | 0 | new |
-| sdlc_stage.py | script | Deterministic stage detector from files on disk | all | new |
+| gen_stories.py | script | Compiles PRD stories into stories.json; `--check` fails if stale or malformed; `--set ID=LIVE` refuses a dirty tree, a missing or failing done-gate report for HEAD, or no evidence | 2, 7 | proven (generalized port) |
+| new_project.py | script | Scaffolds the artifact set (name from the folder unless `--name`) and a fresh stories.json, plus `tools/gen_stories.py` and the CI check at the git root; never overwrites without `--force` | 0 | new |
+| sdlc_stage.py | script | Deterministic stage detector from files on disk: R-id coverage and the PRD approval row at stage 2, task evidence at 4, `.qa/done-gate/last.json` for HEAD and a verifier report per story at 6, `commit:` evidence on LIVE stories at 7 | all | new |
 | REQUIREMENTS.md | template | Verbatim asks table, Already exists audit, open questions | 1 | proven |
 | DECISIONS.md | template | Verbatim human decisions and what each authorizes | 1-3 | proven |
 | PRD.md | template | PRD with stories, rollout gates, Addressed critiques appendix | 2 | proven |
@@ -145,7 +145,7 @@ Every item in every plugin. Stage numbers follow [SDLC.md](SDLC.md): 0 scaffold,
 | secret-guard | hook | Keeps secrets out of the transcript: denies reading .env, keys, token printers and env dumps | 4 | proven |
 | verify-before-done | hook | Blocks stopping after code edits with no test run, and blocks push or deploy without verification | 5, 7 | proven |
 | worktree-guard | hook | Inside a linked worktree, denies edits that land in the main checkout | 4 | proven |
-| stale-write-guard | hook | Warns (or denies) a whole-file Write over uncommitted changes | 4 | new |
+| stale-write-guard | hook | Denies a whole-file Write over uncommitted changes this session did not make (`FOUNDRY_STALE_WRITE_ENFORCE=0` only warns) | 4 | new |
 | ship-stop | hook | Keeps the agent working until the named WORKPLAN milestone is checked | 3, 4 | proven |
 | _common.py | script | Shared hook library: command normalizer, fail-open runner, deny log | all | new |
 | guardrails-help | skill | How to respond when a hook blocks you, and every config switch | all | new |
@@ -155,7 +155,7 @@ Every item in every plugin. Stage numbers follow [SDLC.md](SDLC.md): 0 scaffold,
 
 | Item | Type | What it does | Stage | Maturity |
 |---|---|---|---|---|
-| done-gate | skill | Deployed-SHA check plus a Playwright journey on 3 devices; only exit 0 is done | 6, 7 | proven |
+| done-gate | skill | Deployed-SHA check (when hosted) plus a Playwright journey on 3 devices, locally or on a deploy; signed-in apps via an `auth` block; writes `.qa/done-gate/last.json` for the SDLC gates; only exit 0 is done | 6, 7 | proven |
 | regression-check | skill | Stack-neutral blast-radius method: list changes, grep consumers, test the at-risk ones | 5 | proven |
 | a11y-check | skill | axe-core on device profiles plus a manual WCAG 2.2 AA floor checklist | 6 | proven |
 | visual-baseline | skill | Screenshot baselines with pixel diff and a deliberate approve step | 6 | proven |
@@ -163,11 +163,12 @@ Every item in every plugin. Stage numbers follow [SDLC.md](SDLC.md): 0 scaffold,
 | persona-tester | agent | Tests every story as a persona across devices, read-only by default | 6 | proven |
 | explorer | agent | Curious-human tester: read-only crawl plus a manual probe list | 6 | proven (pattern) |
 | done_gate.py | script | The done gate runner with an exit-code contract and evidence in .qa/ | 6, 7 | proven |
-| persona_run.py | script | Persona story runner with patience, overflow and tap-target checks | 6 | proven |
+| persona_run.py | script | Persona story runner over the project's one stories.json (unknown keys are warnings), with patience, overflow and tap-target checks | 6 | proven |
 | a11y_check.py | script | axe-core runner with an impact floor | 6 | proven |
 | visual_baseline.py | script | capture, compare, check, approve with a stdlib PNG diff | 6 | proven |
 | explore.py | script | Read-only same-origin crawler | 6 | proven (pattern) |
 | qa_yaml.py | script | Dependency-free YAML subset parser | support | new |
+| qa_session.py | script | Signed-in sessions for every QA script (storage state, headers, login steps), a `login` helper that saves a storage state, and the settle wait | support | new |
 | done-journey.yaml | template | Annotated journey covering every step and assertion kind | 6 | new |
 | stories.example.json | template | Example stories mixing mechanical and human criteria | 2, 6 | new |
 | personas/ | template | Persona template plus two example personas | 6 | new |
@@ -214,7 +215,7 @@ The foundry-qa scripts are clean-room rewrites of production tools: the method a
 | engine/ | script | The signed helper app's worker and launcher | 6 | proven |
 | build-helper-app.sh | script | Builds, signs and registers the helper app | setup | proven |
 | mcp/server.py | script | Stdlib MCP server with typed iphone_* tools | 6 | new |
-| tests/ | template | 38 tests that need no phone | 6 | new |
+| tests/ | template | 42 tests that need no phone | 6 | new |
 
 The engine changes from the proven original are unit-tested but have not driven a real phone yet; see that plugin's README.
 
@@ -228,7 +229,7 @@ The engine changes from the proven original are unit-tested but have not driven 
 | eval-auditor | agent | Read-only audit of a suite and its last run: cheatable graders, missing controls, noisy runs | 5 | new |
 | evalkit.py | script | Stdlib runner: init, run, check, compare, history, with CI gating | 5, 8 | new |
 | judge_claude.py | script | Binary LLM judge via `claude -p` | 5 | new |
-| test_evalkit.py | script | 24 offline tests | 5 | new |
+| test_evalkit.py | script | 32 offline tests | 5 | new |
 | example-suite | template | 9-case refund-triage suite with a deliberate bug to find | learning | new |
 
 ### foundry-builder-kit (day-one build skills)
@@ -241,7 +242,7 @@ The engine changes from the proven original are unit-tested but have not driven 
 | cheap-llm-routing | skill | Route schema-pinned extraction to free or cheap models with a privacy bar and a paid fallback | 4 | proven (pattern) |
 | scheduled-agents | skill | Headless `claude -p` jobs on cron, launchd, systemd, Task Scheduler or GitHub Actions, with a deadman | ops | proven (cron, launchd), new (Windows, Actions) |
 | tmux-agents | skill | Drive REPLs, dev servers and parallel agents through tmux | 4, 5 | proven (pattern) |
-| commit-secret-guard | hook | Blocks an agent-run git commit that contains a secret | 4 | new |
+| commit-secret-guard | hook | Blocks an agent-run git commit that contains a secret. Off switch: start Claude Code with `FOUNDRY_COMMIT_SECRET_GUARD=0` (the old name `FOUNDRY_SECRETS_GUARD` still works; not the guardrails `FOUNDRY_SECRET_GUARD`) | 4 | new |
 | scan_secrets.py | script | Stdlib secret scanner with redacted output | 4 | new |
 | probe_key.py | script | Asks a provider whether a key still authenticates (LIVE/DEAD/ERR) | ops | new |
 | structured_router.py | script | Forced-tool-call structured output across a privacy-aware provider chain | 4 | new |

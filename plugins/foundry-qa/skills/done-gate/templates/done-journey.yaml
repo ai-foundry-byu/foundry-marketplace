@@ -1,41 +1,57 @@
-# done-journey.yaml: the one user journey that proves this feature works.
-# Copy to qa/done-journey.yaml in your project and edit.
-# Format: a YAML subset (see scripts/qa_yaml.py) or the same shape as JSON.
-# Quote every selector. Unquoted values that start with # are comments in YAML.
+# done-journey.yaml: the one user journey that proves a feature works, run by the
+# foundry-qa done gate (done_gate.py) on the build you are calling done.
+# Copy it to qa/done-journey.yaml in your project and replace every example value.
+# Format: a YAML subset (no PyYAML needed) or the same shape as JSON.
+# Quote every selector: an unquoted value that starts with # is a comment in YAML.
+#
+# Check it without a browser:   python3 done_gate.py --journey qa/done-journey.yaml --validate
+# Run it on a local build:      python3 done_gate.py --journey qa/done-journey.yaml --port 5173
+#
+# Step forms (one key per step; the first step must be a goto):
+#   - goto: <path or absolute url>          paths are joined to base_url
+#   - click: <selector>
+#   - fill: {selector: <selector>, value: <text>}
+#   - wait_for: <selector>                   waits until visible
+#   - press: {selector: <selector>, key: Enter}
+# Assertion forms (all must hold after the last step):
+#   - visible: <selector>
+#   - text: {selector: <selector>, contains: <text>}
+#   - url_contains: <text>
+#   - no_console_errors: true
+# Prefer data-testid selectors: they survive restyles.
 
-name: sign up and land on the dashboard
-base_url: http://localhost:3000          # --base-url on the command line overrides this
-devices: [desktop-1440x900, phone-390x844, tablet-820x1180]
-timeout_ms: 10000                        # per step and per assertion
+name: US-01 the home page renders and the core action is reachable
+base_url: http://localhost:PORT          # PORT comes from --port; --base-url overrides the whole value
+devices: [phone-390x844, desktop-1440x900]   # also: tablet-820x1180
+stories: [US-01]                         # story ids this journey covers (metadata for the story-verifier)
 
 steps:
   - goto: /
-  - click: "text=Get started"
-  - fill: {selector: "#email", value: "qa-student@example.com"}
-  - fill: {selector: "#password", value: "correct-horse-battery-staple"}
-  - press: {selector: "#password", key: "Enter"}
-  - wait_for: "[data-testid=dashboard]"
+  - wait_for: "[data-testid=app-shell]"
+  - click: "[data-testid=primary-action]"
+  - wait_for: "[data-testid=primary-form]"
 
 assertions:
-  - visible: "[data-testid=dashboard]"
+  - visible: "[data-testid=primary-form]"
   - text: {selector: "h1", contains: "Welcome"}
-  - url_contains: /dashboard
+  - url_contains: /
   - no_console_errors: true
 
-screenshot: signup-dashboard             # file name stem: <screenshot>-<device>.png
+screenshot: us-01-home                   # saved as <screenshot>-<device>.png
 
-# Optional: URL substrings that mean "we got bounced to sign-in". Hitting one is
-# INCONCLUSIVE (exit 6), not a failure and not a pass.
-auth_wall: [/login, /signin]
+# Optional: a signed-in app. Pick ONE form. Make the storage state once with
+#   python3 qa_session.py login --url <sign-in url> --out .qa/auth.json
+# and never commit it. Magic-link or OAuth sign-in: add a test-only sign-in route
+# guarded by an env flag (never enabled in production) and use login_steps on it.
+# auth:
+#   storage_state: .qa/auth.json
+#   headers: {Authorization: "Bearer ${QA_TOKEN}"}
+#   cookies: [{name: session, value: "${QA_SESSION}"}]
+#   login_steps: [{goto: /test-login}, {wait_for: "[data-testid=app-shell]"}]
 
-# Optional: console messages to ignore (Python regexes).
-ignore_console: ["Download the React DevTools"]
-
-# Optional: block every non-GET request (always use on production).
-read_only: false
-
-# Optional: where the deployed build reports its commit. Pick ONE of header,
-# json_key, regex. Pair it with --expected-sha (default HEAD).
-# sha_check:
-#   url: https://<your-app>.example.com/api/version
-#   json_key: commit
+# Optional, documented keys:
+# timeout_ms: 10000                      # per step and per assertion
+# auth_wall: [/login, /signin]           # bounced here = INCONCLUSIVE (exit 6), not a pass
+# ignore_console: ["Download the React DevTools"]   # console noise to ignore (regexes)
+# read_only: true                        # block every non-GET request (always on production)
+# sha_check: {url: "https://<your-app>.example.com/api/version", json_key: commit}

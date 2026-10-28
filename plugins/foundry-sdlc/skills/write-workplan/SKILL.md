@@ -29,7 +29,7 @@ The workplan turns stories into work an agent can pick up without asking. It dec
 5. **Milestones** are user-visible checkpoints, written as checkboxes: `- [ ] M1.1 Applicants can sign in on a phone (US-01, US-02 LIVE)`. Each one ends with stories at LIVE, not "code written".
 6. **Next up**: the top 3-5 tasks in priority order, each with one line of why.
 7. **Blocked on human**: anything only a person can do, such as an account, a paid plan, a decision, an API key, or access to real users. Name who, the exact action, and what it unblocks. Keep this list short and at the top of their attention. Never mark a task DONE around a block.
-8. **Status words**: DONE (with evidence: `DONE 2026-11-03: PR #12, CI green`), IN REVIEW, PARTIAL, NOT STARTED, WAITING (a dep is not done), PARKED (with the D-id).
+8. **Status words**: DONE with evidence (`DONE 2026-11-03: commit 3f2a9c1` or `DONE 2026-11-03: PR #12`; the stage detector requires a sha, a `#PR` or a URL), IN REVIEW, PARTIAL, NOT STARTED, WAITING (a dep is not done), PARKED (with the D-id).
 
 ## Example
 

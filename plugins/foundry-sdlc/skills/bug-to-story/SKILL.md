@@ -1,25 +1,32 @@
 ---
 name: bug-to-story
-description: Stage 8 of the Foundry SDLC, the feedback loop. Turn every bug report, failed criterion or user complaint into a PRD story plus a regression test that fails before the fix, route it back through the gates, and track usage gates so a human can decide whether a feature graduates, gets parked or gets killed. Use when someone says "found a bug", "this is broken", "a user reported", "the verifier failed", "write a regression test", "turn this into a ticket", "should we graduate this feature", "is anyone using it", or when sdlc_stage.py reports stage 8.
+description: Stage 8 of the Foundry SDLC, the feedback loop, and the one path for every bug report. Turn a bug report, failed criterion or user complaint into an R-id in the reporter's words, a PRD story criterion, a regression test that fails before the fix, a workplan task and a changelog line, and route it back through the gates; a report you cannot reproduce still gets an R-id and an open question. Also tracks usage gates so a human can decide whether a feature graduates. Use when someone says "found a bug", "this is broken", "a classmate says X is broken", "a user reported", "X finds nothing", "X doesn't work for me", "handle this bug report", "the verifier failed", "turn this into a ticket", "should we graduate this feature", "is anyone using it", or when sdlc_stage.py reports stage 8.
 ---
 
 # Stage 8: feedback (bugs become stories, usage decides graduation)
 
 A bug fixed without a story and a test tends to come back. A feature nobody uses is not done, it is unvalidated. This stage handles both.
 
+## Rules (MUST, for every report)
+
+1. The report gets an R-id in REQUIREMENTS.md in the reporter's words **before** you change code, even if you cannot reproduce it.
+2. Not reproduced: status `OPEN: not reproduced`, list what you tried, add an open question, and stop. No code change.
+3. Reproduced: a story criterion cites the R-id, a test fails first, a WORKPLAN task tracks it, and CHANGELOG.md gets a line when it ships. Fixing the code alone is not handling the report.
+
 ## Part A: a bug becomes a story and a failing test
 
 1. **Capture it verbatim.** Add it to `REQUIREMENTS.md` as a new R-id: the reporter's words, source, date, and a screenshot or URL if you have one. Example: `R-21 | "the badge says 0 days for everyone" | S7 (reviewer chat) | 2026-11-06`.
-2. **Reproduce it before changing anything.** Open the deployed build, follow the report, and capture what you see. If you cannot reproduce it, write down exactly what you tried, set the R-id to OPEN with an Open question, and stop. Never fix a bug you have not seen.
+2. **Reproduce it before changing anything.** Open the build (deployed, or run locally from HEAD), follow the report, and capture what you see. If you cannot reproduce it, write down exactly what you tried, set the R-id to OPEN with an Open question, and stop. Never fix a bug you have not seen.
 3. **Find the root cause, not the symptom.** Ask why it happened until you reach the line of code or the wrong assumption. Ask also which gate should have caught it. Did a story miss a criterion? Did the journey skip a screen? Did the verifier get the wrong evidence?
-4. **Write the story.** Either add a criterion to the existing story, if the behavior was always meant to work (`US-04.5 Days waiting counts from submitted_at, not created_at.`), or add a new story with the next id. Cite the R-id. Then rerun `python3 tools/gen_stories.py`. A changed story that was LIVE should go back to PARTIAL until it is verified again.
+4. **Write the story.** Either add a criterion to the existing story, if the behavior was always meant to work (`US-04.5 Days waiting counts from submitted_at, not created_at.`), or add a new story with the next id. Cite the R-id, and set the R-id's Status to STORIED. Then rerun `python3 tools/gen_stories.py --prd product/PRD.md --out product/stories.json` (drop `product/` when the artifacts are at the root). A changed story that was LIVE goes back to PARTIAL (`--set US-04=PARTIAL`) until it is verified again.
 5. **Write the regression test first, and watch it fail.** It must fail on the current code for the reason in the report:
    ```bash
    npm test -- applicants.wait-days   # or: python3 -m pytest tests/test_wait_days.py
    ```
    Paste the failing output into the task. A test that passes before the fix does not test the bug. If the bug is only visible in a browser, add an assertion to `done-journey.yaml` (or a `foundry-qa` test) that fails today.
 6. **Add a task** to WORKPLAN.md (`T-09 | Fix wait-days from submitted_at (US-04.5, R-21) | agent · opus/medium · reviewer high | - | NOT STARTED`) and run it through stages 4 to 7 like any other task: lane, code QA, done gate, story-verifier, changelog.
-7. **Close the loop with the reporter.** Tell them it is fixed, what to try, and when it shipped. Set the R-id status to LIVE.
+7. **Log it.** When the fix is committed, set the task to `DONE <date>: commit <sha>` and add a CHANGELOG.md line under today's date with the R-id and story id.
+8. **Close the loop with the reporter.** Tell them it is fixed, what to try, and when it shipped. Set the R-id status to LIVE once the story is LIVE again.
 
 Persona-tester and story-verifier failures follow the same path. Each FAIL becomes a criterion or story, plus a failing test.
 
@@ -45,4 +52,5 @@ Rules:
 
 - An R-id with the reporter's words, and a story or criterion that cites it.
 - A regression test that failed before the fix and passes after, with both outputs recorded.
+- A WORKPLAN task, DONE with its commit sha.
 - The story re-verified by `story-verifier` and back to LIVE, a changelog line, and the reporter told.

@@ -34,8 +34,12 @@ python3 "$SKILL_DIR/scripts/explore.py" --url <base-url> --max-pages 15 --device
 If `SKILL_DIR` comes back empty, the `explore` skill is not installed: tell the user to install
 it (the foundry-qa plugin, or the `skills/explore` folder copied into `.claude/skills/`) and stop.
 
-It follows same-origin links (skipping logout, delete and file downloads), and records per
-page: console errors, uncaught exceptions, failed and 5xx requests, broken links, a Back button
+Signed-in app: add `--storage-state .qa/auth.json` (made once with
+`python3 "$SKILL_DIR/scripts/qa_session.py" login --url <sign-in url> --out .qa/auth.json`),
+`--header` or `--auth <journey file>`; otherwise the crawl sees only the sign-in page.
+
+It follows same-origin links, including hash routes (`#/group/1`), skipping logout, delete and
+file downloads, and records per page: console errors, uncaught exceptions, failed and 5xx requests, broken links, a Back button
 that does not return, horizontal overflow on phone, missing `<title>`/`<h1>`, images without
 alt, and near-empty pages ("look" items: is the empty state designed, or blank?). Findings:
 `.qa/explore/findings.json`, screenshots in `.qa/explore/screenshots/`. Exit 0 no errors, 1
@@ -47,7 +51,17 @@ Open the screenshots of every "look" and "error" page. Then go deeper by hand.
 
 Use Playwright directly for these (a short Python script with `playwright.sync_api`, saved
 under `.qa/explore/probes/`), or the done-gate journey format when a probe is worth keeping.
-For each idea, write down what you expected before you try it.
+For each idea, write down what you expected before you try it. Work the core flow first.
+
+**Always run these four, on the core flow, before anything else** (the crawler cannot):
+1. **Back keeps state:** search or filter, open a result, press Back. Are the query and the
+   results still there?
+2. **Slow first load:** screenshot each list view about 500 ms after navigation, before the data
+   arrives. A blank area with no spinner, skeleton or message is a finding (no throttling needed).
+3. **Empty state:** a list with no items (a new account, or a search with no results). Is there
+   a message that says what will appear and what to do?
+4. **Double submit** (local or staging only): double-click the main submit button. One record,
+   or two?
 
 **Navigation**
 - Back after every step of a multi-step flow. Does the form keep its input? Does Back after submit re-submit?

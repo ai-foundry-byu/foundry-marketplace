@@ -79,7 +79,7 @@ The gate pauses its clock while a critical source is down, and complaints ("this
 
 ### 7.4 Ship ritual (every feature)
 
-Follow the `foundry-sdlc:ship` skill. Only say "done" after the done gate passes on the deployed build.
+Follow the `foundry-sdlc:ship` skill. Only say "done" after every stage-6 gate passes on a committed SHA (served locally or deployed).
 
 ## 8. Metrics and risks
 

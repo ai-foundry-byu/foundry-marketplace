@@ -8,12 +8,20 @@ to report. The fix is two halves that never share a failure:
        deadman.py beat --file state/digest.heartbeat.json --detail "12 items"
   2. A separate schedule checks that heartbeat's CONTENT timestamp:
        deadman.py check --file state/digest.heartbeat.json --max-age 26h \
-           --webhook "$ALERT_WEBHOOK_URL"
+           --webhook-file ~/.config/agent-alerts/webhook.url
 
 The check reads the timestamp written inside the file, not the file's mtime
 (a `cp` or a restore can refresh mtime on a dead job).
 
-Exit codes for `check`: 0 fresh, 1 stale, 2 missing or unreadable, 3 alert delivery failed.
+Alert channels: --webhook URL, --webhook-file FILE (the URL on one line; use this under
+cron and launchd, which do not see variables exported in your shell profile), and
+--alert-cmd. When the job is stale or missing it ALSO writes <name>.DEADMAN-ALERT.txt next
+to the heartbeat (removed again on the next fresh check), so there is a trail on disk.
+With no channel at all, or only an empty one (an unset $ALERT_WEBHOOK_URL), it prints
+"NO ALERT CHANNEL" to stderr and exits 3: nobody was told, and that is a failure.
+
+Exit codes for `check`: 0 fresh, 1 stale, 2 missing or unreadable,
+3 alert not delivered (delivery failed, or no alert channel configured).
 Ages: 90s, 45m, 26h, 7d.
 """
 from __future__ import annotations
@@ -93,6 +101,34 @@ def send_webhook(url: str, message: str, timeout: float = 15.0) -> bool:
         return False
 
 
+def alert_file_path(heartbeat: str, name: str | None) -> str:
+    stem = name or os.path.basename(heartbeat)
+    for suffix in (".json", ".heartbeat"):
+        if not name and stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+    return os.path.join(os.path.dirname(os.path.abspath(heartbeat)), f"{stem}.DEADMAN-ALERT.txt")
+
+
+def write_alert_file(path: str, text: str) -> bool:
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"{now_utc().isoformat(timespec='seconds')} {text}\n")
+        return True
+    except OSError as exc:
+        print(f"deadman: could not write alert file {path}: {exc}", file=sys.stderr)
+        return False
+
+
+def read_webhook_file(path: str) -> str:
+    try:
+        with open(os.path.expanduser(path), encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError as exc:
+        print(f"deadman: cannot read --webhook-file {path}: {exc}", file=sys.stderr)
+        return ""
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Heartbeat writer and deadman check for scheduled jobs.")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -108,6 +144,8 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--key", default="finished_at", help="JSON key holding the timestamp")
     c.add_argument("--name", default=None, help="job name used in the alert text")
     c.add_argument("--webhook", default=None, help="Slack/Discord-style incoming webhook URL")
+    c.add_argument("--webhook-file", default=None,
+                   help="file holding the webhook URL (cron/launchd-safe: no shell env needed)")
     c.add_argument("--alert-cmd", default=None, help="shell command to run when stale; message in $DEADMAN_MESSAGE")
     a = ap.parse_args(argv)
 
@@ -123,15 +161,27 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     code, msg = evaluate(a.file, max_age, a.key)
     print(msg)
+    alert_path = alert_file_path(a.file, a.name)
     if code == 0:
+        if os.path.exists(alert_path):
+            os.remove(alert_path)  # the alert file means "currently alerting"; clear it once fresh
         return 0
     text = f"[deadman] {a.name or os.path.basename(a.file)}: {msg}"
+    write_alert_file(alert_path, text)
+    webhook = (a.webhook or "").strip()
+    if not webhook and a.webhook_file:
+        webhook = read_webhook_file(a.webhook_file)
+    alert_cmd = (a.alert_cmd or "").strip()
+    if not webhook and not alert_cmd:
+        print(f"deadman: NO ALERT CHANNEL (--webhook, --webhook-file and --alert-cmd are all empty); "
+              f"the job is stale and nobody was told. Trail written to {alert_path}", file=sys.stderr)
+        return 3
     delivered = True
-    if a.webhook:
-        delivered = send_webhook(a.webhook, text) and delivered
-    if a.alert_cmd:
+    if webhook:
+        delivered = send_webhook(webhook, text) and delivered
+    if alert_cmd:
         env = {**os.environ, "DEADMAN_MESSAGE": text}
-        delivered = subprocess.run(a.alert_cmd, shell=True, env=env).returncode == 0 and delivered
+        delivered = subprocess.run(alert_cmd, shell=True, env=env).returncode == 0 and delivered
     if not delivered:
         print("deadman: ALERT DELIVERY FAILED; the job is stale and nobody was told", file=sys.stderr)
         return 3

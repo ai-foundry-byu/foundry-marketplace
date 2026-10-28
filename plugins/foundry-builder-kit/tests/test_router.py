@@ -128,5 +128,68 @@ class RoutingTests(unittest.TestCase):
                 self.assertFalse(ok, p["name"])
 
 
+class MockResponseTests(unittest.TestCase):
+    """L6-D11: --mock-response runs the whole call path (privacy bar, forced tool call, validation,
+    fall-through) with no keys and no network."""
+    EXAMPLES = os.path.join(os.path.dirname(HERE), "skills", "cheap-llm-routing", "examples")
+
+    def setUp(self):
+        import socket
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+        self.saved_env = {k: os.environ.pop(k) for k in list(os.environ)
+                          if k.endswith("_API_KEY") or k.startswith(("ROUTER_", "STRUCTURED_ROUTER"))}
+        self.socket_cls = socket.socket
+
+        def no_network(*a, **k):
+            raise AssertionError("mock mode opened a socket")
+        socket.socket = no_network
+
+    def tearDown(self):
+        import shutil
+        import socket
+        socket.socket = self.socket_cls
+        os.environ.update(self.saved_env)
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def run_main(self, mock_path, *extra):
+        import contextlib
+        import io
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = sr.main(["--schema", os.path.join(self.EXAMPLES, "ticket-schema.json"),
+                          "--input", os.path.join(self.EXAMPLES, "ticket.txt"),
+                          "--mock-response", mock_path, *extra])
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_shipped_mock_runs_without_keys_or_network(self):
+        rc, out, err = self.run_main(os.path.join(self.EXAMPLES, "mock.json"))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads(out)["category"], "billing")
+        self.assertIn("provider: groq", err)
+        self.assertIn("mock", err)
+
+    def test_fallthrough_example_exercises_validation_and_privacy_bar(self):
+        rc, out, err = self.run_main(os.path.join(self.EXAMPLES, "mock-fallthrough.json"))
+        self.assertEqual(rc, 0, err)
+        self.assertIn("groq returned off-schema output", err)
+        self.assertNotIn("gemini-free failed", err)       # private data never reaches a non-private provider
+        self.assertIn("provider: anthropic", err)
+
+    def test_every_provider_failing_reports_attempts(self):
+        path = os.path.join(self.tmp, "bad.json")
+        with open(path, "w") as fh:
+            json.dump({"category": "not-a-category", "urgency": 9, "summary": "x"}, fh)
+        rc, _, err = self.run_main(path)
+        self.assertEqual(rc, 1)
+        self.assertIn("off-schema", err)
+
+    def test_plan_in_mock_mode_shows_mock_keys(self):
+        rc, out, _ = self.run_main(os.path.join(self.EXAMPLES, "mock.json"), "--plan")
+        self.assertEqual(rc, 0)
+        self.assertIn("mock key", out)
+        self.assertIn("fails privacy bar", out)
+
+
 if __name__ == "__main__":
     unittest.main()

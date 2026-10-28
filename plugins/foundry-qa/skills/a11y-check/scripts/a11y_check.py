@@ -4,6 +4,14 @@
   python3 a11y_check.py --url http://localhost:3000/ --url http://localhost:3000/signup
   python3 a11y_check.py --url http://localhost:3000/ --devices desktop-1440x900,phone-390x844 --fail-on moderate
   python3 a11y_check.py --journey qa/done-journey.yaml --base-url http://localhost:3000   # audit the state a journey reaches
+  python3 a11y_check.py --url http://localhost:3000/dashboard --storage-state .qa/auth.json   # a signed-in page
+
+Besides axe, it runs its own WCAG 2.2 target-size check (2.5.8, AA): every
+visible control smaller than 24x24 CSS px. One whose 24 px circle overlaps
+another target fails (a blocking "target-size-2.5.8" violation, impact
+serious); one that is spaced far enough passes through the spacing exception
+but is listed under "small targets" for manual review. Inline links in a
+sentence are exempt.
 
 Exit codes:
   0  no violation at or above --fail-on (default: serious)
@@ -28,6 +36,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import qa_session  # noqa: E402
 
 EXIT_PASS, EXIT_FAIL, EXIT_CONFIG, EXIT_INCONCLUSIVE = 0, 1, 2, 6
 AXE_DEFAULT = "https://cdnjs.cloudflare.com/ajax/libs/axe-core/4.9.1/axe.min.js"
@@ -94,16 +103,86 @@ async (tags) => {
 """
 
 
+TARGET_MIN_PX = 24
+TARGET_SIZE_JS = """
+(min) => {
+  const sel = 'a[href], button, input:not([type=hidden]), select, textarea, summary, [role=button], [role=link], '
+    + '[role=checkbox], [role=radio], [role=switch], [role=tab], [role=menuitem], [tabindex]:not([tabindex="-1"])';
+  const all = [...document.querySelectorAll(sel)].filter(el => {
+    if (el.disabled || el.closest('[aria-hidden=true], [inert]')) return false;
+    const st = getComputedStyle(el);
+    if (st.visibility === 'hidden' || st.display === 'none') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  });
+  const targets = all.filter(el => !all.some(o => o !== el && o.contains(el)));
+  const rects = targets.map(el => el.getBoundingClientRect());
+  const name = (el) => {
+    let s = el.tagName.toLowerCase();
+    if (el.id) s += '#' + el.id;
+    else if (el.dataset && el.dataset.testid) s += '[data-testid=' + el.dataset.testid + ']';
+    else if (el.getAttribute('aria-label')) s += '[aria-label="' + el.getAttribute('aria-label').slice(0, 40) + '"]';
+    else if (typeof el.className === 'string' && el.className.trim()) s += '.' + el.className.trim().split(/\\s+/)[0];
+    const t = (el.innerText || el.value || '').trim().slice(0, 30);
+    return t ? s + ' "' + t + '"' : s;
+  };
+  const inline = (el) => el.tagName === 'A' && getComputedStyle(el).display === 'inline'
+    && el.parentElement && (el.parentElement.innerText || '').trim().length > (el.innerText || '').trim().length + 10;
+  const small = (r) => r.width < min || r.height < min;
+  const failing = [], spaced = [];
+  targets.forEach((el, i) => {
+    const r = rects[i];
+    if (!small(r) || inline(el)) return;
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    let clash = null;
+    targets.forEach((o, j) => {
+      if (j === i || clash) return;
+      const q = rects[j];
+      const nx = Math.max(q.left, Math.min(cx, q.right)), ny = Math.max(q.top, Math.min(cy, q.bottom));
+      if (Math.hypot(cx - nx, cy - ny) < min / 2) { clash = o; return; }
+      if (small(q) && !inline(o) && Math.hypot(cx - (q.left + q.width / 2), cy - (q.top + q.height / 2)) < min) clash = o;
+    });
+    const item = {target: name(el), size: Math.round(r.width) + 'x' + Math.round(r.height), near: clash ? name(clash) : null};
+    (clash ? failing : spaced).push(item);
+  });
+  return {failing, small: spaced};
+}
+"""
+
+
+def merge_target_size(summary: dict, ts: dict, fail_on: str) -> dict:
+    """Fold the 2.5.8 check into an axe summary: failures become a violation, spaced ones manual review. Pure."""
+    failing, small = ts.get("failing") or [], ts.get("small") or []
+    summary["target_size"] = {"min_px": TARGET_MIN_PX, "failing": failing, "small": small}
+    if failing:
+        blocking = IMPACT_ORDER["serious"] >= IMPACT_ORDER[fail_on]
+        summary["violations"].insert(0, {
+            "id": "target-size-2.5.8",
+            "impact": "serious",
+            "blocking": blocking,
+            "help": "Target under 24x24 CSS px with another target inside its 24 px circle (foundry-qa check)",
+            "help_url": "https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html",
+            "wcag": ["wcag22aa", "wcag258"],
+            "nodes": len(failing),
+            "targets": [f"{x['target']} {x['size']}" for x in failing[:5]],
+            "fix": "Make the control at least 24x24 CSS px (padding or min-width/min-height), or move it "
+                   "so a 24 px circle around it touches no other control.",
+        })
+        summary["blocking"] = sum(1 for v in summary["violations"] if v["blocking"])
+    return summary
+
+
 def audit_page(page, axe_src: str, tags: list[str], fail_on: str) -> dict:
     page.evaluate("(src) => { (0, eval)(src); }", axe_src)
     if not page.evaluate("typeof window.axe !== 'undefined'"):
         raise RuntimeError("axe-core did not load into the page")
     raw = page.evaluate(RUN_AXE, tags)
-    return summarize(raw, fail_on)
+    return merge_target_size(summarize(raw, fail_on), page.evaluate(TARGET_SIZE_JS, TARGET_MIN_PX), fail_on)
 
 
 def main(argv: list[str] | None = None) -> int:
-    from done_gate import DEVICE_PROFILES, ConfigError, context_kwargs, load_journey, run_steps, StepFailure
+    from done_gate import (DEVICE_PROFILES, ConfigError, context_kwargs, load_journey, run_steps, StepFailure,
+                           validate_step)
     ap = argparse.ArgumentParser(prog="a11y_check.py", description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--url", action="append", default=[])
@@ -115,6 +194,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tags", default=",".join(WCAG_TAGS), help="axe rule tags (add best-practice for more)")
     ap.add_argument("--axe-source", default=AXE_DEFAULT)
     ap.add_argument("--out", default=".qa/a11y")
+    ap.add_argument("--settle-ms", type=int, default=qa_session.DEFAULT_SETTLE_MS,
+                    help="extra wait after the network goes quiet, before axe runs")
+    qa_session.add_auth_args(ap)
     args = ap.parse_args(argv)
 
     devices = [d.strip() for d in args.devices.split(",") if d.strip()]
@@ -132,11 +214,13 @@ def main(argv: list[str] | None = None) -> int:
         print("CONFIG ERROR: give --url (repeatable) or --journey", file=sys.stderr)
         return EXIT_CONFIG
     try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-    except ImportError:
-        print("CONFIG ERROR: Playwright is not installed. Run:\n"
-              "  pip install playwright && python3 -m playwright install chromium", file=sys.stderr)
+        auth = qa_session.merge_auth(journey.auth if journey else None, qa_session.auth_from_args(args, validate_step))
+        qa_session.check_ready(auth)
+        sync_playwright = qa_session.import_sync_playwright(args.browser)
+    except (qa_session.SessionError, qa_session.BrowserMissing) as exc:
+        print(f"CONFIG ERROR: {exc}", file=sys.stderr)
         return EXIT_CONFIG
+    from playwright.sync_api import TimeoutError as PWTimeout
     out = Path(args.out)
     try:
         axe_src = load_axe_source(args.axe_source, out.parent / "cache")
@@ -148,20 +232,28 @@ def main(argv: list[str] | None = None) -> int:
 
     pages: list[dict] = []
     with sync_playwright() as pw:
-        browser = getattr(pw, args.browser).launch()
+        try:
+            browser = qa_session.launch(pw, args.browser)
+        except qa_session.BrowserMissing as exc:
+            print(f"CONFIG ERROR: {exc}", file=sys.stderr)
+            return EXIT_CONFIG
         try:
             targets = [("url", u) for u in args.url] + ([("journey", journey)] if journey else [])
             for kind, target in targets:
                 for device in devices:
-                    ctx = browser.new_context(**context_kwargs(device, args.browser))
+                    base = target if kind == "url" else (args.base_url or target.base_url)
+                    ctx = browser.new_context(**context_kwargs(device, args.browser), **qa_session.context_options(auth))
                     page = ctx.new_page()
                     entry = {"target": target if kind == "url" else f"journey:{target.name}", "device": device}
                     try:
+                        qa_session.apply_auth(ctx, page, auth, args.base_url or base,
+                                              lambda pg, st: run_steps(pg, st, args.base_url or base, 15000, [], PWTimeout))
+                        tracker = qa_session.NetTracker(page)
                         if kind == "url":
                             page.goto(target, wait_until="networkidle", timeout=30000)
                         else:
-                            run_steps(page, target.steps, args.base_url or target.base_url,
-                                      target.timeout_ms, target.auth_wall, PWTimeout)
+                            run_steps(page, target.steps, base, target.timeout_ms, target.auth_wall, PWTimeout)
+                        qa_session.settle(page, tracker, 15000, None, args.settle_ms)
                         entry["final_url"] = page.url
                         entry.update(audit_page(page, axe_src, tags, args.fail_on))
                     except StepFailure as sf:
@@ -174,12 +266,16 @@ def main(argv: list[str] | None = None) -> int:
                     if entry.get("error"):
                         print(f"INCONCLUSIVE {entry['target']} @ {device}: {entry['error']}")
                     else:
+                        small = entry.get("target_size", {}).get("small", [])
                         print(f"{'FAIL' if entry['blocking'] else 'PASS':12} {entry['target']} @ {device}: "
                               f"{entry['blocking']} blocking, {len(entry['violations'])} total, "
-                              f"{entry['incomplete']} need manual review")
+                              f"{entry['incomplete'] + len(small)} need manual review")
                         for v in entry["violations"][:8]:
                             mark = "!" if v["blocking"] else " "
                             print(f"   {mark} [{v['impact']}] {v['id']} x{v['nodes']}: {v['help']}  {v['targets'][:1]}")
+                        if small:
+                            print(f"   ? small-targets x{len(small)} (under 24x24 px, passed only by the spacing "
+                                  f"exception; confirm or dismiss): {', '.join(x['target'] + ' ' + x['size'] for x in small[:4])}")
         finally:
             browser.close()
 

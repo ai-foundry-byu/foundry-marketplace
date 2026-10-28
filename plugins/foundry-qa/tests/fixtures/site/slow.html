@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Groups</title>
+<style>body{font-family:sans-serif;margin:0;padding:16px} .card{display:flex;gap:2px;align-items:center;min-height:44px} .icon{width:20px;height:20px;padding:0;border:1px solid #555}</style></head>
+<body>
+<main>
+  <h1>Study groups</h1>
+  <ul id="groups"></ul>
+</main>
+<script>
+// The list arrives about 1.2 s after the load event, like a real API call.
+fetch('/api/slow').then(r => r.json()).then(groups => {
+  const ul = document.getElementById('groups');
+  for (const g of groups) {
+    const li = document.createElement('li');
+    li.className = 'card';
+    li.innerHTML = '<span>' + g.name + '</span><button class="icon" aria-label="Join ' + g.name + '"></button>' +
+                   '<button class="icon" aria-label="Save ' + g.name + '"></button>';
+    ul.appendChild(li);
+  }
+  document.getElementById('groups').dataset.loaded = 'yes';
+  null.members;   // a TypeError that only fires after the data arrives
+});
+</script>
+</body></html>

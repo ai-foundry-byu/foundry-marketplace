@@ -10,7 +10,7 @@ The deterministic 0-to-1 workflow AI Foundry uses to take software from an idea 
 | 3 | Workplan | `WORKPLAN.md` | `write-workplan` skill |
 | 4 | Execute | branches, one per lane | `parallel-lanes` skill |
 | 5 | Code QA | tests, CI | (companion: `foundry-qa` regression-check) |
-| 6 | Visual QA with example users | `done-journey.yaml`, screenshots | `story-verifier` agent (companions: `foundry-qa`, `foundry-design`, `foundry-devices`) |
+| 6 | Visual QA with example users | `done-journey.yaml`, `.qa/done-gate/last.json`, `.qa/verify/<id>.md` | the battery in the `sdlc` and `ship` skills: `story-verifier` agent plus `foundry-qa` (done-gate, persona-tester, a11y-check) and `foundry-design` (design-critique); `foundry-devices` for native apps |
 | 7 | Ship | `CHANGELOG.md`, stories LIVE | `ship` skill |
 | 8 | Feedback | new stories + failing tests | `bug-to-story` skill (companion: `foundry-evals`) |
 
@@ -40,17 +40,23 @@ The companion plugins are installed the same way: `foundry-guardrails`, `foundry
 
 ## Quick start
 
-In your project, ask Claude: "Use foundry-sdlc to start a new project called Study Buddy." Or do it by hand:
+In your project, ask Claude: "Use foundry-sdlc to start a new project called Study Buddy." Or do it by hand, from the project root (leave out `--name` to take it from the folder name):
 
 ```bash
-python3 "$PLUGIN/skills/new-project/scripts/new_project.py" product --name "Study Buddy" --owner "Team 4"
+python3 "$PLUGIN/skills/new-project/scripts/new_project.py" product --name "<Project Name>" --owner "<Owner>"
+```
+
+```bash
+python3 tools/gen_stories.py --prd product/PRD.md --out product/stories.json --check
 ```
 
 ```bash
 python3 "$PLUGIN/skills/sdlc/scripts/sdlc_stage.py" .
 ```
 
-(`$PLUGIN` is the plugin's install directory, `$HOME/.claude/plugins/cache/ai-foundry/foundry-sdlc/<version>/`, or your clone of this repo at `plugins/foundry-sdlc`.) Then paste `skills/new-project/references/CLAUDE-md-snippet.md` into your project's `CLAUDE.md`.
+(`$PLUGIN` is the plugin's install directory, `$HOME/.claude/plugins/cache/ai-foundry/foundry-sdlc/<version>/`, or your clone of this repo at `plugins/foundry-sdlc`.) The scaffolder writes the artifacts to `product/`, and `tools/gen_stories.py` plus `.github/workflows/stories.yml` to the project root (the git root). The story check passes right after scaffolding. Then paste `skills/new-project/references/CLAUDE-md-snippet.md` into your project's `CLAUDE.md`.
+
+**Shipping without hosting.** A class project needs no deploy: the build under test is the app started locally from the committed HEAD. What it does need is a commit. `gen_stories.py --set US-01=LIVE` refuses a dirty tree, a missing or failing done-gate report for HEAD, and a story with no evidence.
 
 ## Install one item on its own
 
@@ -59,7 +65,7 @@ Every skill in this plugin is self-contained: the scripts, templates and referen
 | Item | On its own? | Notes |
 |---|---|---|
 | `sdlc`, `gather-requirements`, `write-prd`, `write-workplan`, `parallel-lanes`, `ship` | standalone | Each carries its own copy of `scripts/sdlc_stage.py` and its helper `scripts/gen_stories.py` |
-| `new-project` | standalone | Carries `scripts/new_project.py`, `scripts/gen_stories.py` (copied into the project's `tools/`), `scripts/sdlc_stage.py`, all of `templates/` and `references/CLAUDE-md-snippet.md` |
+| `new-project` | standalone | Carries `scripts/new_project.py`, `scripts/gen_stories.py` (copied to `tools/` at the project root), `scripts/sdlc_stage.py`, all of `templates/` and `references/CLAUDE-md-snippet.md` |
 | `bug-to-story` | standalone | Runs only the project's own `tools/gen_stories.py`, so it ships no files |
 | `prd-critic`, `story-verifier` agents | standalone | Copy the `.md` into `.claude/agents/` or `~/.claude/agents/`. Neither runs a plugin script, so neither needs a skill |
 | SessionStart stage hint | plugin only | Hooks need the plugin's `hooks/hooks.json` |
@@ -76,21 +82,21 @@ Invoke a skill by asking in plain words, for example "write the PRD", or by name
 
 | Skill | What it does | Maturity |
 |---|---|---|
-| `sdlc` | The router. Stage map, which artifact and which skill or agent each stage uses, and how to detect the current stage | proven |
-| `new-project` | Scaffolds the artifact set from its `templates/`, copies `tools/gen_stories.py`, and sets up the CI check | proven |
+| `sdlc` | The router. Stage map, which artifact and which skill or agent each stage uses, how to detect the current stage, the single-session build path, and the stage-6 battery ("check that it really works end to end") | proven |
+| `new-project` | Scaffolds the artifact set from its `templates/`, compiles `stories.json` from the new PRD, and writes `tools/gen_stories.py` and the CI check at the project root. Derives the name from the folder when none is given | proven |
 | `gather-requirements` | Verbatim asks with R-ids and sources, a DECISIONS table, and an "Already exists" audit before the PRD | proven |
-| `write-prd` | The PRD with inline `**US-01. Title.**` stories and observable criteria. Compiles stories.json, runs the prd-critic, and fills "Addressed critiques" | proven |
+| `write-prd` | The PRD with inline `**US-01. Title.**` stories and observable criteria. Compiles stories.json, runs the prd-critic, fills "Addressed critiques", and on the human's yes records a dated `PRD approved` D-row and stops | proven |
 | `write-workplan` | Task table (Id, Task, Owner with model, effort and review tier by blast radius, Deps, Status), milestones, "Blocked on human" | proven |
-| `parallel-lanes` | One git worktree and one agent per independent task: naming, the lane brief, the "edit only inside your worktree" rule, merge back | proven |
-| `ship` | The ship ritual: done gate, persona testers, story-verifier, design review, then LIVE, changelog, and "go try X" | proven |
-| `bug-to-story` | Each bug becomes a story plus a failing regression test. Usage gates, with graduation decided by a human | proven |
+| `parallel-lanes` | One git worktree and one agent per independent task: naming, the lane brief, the "edit only inside your worktree" rule, merge back. Also the single-session path. Either way each task goes `DONE <date>: commit <sha>` as it lands | proven (lanes); single-session path new |
+| `ship` | The ship ritual: commit, then done gate, persona testers, one story-verifier per story, design critique and a11y on that commit (local or hosted), all in the foreground; LIVE only through the guarded `--set`; changelog; "go try X" | proven (ritual); local path and LIVE guard new |
+| `bug-to-story` | Every bug report (also "a classmate says X is broken") becomes an R-id, a story criterion, a failing regression test, a task and a changelog line. Usage gates, with graduation decided by a human | proven |
 
 ### Agents
 
 | Agent | What it does | Maturity |
 |---|---|---|
 | `prd-critic` | Adversarial PRD review in a fresh context. Returns numbered critiques (C1..) with severity, location and a suggested fix. Read-only: never rewrites the PRD | proven (pattern) |
-| `story-verifier` | Checks one story on the deployed build from its criteria, the URL and screenshots only. Returns PASS, FAIL or INCONCLUSIVE per criterion with evidence. Never reads the builder's claims | proven (pattern) |
+| `story-verifier` | Checks one story on the build under test (deployed or local) from its criteria, the URL and screenshots only. One per story, before anything is marked LIVE. Returns PASS, FAIL or INCONCLUSIVE per criterion with evidence. Never reads the builder's claims | proven (pattern) |
 
 Use them by asking, for example "Use the prd-critic agent on product/PRD.md", or let the `write-prd` and `ship` skills call them.
 
@@ -104,9 +110,9 @@ Use them by asking, for example "Use the prd-critic agent on product/PRD.md", or
 
 | Script | What it does | Maturity |
 |---|---|---|
-| `scripts/gen_stories.py` (canonical; copied into each skill that runs the detector) | Compiles PRD stories into `stories.json`. `--check` exits 1 if the file is stale, a story has no criteria, an id is duplicated, or a status is invalid. Regenerating keeps `status`, `notes`, `evidence` and any meta the PRD does not set | proven (generalized port) |
-| `skills/new-project/scripts/new_project.py` | Scaffolds the artifact set. Never overwrites without `--force` | new |
-| `scripts/sdlc_stage.py` (canonical; used by the hook, copied into each skill that runs it) | Reports the current stage from the files on disk (`--json` for machines, `--hook` for the SessionStart hook) | new |
+| `scripts/gen_stories.py` (canonical; copied into each skill that runs the detector) | Compiles PRD stories into `stories.json`, shape `{"stories": [...]}` (contract C1, shared with `foundry-qa`). `--check` exits 1 if the file is stale (or the old bare-array format), a story has no criteria, an id is duplicated, or a status is invalid. Regenerating keeps `status`, `notes`, `evidence`, a `qa` block, extra keys and any meta the PRD does not set. `--set US-01=LIVE --evidence <path>` refuses LIVE unless the tree is committed and the done-gate report says exit 0 for HEAD, and records `commit:<sha>` | proven (compiler, generalized port); `--set` guard new |
+| `skills/new-project/scripts/new_project.py` | Scaffolds the artifact set, compiles `stories.json`, writes `tools/` and `.github/workflows/stories.yml` at the project root. Never overwrites without `--force` | new |
+| `scripts/sdlc_stage.py` (canonical; used by the hook, copied into each skill that runs it) | Reports the current stage from the files on disk (`--json` for machines, `--hook` for the SessionStart hook). Stage 2 needs every R-id STORIED or `DROPPED (D-xx)` and a dated `PRD approved` D-row; stage 4 needs every task DONE with a sha, PR or URL, or PARKED; stage 6 needs `.qa/done-gate/last.json` with exit 0 for HEAD and a `.qa/verify/<id>.md` per story; stage 7 needs every LIVE story to carry `commit:<sha>` evidence | new |
 
 ### Templates and references
 
@@ -118,11 +124,12 @@ All templates live in `skills/new-project/templates/`, since only the scaffolder
 | `skills/new-project/templates/DECISIONS.md` | Verbatim human decisions with what each one authorizes, and pending questions with a recommendation | proven |
 | `skills/new-project/templates/PRD.md` | Short version, user, metrics, principles, scope, stories, architecture, rollout with "used fully" gates, risks, Appendix A (addressed critiques), Appendix B (push back) | proven |
 | `skills/new-project/templates/WORKPLAN.md` | Status block, blast-radius tiers, Next up, milestones, task table, Blocked on human, Parked | proven |
-| `skills/new-project/templates/stories.schema.json` | JSON Schema for stories.json (id, title, acceptance[], surfaces[], devices[], status, waits_on[], optional covers/notes/evidence) | proven |
-| `skills/new-project/templates/done-journey.yaml` | Journey for the `foundry-qa` done gate: `steps` (goto, click, fill, wait_for), `assertions` (visible, text, url_contains), `screenshot` | proven (format) |
+| `skills/new-project/templates/stories.schema.json` | JSON Schema for stories.json: `{"stories": [{id, title, acceptance[], surfaces[], devices[], status, waits_on[], covers[], notes, evidence[], optional qa}]}` | proven |
+| `skills/new-project/templates/done-journey.yaml` | Byte-identical copy of `foundry-qa`'s canonical `skills/done-gate/templates/done-journey.yaml` (contract C2): `name`, `base_url`, `devices`, `stories`, optional `auth`, `steps`, `assertions`, `screenshot`. A test checks it matches and passes `done_gate.py --validate` | proven (format) |
+| `skills/new-project/templates/stories-ci.yml` | GitHub Actions job that runs `python3 tools/gen_stories.py --prd <PRD> --out <stories> --check`; the scaffolder fills in the paths | new |
 | `skills/new-project/templates/CHANGELOG.md` | One dated heading per ship, one bullet per user-visible change, with evidence | proven |
 | `skills/new-project/templates/README.md` | Project README that indexes the artifact set | new |
-| `skills/new-project/references/CLAUDE-md-snippet.md` (copied into `sdlc`) | Always-on norms to paste into a project CLAUDE.md: root cause first, surgical changes, never "done" without a passing gate, the 4-tier blast-radius table, reuse before build | proven |
+| `skills/new-project/references/CLAUDE-md-snippet.md` (copied into `sdlc`) | Always-on norms to paste into a project CLAUDE.md: every bug report through `bug-to-story`, root cause first, surgical changes, never "done" without passing gates on a committed SHA, the 4-tier blast-radius table, reuse before build | proven |
 
 **What the maturity labels mean.** "proven" means the item is generalized from a workflow, format or tool that runs in production in our harness today. "proven (pattern)" means the agent's role and rules are what we use in production, rewritten here as a portable agent definition. "new" means it was written for this marketplace and is not yet battle-tested. Please report problems.
 

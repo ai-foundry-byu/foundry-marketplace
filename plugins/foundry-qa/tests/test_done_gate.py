@@ -159,6 +159,91 @@ class TestExitCodes(unittest.TestCase):
             self.assertEqual(latest["results"], [])
 
 
+SDLC_TEMPLATE = _paths.PLUGIN.parent / "foundry-sdlc" / "skills" / "new-project" / "templates" / "done-journey.yaml"
+
+
+class TestContractC2(unittest.TestCase):
+    """done-journey.yaml as foundry-sdlc scaffolds it: stories and auth are documented keys."""
+
+    def test_stories_and_auth_are_accepted(self):
+        j = dg.validate_journey({**GOOD, "stories": ["US-01", "US-02"],
+                                 "auth": {"storage_state": ".qa/auth.json"}}, "x")
+        self.assertEqual(j.stories, ["US-01", "US-02"])
+        self.assertEqual(j.auth, {"storage_state": ".qa/auth.json"})
+        self.assertEqual(dg.validate_journey({**GOOD, "stories": "US-03"}).stories, ["US-03"])
+
+    def test_unknown_top_level_key_still_exits_2(self):
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "j.yaml"
+            f.write_text("stories: [US-01]\nowner: me\nsteps:\n  - goto: http://x/\nassertions:\n  - visible: h1\n")
+            self.assertEqual(dg.main(["--journey", str(f), "--validate"]), 2)
+
+    def test_bad_auth_is_a_config_error(self):
+        for auth in ({"token": "x"}, {"login_steps": [{"hover": "a"}]}):
+            with self.subTest(auth=auth):
+                with self.assertRaises(dg.ConfigError):
+                    dg.validate_journey({**GOOD, "auth": auth})
+
+    def test_template_has_exactly_the_contract_keys(self):
+        data = dg.qa_yaml.load_file(str(_paths.DONE_GATE_TEMPLATES / "done-journey.yaml"))
+        self.assertEqual(set(data), {"name", "base_url", "devices", "stories", "steps", "assertions", "screenshot"})
+        self.assertIn("PORT", data["base_url"])
+        self.assertEqual(dg.main(["--journey", str(_paths.DONE_GATE_TEMPLATES / "done-journey.yaml"), "--validate"]), 0)
+
+    @unittest.skipUnless(SDLC_TEMPLATE.is_file(), "foundry-sdlc is not next to this plugin")
+    def test_foundry_sdlc_template_validates(self):
+        self.assertEqual(dg.main(["--journey", str(SDLC_TEMPLATE), "--validate"]), 0)
+
+    def test_port_placeholder(self):
+        self.assertEqual(dg.resolve_base("http://localhost:PORT", "5173"), "http://localhost:5173")
+        self.assertEqual(dg.resolve_base("http://localhost:3000", None), "http://localhost:3000")
+        for port in (None, "abc"):
+            with self.assertRaises(dg.ConfigError):
+                dg.resolve_base("http://localhost:PORT", port)
+
+
+class TestLastJson(unittest.TestCase):
+    def test_record_shape(self):
+        j = dg.validate_journey({**GOOD, "stories": ["US-01"]}, "qa/done-journey.yaml")
+        r = dg.DeviceResult("home", "phone-390x844", "fail", reason="h1 not visible")
+        rec = dg.last_record(1, [j], "a" * 40, dg.failures_from([r], None))
+        for k in ("sha", "exit", "journey", "devices", "time", "failures"):
+            self.assertIn(k, rec)
+        self.assertEqual((rec["sha"], rec["exit"], rec["journey"]), ("a" * 40, 1, "qa/done-journey.yaml"))
+        self.assertEqual(rec["devices"], ["phone-390x844"])
+        self.assertEqual(rec["stories"], ["US-01"])
+        self.assertEqual(rec["failures"], [{"journey": "home", "device": "phone-390x844", "status": "fail",
+                                            "reason": "h1 not visible"}])
+
+    def test_written_after_a_config_error_but_not_after_validate(self):
+        with tempfile.TemporaryDirectory() as td:
+            f = Path(td) / "j.yaml"
+            f.write_text("base_url: http://localhost:PORT\nsteps:\n  - goto: /\nassertions:\n  - visible: h1\n")
+            out = Path(td) / "qa"
+            self.assertEqual(dg.main(["--journey", str(f), "--validate", "--out", str(out)]), 0)
+            self.assertFalse((out / "last.json").exists())
+            self.assertEqual(dg.main(["--journey", str(f), "--out", str(out)]), 2)   # PORT and no --port
+            last = json.loads((out / "last.json").read_text())
+            self.assertEqual(last["exit"], 2)
+            self.assertIn("PORT", last["failures"][0]["reason"])
+
+    def test_written_after_sha_mismatch_with_git_head(self):
+        with tempfile.TemporaryDirectory() as td:
+            good = Path(td) / "good.yaml"
+            good.write_text("steps:\n  - goto: http://127.0.0.1:9/\nassertions:\n  - visible: h1\n")
+            orig = dg.fetch_sha
+            dg.fetch_sha = lambda *a, **k: ("fedcba9876543210", "ok")
+            try:
+                dg.main(["--journey", str(good), "--out", str(Path(td) / "qa"), "--sha-url", "http://x/v",
+                         "--expected-sha", "0123456789abcdef", "--sha-retries", "1"])
+            finally:
+                dg.fetch_sha = orig
+            last = json.loads((Path(td) / "qa" / "last.json").read_text())
+            self.assertEqual(last["exit"], 3)
+            self.assertEqual(last["sha"], dg.git_head())
+            self.assertEqual(last["failures"][0]["status"], "sha-mismatch")
+
+
 class TestReadOnly(unittest.TestCase):
     def test_decide(self):
         for m in ("GET", "HEAD", "OPTIONS", "get"):

@@ -12,7 +12,7 @@ plugin adds the missing editor, a spec step before the build, and a scored revie
 | `design-system` | skill | Fill-in template for your design system (tokens, contrast table, type scale, spacing, components, vocabulary) that the other items grade against | design | new |
 | `ui-reviewer` | agent | Read-only REVIEW: scores screenshots plus code on a 10-dimension 0-4 rubric, returns token-level must-fixes with file:line. Never edits source | visual QA / ship | proven |
 | `design_gate.py` | script (in `design-critique`, vendored into `design-system`) | Deterministic gate: clicks-to-goal, dead controls, entry points, primary buttons, tap targets, contrast, horizontal scroll, context present; fails on regression vs a baseline | visual QA / CI | new (generalized from a proven per-project gate) |
-| `validate_findings.py` | script (in `design-critique`) | Validates a critique findings file: no "add" verb, deltas on flow findings, nit cap, grounding | visual QA | new |
+| `validate_findings.py` | script (in `design-critique`) | Validates a critique findings file: no "add" verb, deltas on flow findings, nit cap, grounding; with `--verdicts`, one C1-C8 verdict line per surface | visual QA | new |
 | `design-gate.config.json`, `findings.example.json`, `decision.yaml` | templates (in `design-critique/templates/`) | Starting files for the gate config, a findings run, and a decision-log entry | setup | new |
 
 Maturity: **proven** means generalized from a tool that runs in production in our harness today.
@@ -94,14 +94,24 @@ and must stay byte-identical to their canonical file.
 
 ### design-critique (skill, proven)
 
-Ask: "run the design critique on the settings page" or `/foundry-design:design-critique`.
-Pre-build it critiques the plan; post-build it runs the gate, then examines every changed screen
-against C1-C8 and writes a findings file. The critic may only propose `remove`, `merge`,
-`relabel`, `inline` or `escalate`. Validate the findings:
+Ask: "critique the design of my app", "what can I remove from the settings page", or
+`/foundry-design:design-critique`. Pre-build it critiques the plan. Post-build it runs the gate
+(creating `design/design-gate.json` and the baseline on the first run when they are missing),
+writes one `Cn <surface> - clean|finding` verdict line per question per surface to
+`design/findings/<date>-<surface>.verdicts.md`, and writes a findings file. The critic may only
+propose `remove`, `merge`, `relabel`, `inline` or `escalate`. Validate both:
 
 ```bash
-python3 skills/design-critique/scripts/validate_findings.py design/findings/2026-01-15-settings.json
+python3 skills/design-critique/scripts/validate_findings.py design/findings/2026-01-15-settings.json \
+  --verdicts design/findings/2026-01-15-settings.verdicts.md
 ```
+
+A diff_hint that proposes an addition ("add a filter row") prints a warning; naming the app's own
+control in quotes ("Delete the 'Create a group' FAB") and `escalate` findings do not.
+
+Which to ask for: "critique / simplify / what can I remove / design pass before we ship" is this
+skill; "score / rate / review the UI against a rubric / what to fix first" is the `ui-reviewer`
+agent.
 
 Inside a session the skill uses `${CLAUDE_SKILL_DIR}/scripts/...`, which Claude Code expands to
 the skill's own folder. From a terminal, locate the scripts:
@@ -134,8 +144,11 @@ the `claude-plugins-official` marketplace; this plugin does not copy it.
 Ask: "have the ui-reviewer score the dashboard against design/specs/dashboard.md". It captures
 screenshots (via the gate or Playwright), reads the code, scores 10 dimensions 0-4, and returns a
 verdict (`SHIP`, `SHIP AFTER MUST-FIXES`, `REWORK`, `REDESIGN`) with must-fixes that each carry
-evidence, problem, a token-level fix and a verification step. It writes only under
-`design/reviews/` and never edits product source. The rubric is
+evidence, problem, a token-level fix and a verification step. The total is the plain sum of the
+ten rows and the band is read off that total (a gate dimension at 0-1 or a Blocker can only lower
+it). Every cited `file:line` is re-read before it is reported. It always saves the report to
+`design/reviews/<date>-<surface>.md`, writes capture scripts and screenshots only under
+`design/reviews/captures/`, and never edits product source. The rubric is
 `skills/ui-ux-spec/references/rubric.md`.
 
 ### design_gate.py (script, new)
@@ -150,7 +163,8 @@ evidence, problem, a token-level fix and a verification step. It writes only und
 2. Copy `skills/design-critique/templates/design-gate.config.json` to `design/design-gate.json` and edit `base_url`,
    `pages`, `flows` (click steps to a goal selector), `context_checks` and
    `selectors.primary_button`.
-3. Start your app locally, then establish the baseline and commit it:
+3. Start your app locally, then establish the baseline and commit it (the `design-critique` skill
+   does this itself on its first run when no baseline exists):
 
    ```bash
    python3 path/to/design_gate.py run --config design/design-gate.json --bless
@@ -164,12 +178,19 @@ evidence, problem, a token-level fix and a verification step. It writes only und
 
 Exit codes: 0 pass, 1 regression or hard-limit violation, 2 config error, 3 refused a
 non-local `base_url` (flows can write data, so the gate only drives localhost unless you set
-`"allow_remote": true` for a read-only target).
+`"allow_remote": true` for a read-only target), 6 INCONCLUSIVE: the environment stopped the
+measurement (Playwright's browser not installed or crashed, a page navigation timed out, the app
+not reachable). 6 is not a pass and not a design regression; the message says what to fix, then
+rerun. A click or goal that times out inside a flow is still a real result (`reached: false`).
 
 Hard limits (fail even without a baseline, each can be set to `null` to rely on the baseline
 only, which helps when adopting the gate on an existing app): one primary button per screen,
-no horizontal scroll, zero targets under 44 px (touch) or 24 px (pointer), zero text under
-4.5:1 (3:1 large), zero unlabeled buttons, every core flow reaches its goal. Regressions against
+no horizontal scroll (`scrollWidth > clientWidth`, measured against the layout viewport, so it
+fires on phone emulation too), zero targets under 24 px on any viewport (WCAG 2.5.8; inline links
+in a sentence, hidden and off-screen elements such as a parked skip link are exempt), zero text
+under 4.5:1 (3:1 large), zero unlabeled buttons, every core flow reaches its goal. Touch targets
+between 24 and 44 px (`limits.min_touch_target`) are printed as `advisory (not gated)` notes and
+listed under `touch_advisory` in the details; they never fail the gate. Regressions against
 the baseline: any increase in clicks, dead controls, entry points or the counts above, any
 context check or flow that stops holding, and any metric that disappears.
 
@@ -190,9 +211,12 @@ cd plugins/foundry-design
 python3 -m unittest discover -s skills/design-critique/scripts/tests -v
 ```
 
-44 tests: color math and WCAG contrast, page evaluation, hard limits, planted regressions,
-config validation, the CLI, the findings validator, and one end-to-end Playwright run against a
-local fixture page (skipped when Playwright or Chromium is not installed).
+Color math and WCAG contrast, page evaluation, hard limits, planted regressions, config
+validation, the CLI, infrastructure failures as INCONCLUSIVE, the findings validator (addition
+warnings, verdict coverage), and end-to-end Playwright runs against local fixture pages (phone
+overflow at 390 px, off-screen skip link and inline-link exemptions, an unreachable navigation).
+The end-to-end tests are skipped when Playwright or Chromium is not installed, or when the browser
+crashes under machine load.
 
 ## Requirements
 

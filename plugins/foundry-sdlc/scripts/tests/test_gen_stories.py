@@ -145,7 +145,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("3 stories", stdout)
             self.assertEqual(self.run_main("--prd", str(prd), "--out", str(out), "--check")[0], 0)
             # a human verifies a story: status edit only, still fresh
-            rows = json.loads(out.read_text())
+            rows = json.loads(out.read_text())["stories"]
             rows[0]["status"] = "LIVE"
             out.write_text(g.render(rows))
             self.assertEqual(self.run_main("--prd", str(prd), "--out", str(out), "--check")[0], 0)
@@ -156,7 +156,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("STALE", err)
             # regenerate keeps the LIVE status
             self.assertEqual(self.run_main("--prd", str(prd), "--out", str(out))[0], 0)
-            self.assertEqual(json.loads(out.read_text())[0]["status"], "LIVE")
+            self.assertEqual(json.loads(out.read_text())["stories"][0]["status"], "LIVE")
 
     def test_invalid_prd_does_not_write(self):
         with tempfile.TemporaryDirectory() as d:
@@ -177,6 +177,171 @@ class CliTests(unittest.TestCase):
             prd.write_text(PRD)
             out.write_text("{not json")
             self.assertEqual(self.run_main("--prd", str(prd), "--out", str(out))[0], 1)
+
+
+
+def git(d, *args):
+    import subprocess
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@example.com", "PATH": __import__("os").environ["PATH"],
+           "HOME": str(d)}
+    r = subprocess.run(["git", "-C", str(d), *args], capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stderr
+    return r.stdout.strip()
+
+
+class ContractTests(unittest.TestCase):
+    """C1: stories.json is {"stories": [...]} with every documented key."""
+
+    def test_render_is_the_c1_object_shape(self):
+        rows, errors, _ = g.build(PRD, {})
+        self.assertEqual(errors, [])
+        doc = json.loads(g.render(rows))
+        self.assertEqual(list(doc), ["stories"])
+        row = doc["stories"][0]
+        self.assertEqual(list(row), list(g.KEY_ORDER))
+        self.assertEqual(row["covers"], ["R-01", "R-04"])
+        self.assertEqual(row["notes"], "")
+        self.assertEqual(row["evidence"], [])
+        self.assertEqual(doc["stories"][1]["covers"], [])
+
+    def test_qa_block_and_unknown_keys_are_preserved(self):
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = Path(d, "PRD.md"), Path(d, "stories.json")
+            prd.write_text(PRD)
+            with redirect_stdout(io.StringIO()):
+                g.main(["--prd", str(prd), "--out", str(out)])
+            doc = json.loads(out.read_text())
+            doc["stories"][0]["qa"] = {"start": "/login", "steps": [{"goto": "/login"}]}
+            doc["generated_by"] = "a human"
+            out.write_text(json.dumps(doc))
+            with redirect_stdout(io.StringIO()):
+                g.main(["--prd", str(prd), "--out", str(out)])
+            again = json.loads(out.read_text())
+            self.assertEqual(again["stories"][0]["qa"]["start"], "/login")
+            self.assertEqual(again["generated_by"], "a human")
+
+    def test_legacy_array_is_read_then_stale_then_migrated(self):
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = Path(d, "PRD.md"), Path(d, "stories.json")
+            prd.write_text(PRD)
+            out.write_text(json.dumps([{"id": "US-01", "status": "BUILT"}]))
+            self.assertEqual(g.load_stories(out)[0]["status"], "BUILT")
+            ok, msgs = g.check(prd, out)
+            self.assertFalse(ok)
+            self.assertIn("array", msgs[0])
+            with redirect_stdout(io.StringIO()):
+                g.main(["--prd", str(prd), "--out", str(out)])
+            self.assertEqual(json.loads(out.read_text())["stories"][0]["status"], "BUILT")
+            self.assertTrue(g.check(prd, out)[0])
+
+
+class SetStatusTests(unittest.TestCase):
+    """--set US-01=LIVE refuses unless committed, gated on that SHA, and evidenced."""
+
+    def run_main(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = g.main(list(args))
+        return code, out.getvalue() + err.getvalue()
+
+    def project(self, d):
+        git(d, "init", "-q")
+        Path(d, "app.py").write_text("print('hi')\n")
+        prd, out = Path(d, "PRD.md"), Path(d, "stories.json")
+        prd.write_text(PRD)
+        with redirect_stdout(io.StringIO()):
+            g.main(["--prd", str(prd), "--out", str(out)])
+        git(d, "add", "-A")
+        git(d, "commit", "-qm", "build")
+        return prd, out
+
+    def gate(self, d, sha, code=0):
+        rep = Path(d, ".qa", "done-gate")
+        rep.mkdir(parents=True, exist_ok=True)
+        (rep / "last.json").write_text(json.dumps({"sha": sha, "exit": code,
+                                                   "journey": "done-journey.yaml",
+                                                   "time": "2026-11-03T10:00:00Z"}))
+
+    def verify(self, d, sid="US-01"):
+        v = Path(d, ".qa", "verify")
+        v.mkdir(parents=True, exist_ok=True)
+        (v / f"{sid}.md").write_text("Result: 3 PASS")
+        return str(v / f"{sid}.md")
+
+    def test_live_refused_without_gate_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-01=LIVE",
+                                      "--evidence", self.verify(d))
+            self.assertEqual(code, 1)
+            self.assertIn("done-gate", msg)
+            self.assertEqual(g.load_stories(out)[0]["status"], "NOT_BUILT")
+
+    def test_live_refused_on_dirty_tree(self):
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            self.gate(d, git(d, "rev-parse", "HEAD"))
+            Path(d, "app.py").write_text("print('changed')\n")
+            code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-01=LIVE",
+                                      "--evidence", self.verify(d))
+            self.assertEqual(code, 1)
+            self.assertIn("uncommitted", msg)
+
+    def test_live_refused_when_gate_failed_or_ran_on_other_code(self):
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            old = git(d, "rev-parse", "HEAD")
+            self.gate(d, old, code=1)
+            code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-01=LIVE",
+                                      "--evidence", self.verify(d))
+            self.assertEqual(code, 1)
+            self.assertIn("exit 1", msg)
+            self.gate(d, old)
+            Path(d, "app.py").write_text("print('v2')\n")
+            git(d, "commit", "-qam", "v2")
+            code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-01=LIVE",
+                                      "--evidence", self.verify(d))
+            self.assertEqual(code, 1)
+            self.assertIn("app.py", msg)
+
+    def test_live_refused_without_evidence(self):
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            self.gate(d, git(d, "rev-parse", "HEAD"))
+            code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-01=LIVE")
+            self.assertEqual(code, 1)
+            self.assertIn("evidence", msg)
+            code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-01=LIVE",
+                                      "--evidence", ".qa/verify/missing.md")
+            self.assertEqual(code, 1)
+
+    def test_live_accepted_records_sha_and_evidence(self):
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            head = git(d, "rev-parse", "HEAD")
+            self.gate(d, head)
+            # an artifact-only commit after the gate still counts as the same build
+            Path(d, "CHANGELOG.md").write_text("# log\n")
+            git(d, "add", "-A")
+            git(d, "commit", "-qm", "docs")
+            code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-01=LIVE",
+                                      "--evidence", self.verify(d))
+            self.assertEqual(code, 0, msg)
+            row = g.load_stories(out)[0]
+            self.assertEqual(row["status"], "LIVE")
+            self.assertIn(f"commit:{git(d, 'rev-parse', 'HEAD')}", row["evidence"])
+            self.assertTrue(any(e.endswith("US-01.md") for e in row["evidence"]))
+            self.assertTrue(g.check(prd, out)[0])
+
+    def test_partial_needs_no_gate(self):
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-02=PARTIAL")
+            self.assertEqual(code, 0, msg)
+            self.assertEqual(g.load_stories(out)[1]["status"], "PARTIAL")
+            self.assertEqual(self.run_main("--prd", str(prd), "--out", str(out),
+                                           "--set", "US-02=DONE")[0], 2)
 
 
 if __name__ == "__main__":

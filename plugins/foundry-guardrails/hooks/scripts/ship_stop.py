@@ -15,7 +15,12 @@ Behavior on Stop:
   * "[x]" = done, "[!]" or "[-]" = blocked or deferred by a human or by
     Claude with a written reason: allow the stop.
   * After FOUNDRY_SHIP_MAX_BLOCKS blocks for one (session, milestone)
-    (default 20), allow the stop and log that a human is needed.
+    (default 8), allow the stop, log it, and tell the human (systemMessage)
+    that someone needs to look. The default is 8 because Claude Code ends the
+    turn itself once Stop hooks have continued it 8 times in a row with no
+    tool call in between (it overrides the 9th block; CLAUDE_CODE_STOP_HOOK_BLOCK_CAP
+    raises that). A higher plugin cap would never be reached in that case and
+    the "a human needs to look" message would never show.
   * Missing or unreadable workplan, unknown milestone id, background tasks in
     flight: allow.
 
@@ -31,6 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _common as c  # noqa: E402
 
 HOOK = "ship-stop"
+DEFAULT_MAX_BLOCKS = 8
 LINE = re.compile(r"^(\s*)[-*+]\s+\[([ xX!\-])\]\s+(M\d+(?:\.\d+)*)\b[:.)]?\s*(.*)$")
 
 
@@ -96,12 +102,12 @@ def handle(event: dict) -> None:
         c.log(HOOK, "allow-background-tasks", sid, milestone=it["id"])
         return
     counter = c.marker(sid, "ship-" + re.sub(r"[^A-Za-z0-9.]", "_", it["id"]))
-    max_blocks = c.env_int("FOUNDRY_SHIP_MAX_BLOCKS", 20)
+    max_blocks = c.env_int("FOUNDRY_SHIP_MAX_BLOCKS", DEFAULT_MAX_BLOCKS)
     n = c.read_int(counter)
     if n >= max_blocks:
         c.log(HOOK, "allow-cap-reached", sid, milestone=it["id"], blocks=n)
-        print(f"[foundry-guardrails/ship-stop] {it['id']} is still open after {n} continuations; "
-              "a human needs to look at it.", file=sys.stderr)
+        c.emit_user_message(HOOK, f"{it['id']} is still open after {n} continuations; "
+                                  "a human needs to look at it.")
         return
     c.touch(counter, str(n + 1))
     details = "\n".join(it["details"])[:800]
