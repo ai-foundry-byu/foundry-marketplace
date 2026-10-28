@@ -1,0 +1,27 @@
+# Adapted from plugins/foundry-devices/skills/device-matrix/templates/maestro/ios-sign-in.yaml
+# Same structure, pointed at the iOS Settings app (bundle id com.apple.Preferences).
+appId: com.apple.Preferences
+name: "S1 open General (ios settings)"
+tags:
+  - smoke
+  - ios
+---
+- launchApp:
+    # clearState: true removed for this run: on iOS it uninstalls the app, and a system app
+    # (com.apple.Preferences) cannot be uninstalled (IXErrorDomain code=22). Keep it for your own app.
+    clearKeychain: true       # iOS keeps keychain items across reinstalls; clear them for a clean start
+- extendedWaitUntil:
+    visible: "General"
+    timeout: 30000
+- takeScreenshot: S1-01-launch
+- tapOn: "General"
+- runFlow:
+    when:
+      visible: "Allow"
+    commands:
+      - tapOn: "Allow"
+- extendedWaitUntil:
+    visible: "About"
+    timeout: 20000
+- assertNotVisible: "Something went wrong"
+- takeScreenshot: S1-02-general
