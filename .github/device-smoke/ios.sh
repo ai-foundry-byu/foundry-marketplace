@@ -62,11 +62,25 @@ step "agent s4: simctl privacy grant photos BUNDLE" 'xcrun simctl privacy "$UDID
 step "agent s4: simctl terminate UDID BUNDLE (after a fresh launch)" 'xcrun simctl launch "$UDID" "$BUNDLE" && sleep 3 && xcrun simctl terminate "$UDID" "$BUNDLE"'
 step "agent s4: simctl addmedia (a png)" 'xcrun simctl addmedia "$UDID" .qa/ios/S1-01-settings.png'
 step "agent s4: simctl get_app_container data (system app)" 'xcrun simctl get_app_container "$UDID" "$BUNDLE" data'
-rec_video() {
-  xcrun simctl io "$UDID" recordVideo --codec=h264 .qa/ios/S1-run.mov & VID=$!
-  sleep 6; kill -INT $VID; wait $VID; test -s .qa/ios/S1-run.mov
+alive_for() { local pid=$1 n=$2; for i in $(seq "$n"); do kill -0 "$pid" 2>/dev/null || return 1; sleep 1; done; return 0; }
+rec_race() {
+  # The agent's pattern sends SIGINT with no check that recording has started. Run 3 of this
+  # workflow hung 53 min when SIGINT landed before "Recording started". Reproduce: SIGINT at 0.5 s.
+  xcrun simctl io "$UDID" recordVideo --codec=h264 .qa/ios/race.mov > .qa/ios/race.log 2>&1 & local VID=$!
+  sleep 0.5; kill -INT $VID
+  if alive_for $VID 20; then echo "recorder still running 20 s after SIGINT: hang reproduced"; cat .qa/ios/race.log; kill -9 $VID; pkill -9 -f "recordVideo.*race.mov"; wait $VID 2>/dev/null; return 1; fi
+  echo "recorder exited after early SIGINT"; cat .qa/ios/race.log; return 0
 }
-step "agent s6: recordVideo --codec=h264 & ... kill -INT" rec_video
+EXPECT=1 step "DEFECT CHECK agent s6: recordVideo + early kill -INT never finalizes (hang)" rec_race
+rec_video_fixed() {
+  xcrun simctl io "$UDID" recordVideo --codec=h264 .qa/ios/S1-run.mov > .qa/ios/S1-rec.log 2>&1 & local VID=$!
+  local n=0; until grep -q "Recording started" .qa/ios/S1-rec.log; do sleep 1; n=$((n+1)); [ $n -ge 30 ] && break; done
+  sleep 3   # ... drive the story ...
+  kill -INT $VID
+  if alive_for $VID 15; then echo "did not stop, kill -9"; kill -9 $VID; wait $VID 2>/dev/null; return 1; fi
+  cat .qa/ios/S1-rec.log; test -s .qa/ios/S1-run.mov
+}
+step "[CORRECTED] recordVideo: wait for 'Recording started', then kill -INT with a bounded wait" rec_video_fixed
 log_stream() {
   xcrun simctl spawn "$UDID" log stream --level debug --predicate 'process == "Preferences"' > .qa/ios/S1-log.txt & LOG=$!
   xcrun simctl launch "$UDID" "$BUNDLE"; sleep 5; kill $LOG; wait $LOG 2>/dev/null; wc -l .qa/ios/S1-log.txt
