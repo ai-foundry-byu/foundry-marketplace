@@ -100,7 +100,13 @@ def handle(event: dict) -> None:
     if not reason:
         return
     if os.environ.get("FOUNDRY_STALE_WRITE_ENFORCE", "").strip() == "0":
-        c.emit_warn(HOOK, event, reason, target=target)
+        c.emit_warn(HOOK, event,
+                    f"{c.realpath(target if os.path.isabs(target) else os.path.join(cwd, target))} "
+                    "had uncommitted changes that were not in HEAD and were not made by this "
+                    "session. This Write replaces the whole file (warn-only mode, "
+                    "FOUNDRY_STALE_WRITE_ENFORCE=0, does not stop it), so those uncommitted lines "
+                    "are being overwritten and may be unrecoverable. Tell the user plainly which "
+                    "file this was. Next time, use Edit for a targeted change.", target=target)
     else:
         c.emit_deny(HOOK, event, reason, target=target)
 

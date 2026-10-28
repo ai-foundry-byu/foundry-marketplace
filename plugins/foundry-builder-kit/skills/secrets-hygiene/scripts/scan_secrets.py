@@ -17,6 +17,9 @@ Findings print redacted (first 6 characters only), never the full value.
 
 Allow a line on purpose by adding the comment:  secrets-hygiene: allow
 (gitleaks' own inline marker, gitleaks:allow, is honored too, so one comment satisfies both.)
+Only values that are wholly a placeholder are skipped (your-key-here, <token>, xxxxxxxx,
+REPLACE_ME, changeme). A key-shaped value that merely contains "fake" or "test" is reported,
+so mark a deliberate test key with the allow comment.
 """
 from __future__ import annotations
 
@@ -57,11 +60,21 @@ RULES: list[tuple[str, re.Pattern[str], int]] = [
     ),
 ]
 
-PLACEHOLDER_HINTS = (
-    "replace_me", "replaceme", "your_", "your-", "<", "example", "placeholder",
-    "changeme", "xxxx", "dummy", "fake", "test_key", "process.env", "os.environ",
-    "${", "getenv", "env(",
+# Code that reads a value instead of holding one (token = process.env.GITHUB_TOKEN).
+ENV_READ_HINTS = ("process.env", "os.environ", "${", "getenv", "env(")
+# A provider prefix is stripped before the placeholder test, so sk-ant-your-key-here is judged
+# on "your-key-here".
+PROVIDER_PREFIX_RE = re.compile(
+    r"^(?:sk-ant-(?:api\d\d-)?|sk-or-v1-|sk-(?:proj-|svcacct-|admin-)?|(?:sk|pk|rk)_(?:live|test)_|"
+    r"gh[pousr]_|github_pat_|AKIA|ASIA|AIza|gsk_|xox[abprs]-)"
 )
+# Pieces a placeholder is made of. A value is a placeholder only when these pieces make up ALL
+# of it: AKIA + "Q7FAKEFAKEFAKE12" still has "Q712" left over, so it is reported like any other key.
+PLACEHOLDER_PIECE_RE = re.compile(
+    r"(?i)<[^>]*>|(.)\1{3,}|x{3,}|replace|changeme|change|placeholder|example|sample|dummy|fake|"
+    r"your|my|api|keys?|here|goes|me|test|secret|token|password|value|[\W_]"
+)
+
 
 # Files that are secrets by name, whatever they contain.
 SECRET_FILE_RE = re.compile(
@@ -95,14 +108,19 @@ def redact(value: str) -> str:
     return value[:6] + "***" if len(value) > 6 else "***"
 
 
-def looks_like_placeholder(value: str, line: str) -> bool:
+def looks_like_placeholder(value: str) -> bool:
+    """True only when the WHOLE value is a placeholder (your-key-here, <token>, xxxxxxxx,
+    REPLACE_ME, changeme, sk-ant-your-key-here-000) or an env read. A key-shaped value that merely
+    contains fake/dummy/example is reported: mark a deliberate test key with the allow pragma."""
     low = value.lower()
-    if any(h in low for h in PLACEHOLDER_HINTS):
+    if any(h in low for h in ENV_READ_HINTS):
         return True
     if len(set(value)) <= 3:  # aaaaaaaa, 00000000
         return True
-    line_low = line.lower()
-    return "replace_me" in line_low or "placeholder" in line_low
+    body = PROVIDER_PREFIX_RE.sub("", value, count=1)
+    if re.match(r"(?i)your[_-]", body):  # your_secret_here_please
+        return True
+    return PLACEHOLDER_PIECE_RE.sub("", body) == ""
 
 
 def is_known_non_secret(rule: str, value: str, line: str) -> bool:
@@ -114,7 +132,7 @@ def is_known_non_secret(rule: str, value: str, line: str) -> bool:
         password = creds.split(":", 1)[1]
         host = re.split(r"[:/?]", rest, 1)[0].lower() if not rest.startswith("[") else rest.split("]")[0] + "]"
         return (host in LOOPBACK_HOSTS or password.lower() in DEFAULT_DB_PASSWORDS
-                or looks_like_placeholder(password, line))
+                or looks_like_placeholder(password))
     return False
 
 
@@ -131,10 +149,10 @@ def scan_line(path: str, lineno: int, line: str, skip_rules: tuple = ()) -> list
             span = m.span(grp)
             if any(s <= span[0] < e for s, e in seen_spans):
                 continue  # a more specific rule already reported this value
-            # Every key-shaped rule skips obvious placeholders (sk-ant-your-key-here, ghp_xxxx...,
-            # a FAKE marker), the "empty or fake value" a .env.example is meant to hold.
+            # Every key-shaped rule skips values that are wholly a placeholder (sk-ant-your-key-here,
+            # ghp_xxxx..., <token>), what a .env.example is meant to hold.
             if rule not in ("private-key-block", "postgres-url-with-password"):
-                if looks_like_placeholder(value, line):
+                if looks_like_placeholder(value):
                     continue
             if rule == "generic-assignment" and shannon_entropy(value) < 3.0:
                 continue

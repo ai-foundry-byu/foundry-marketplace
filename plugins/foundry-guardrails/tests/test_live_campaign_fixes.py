@@ -175,7 +175,8 @@ class VerifyShellEditsNoGit(StopShape):
                           ("echo 'x = 2' | tee -a lib.py", "lib.py"),
                           ("cp calc.py calc2.py", "calc2.py"),
                           ("perl -pi -e 's/1/2/' calc.py", "calc.py"),
-                          ("python3 - <<'EOF'\nopen('gen.py','w').write('x')\nEOF", "shell")]:
+                          ("python3 - <<'EOF'\nopen('gen.py','w').write('x')\nEOF", "gen.py"),
+                          ("python3 -c \"p='g.py'; open(p,'w').write('x')\"", "shell")]:
             with self.subTest(cmd=cmd):
                 sid = "s-" + str(abs(hash(cmd)))  # the block cap is per session
                 self.assertAllowed(self.pre(cmd, session=sid))

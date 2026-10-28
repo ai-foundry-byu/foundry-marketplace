@@ -7,7 +7,10 @@ This script asks the model for a critique and then exactly one verdict line,
 parses the LAST verdict line, and prints:
   {"pass": true|false|null, "reason": "...", "_meta": {"cost_usd": ...}}
 null means the judge said UNKNOWN or its reply could not be parsed; evalkit
-records that trial as an error instead of scoring it.
+records that trial as an error instead of scoring it. When the model call
+itself fails (not logged in, binary missing, timeout), it prints
+  {"pass": null, "error": "<one line>"}
+and evalkit records "judge failed: <one line>".
 
 Environment:
   EVALKIT_CLAUDE_BIN    claude binary (default: claude on PATH)
@@ -77,16 +80,42 @@ def parse_verdict(text: str):
     return {"PASS": True, "FAIL": False}.get(v), critique
 
 
+class JudgeCallError(Exception):
+    """The model call failed; the message is one readable line."""
+
+
+def _failure_line(code: int, stdout: str, stderr: str) -> str:
+    msg = ""
+    try:
+        obj = json.loads(stdout)
+        if isinstance(obj, dict) and obj.get("result"):
+            msg = str(obj["result"])
+    except (json.JSONDecodeError, ValueError):
+        pass
+    if not msg:
+        lines = [ln.strip() for ln in (stderr or stdout or "").splitlines() if ln.strip()]
+        msg = lines[-1] if lines else "no output"
+    if "not logged in" in msg.lower() or "/login" in msg:
+        return "not logged in to claude, run claude /login"
+    return f"claude exited {code}: {' '.join(msg.split())[:200]}"
+
+
 def call_claude(prompt: str):
     fake = os.environ.get("EVALKIT_JUDGE_FAKE")
     if fake:
         return f"fake critique\nVERDICT: {fake}", None
-    cmd = [os.environ.get("EVALKIT_CLAUDE_BIN", "claude"), "-p", prompt, "--output-format", "json"]
+    binary = os.environ.get("EVALKIT_CLAUDE_BIN", "claude")
+    cmd = [binary, "-p", prompt, "--output-format", "json"]
     if os.environ.get("EVALKIT_JUDGE_MODEL"):
         cmd += ["--model", os.environ["EVALKIT_JUDGE_MODEL"]]
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=170)
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=170)
+    except FileNotFoundError:
+        raise JudgeCallError(f"claude binary not found: {binary} (install Claude Code or set EVALKIT_CLAUDE_BIN)")
+    except subprocess.TimeoutExpired:
+        raise JudgeCallError("claude did not answer within 170s")
     if p.returncode != 0:
-        raise RuntimeError(f"claude exited {p.returncode}: {(p.stderr or p.stdout)[-300:]}")
+        raise JudgeCallError(_failure_line(p.returncode, p.stdout, p.stderr))
     try:
         obj = json.loads(p.stdout)
     except json.JSONDecodeError:
@@ -97,7 +126,11 @@ def call_claude(prompt: str):
 
 def main() -> int:
     req = json.load(sys.stdin)
-    text, cost = call_claude(build_prompt(req))
+    try:
+        text, cost = call_claude(build_prompt(req))
+    except JudgeCallError as e:
+        print(json.dumps({"pass": None, "error": str(e)}))
+        return 0
     verdict, critique = parse_verdict(text)
     out = {"pass": verdict, "reason": critique}
     if cost is not None:

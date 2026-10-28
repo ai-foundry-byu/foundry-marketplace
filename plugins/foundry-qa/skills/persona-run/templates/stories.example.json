@@ -12,7 +12,7 @@
       "status": "BUILT",
       "waits_on": [],
       "covers": ["R-01"],
-      "notes": "No qa block: the run opens surfaces[0], screenshots it, and the persona-tester judges the acceptance criteria.",
+      "notes": "No steps or assertions: the run opens every path in surfaces, screenshots each, and the persona-tester judges the acceptance criteria.",
       "evidence": []
     },
     {
@@ -72,6 +72,19 @@
       "covers": ["R-04"],
       "notes": "NOT_BUILT: skipped until it is built, unless named with --story.",
       "evidence": []
+    },
+    {
+      "id": "US-05",
+      "title": "A member can open a group's page",
+      "acceptance": ["The group page shows its name and members"],
+      "surfaces": ["/groups", "/groups/:id"],
+      "devices": ["phone-390x844", "desktop-1440x900"],
+      "status": "BUILT",
+      "waits_on": [],
+      "covers": ["R-05"],
+      "notes": "/groups/:id is a route pattern: qa.params fills it with a real id, so both surfaces open. Without it the row is inconclusive (needs a concrete URL).",
+      "evidence": [],
+      "qa": {"params": {"id": 1}}
     }
   ]
 }

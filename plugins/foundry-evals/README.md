@@ -30,20 +30,25 @@ claude plugin install foundry-evals@ai-foundry
 
 | item | type | what it does | SDLC stage | maturity |
 |---|---|---|---|---|
-| `new-eval` | skill | scaffold a suite: cases, target runner, code graders first, a binary judge only where code cannot grade, do-nothing and pushover controls, a threshold | test design | method proven; tooling new |
-| `run-eval` | skill | run, read the report in the right order, compare with the last run, report only measured numbers | test / verify | method proven; tooling new |
-| `hillclimb` | skill | one change per round, keep only changes above the noise band, train/val/test discipline, cost staircase | improve / optimize | method proven; tooling new |
-| `eval-auditor` | agent | audits a suite for ambiguous cases, cheatable or over-strict graders, missing hold cases, bad judge rubrics, saturated or noisy runs | review | new |
-| `skills/new-eval/scripts/evalkit.py` (also `bin/evalkit`) | script | the runner: init, run, check, compare, history; vendored into `run-eval` and `hillclimb` | test / CI gate | new (standalone port) |
-| `skills/new-eval/scripts/judge_claude.py` | script | binary LLM judge through `claude -p`: critique, then a single VERDICT line | test | new |
-| `skills/new-eval/templates/example-suite` | template | `refund-triage`, a 9-case suite with an offline target, a model target, controls and a deliberate bug to find | learning | new |
+| `new-eval` | skill | scaffold a suite: cases, target runner, code graders first, a binary judge only where code cannot grade, do-nothing and pushover controls, a threshold | test design | beta (method from production; tooling fixes unit-tested) |
+| `run-eval` | skill | run, read the report in the right order, compare with the last run, report only measured numbers | test / verify | verified |
+| `hillclimb` | skill | one change per round, keep only changes above the noise band (or, on a deterministic target, that fix cases and break none), train/val/test discipline, cost staircase | improve / optimize | verified |
+| `eval-auditor` | agent | audits a suite for ambiguous cases, cheatable or over-strict graders, missing hold cases, bad judge rubrics, saturated or noisy runs | review | verified |
+| `skills/new-eval/scripts/evalkit.py` (also `bin/evalkit`) | script | the runner: init, run, check, compare, history; vendored into `run-eval` and `hillclimb` | test / CI gate | verified |
+| `skills/new-eval/scripts/judge_claude.py` | script | binary LLM judge through `claude -p`: critique, then a single VERDICT line | test | beta |
+| `skills/new-eval/templates/example-suite` | template | `refund-triage`, a 9-case suite with an offline target, a model target, controls and a deliberate bug to find | learning | beta |
 
-**Maturity, honestly.** "Proven" here means the METHOD (code graders first, binary judges,
-negative controls, errors never scored as zeros, pass^k, same cases or no comparison, one
-change per climb round, train/val/test splits) is how the AI Foundry team's own eval
-framework works in production today. `evalkit.py`, the judge script, the agent and the
-templates are NEW: a standalone port written for this marketplace, covered by unit tests but
-not yet battle-tested by other teams. Report bugs as issues.
+**Maturity, honestly.** The labels come from our test runs on 2026-10-28, recorded in
+[`evidence/evidence.json`](../../evidence/evidence.json). `run-eval`, `hillclimb` and
+`eval-auditor` are **verified**: their main path passed live Claude Code sessions. `new-eval`
+is **beta**: its scaffold ran live, but the rules added since (cases that isolate each
+mechanism, the `deterministic` declaration, refusing a bare `run.py` target) are only
+unit-tested or instruction text. A script or template carries the label of the skill that
+ships it. The METHOD (code graders first, binary judges, negative controls, errors never
+scored as zeros, pass^k, same cases or no comparison, one change per climb round,
+train/val/test splits) is how the AI Foundry team's own eval framework works in production
+today; `evalkit.py`, the judge script, the agent and the templates are a standalone port
+written for this marketplace. Report bugs as issues.
 
 ## Quickstart (2 minutes, no API key)
 
@@ -101,7 +106,7 @@ edit files and does not run paid model calls unless you ask.
 
 ```bash
 evalkit init <dir>                       # copy the example suite (plus judge.py)
-evalkit check <suite> [--no-judge]       # oracles pass, empty output fails, controls score low
+evalkit check <suite> [--no-judge]       # oracles pass, empty output fails, target runs once, controls score low
 evalkit run <suite> [--reps N] [--split train|val|test|all] [--cases a,b] [--tag t]
                     [--label L] [--no-judge] [--target CMD] [--out DIR]
                     [--gate | --fail-under X] [--fail-metric score|pass_hat_k]
@@ -130,7 +135,22 @@ last one. `run` prints the absolute report path; `history` prints the folder fir
 version left runs in `./.evals`, evalkit prints a `note:` pointing at them.
 
 `suite.json` `target` (and `judge`) is an object `{"command": ..., "timeout_s": n}`, or a bare
-command string or list as shorthand (`"target": "python3 run.py"`).
+command string or list as shorthand (`"target": "python3 run.py"`). A bare script name such as
+`"run.py"` is a config error that names the fix (`"python3 run.py"`), and `check` runs the target
+once on the first case, so a target that cannot start fails `check` with `PROBLEM target`.
+
+Comparison rule. By default a delta counts only if it is bigger than the noise band (the wider
+bootstrap 95% half-width, or the rep-to-rep spread). When both runs are deterministic, there is
+no sampling noise, so evalkit diffs cases exactly instead: newly passing and none newly failing
+reads `improved (deterministic, paired ...)`, any newly failing case reads `regressed (...)`, and
+neither reads `no change (...)`. A run counts as deterministic when `suite.json` has
+`"deterministic": true`, or when it used 2+ reps and every case gave the same output on every rep.
+A declared suite whose reps disagree falls back to the noise band with a note. The comparison's
+`paired` block records which basis applied.
+
+Judge failures: when the `claude -p` call fails, `judge_claude.py` prints
+`{"pass": null, "error": "<one line>"}` and the trial is an error reading, for example,
+`judge failed: not logged in to claude, run claude /login`.
 
 Exit codes: 0 ok, 2 config error, 3 no scorable trial, 4 below gate, 5 check failed.
 
@@ -154,11 +174,14 @@ cd plugins/foundry-evals
 python3 -m unittest discover -s tests -v
 ```
 
-32 offline tests: every grader, pass@k and pass^k math, error handling (crash, junk stdout,
+45 offline tests: every grader, pass@k and pass^k math, error handling (crash, junk stdout,
 timeout), judge wiring and cost sums, the example suite end to end (baseline fails the gate,
 the one-line fix passes, comparison names the two fixed cases), case-set change detection,
 control and empty-output self-tests, CLI exit codes, one results history when the suite is
-run from two different directories (and `--out` still overriding it), a string `target`, vendored copies byte-identical to
+run from two different directories (and `--out` still overriding it), a string `target`, a bare script target refused with the fix, `check` catching a target
+that cannot start, the deterministic paired comparison (a 4-of-42 fix reads improved, a broken
+case reads regressed, flipping reps fall back to the noise band), one-line judge failures
+(not logged in, missing binary, other errors), vendored copies byte-identical to
 canonical, and a clear error when `init` runs without the example suite.
 
 ## Known limitations
@@ -173,7 +196,10 @@ canonical, and a clear error when `init` runs without the example suite.
   [agent-evals-starter](https://github.com/jddavenportOpen/agent-evals-starter) (MIT), which
   this plugin's control and grader ideas are adapted from.
 - Bootstrap intervals over a few dozen cases are wide and somewhat optimistic (reps of one
-  case are not independent). Treat small deltas as noise.
+  case are not independent). Treat small deltas as noise, unless the target is deterministic
+  (see the comparison rule above).
+- The deterministic rule only says the edit fixed those cases on this suite. It says nothing
+  about inputs the suite lacks: confirm on a held-out split.
 
 ## License
 

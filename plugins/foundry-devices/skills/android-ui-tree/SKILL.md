@@ -5,7 +5,7 @@ description: Read an Android screen's UI tree from a uiautomator dump instead of
 
 # Android UI tree
 
-Maturity: **new** (unit-tested, including on a real API 34 Settings dump; outline, find and tap were run against an API 34 emulator in CI). Python 3 standard library only.
+Maturity: **beta** (unit-tested, including on a real API 34 Settings dump; outline, find and tap were run against an API 34 emulator in CI). Python 3 standard library only.
 
 Get a dump from the device, then read it:
 

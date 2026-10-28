@@ -39,6 +39,11 @@ Do this, in order:
    (refuse, ask, escalate). Flag duplicate behaviors and behaviors with only one case. If the
    target's code or prompt is readable, list the input kinds it is likely to mishandle and flag
    each one that has no case, and flag a suite whose tags do not name those slices.
+   **For each mechanism you found in the target's code** (a tokenizer that drops characters, an
+   ignored word class, a missing branch), check that at least one case's label is decided by that
+   mechanism alone, with no other keyword giving the answer. Flag a slice whose cases all pass
+   for an unrelated reason (for example `emoji` cases that also contain "good"), and propose the
+   isolating case (an emoji-only message).
 4. Check each judge grader: one criterion, binary, PASS and FAIL both defined, scope stated. Flag
    any 1 to 10 scale, any rubric joining two criteria with "and", and any judge with no evidence
    of a hand-labeled agreement check.
@@ -48,6 +53,8 @@ Do this, in order:
    - score at or above 95%: saturated, it cannot see an improvement; suggest harder cases.
    - cases at 0% on every rep: read the output and decide "agent wrong" or "case wrong".
    - flipping cases and a large `stdev_across_reps`: noisy; suggest more reps.
+   - plain-code target with no `"deterministic": true` and 1 rep: comparisons use a wide noise
+     band and can hide real fixes; suggest declaring it.
    - errors above 5% of trials: the score is not trustworthy until they are fixed.
    - judge skipped: the score is an upper bound.
 

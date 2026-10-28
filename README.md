@@ -1,9 +1,6 @@
 # AI Foundry Marketplace
 
-A shared toolbox for building your own Claude Code harness. It holds a framework (the [Foundry SDLC](SDLC.md)) and the skills, agents and hooks that run it. Each item has an honest maturity label:
-
-- **proven**: generalized from a tool that runs in production in our harness today.
-- **new**: written for this marketplace from docs and best practice. It has tests, but it has not been battle-tested on real projects yet.
+A shared toolbox for building your own Claude Code harness. It holds a framework (the [Foundry SDLC](SDLC.md)) and the skills, agents and hooks that run it. Each item has a label that says how much we tested it: **verified**, **beta** or **new** (see [What the labels mean](#what-the-labels-mean)), and the [known limits](#known-limits) are listed below.
 
 Install the plugins you need into your own Claude Code, or point your agent at this repo and let it read the skills and decide. Everything here is MIT licensed, so copy and adapt freely.
 
@@ -82,6 +79,34 @@ claude plugin install foundry-sdlc@ai-foundry --scope project
 
 Also paste [the CLAUDE.md snippet](plugins/foundry-sdlc/skills/new-project/references/CLAUDE-md-snippet.md) into your project's `CLAUDE.md`. Plugins load skills on demand; the always-on norms (root cause first, never say done without a passing gate, review by blast radius) have to live in CLAUDE.md.
 
+## What the labels mean
+
+Every item's label comes from our own test runs on 2026-10-28, recorded in [`evidence/evidence.json`](evidence/evidence.json). Each item's page on the [site](https://ai-foundry-byu.github.io/foundry-marketplace/) shows the label and, under **What we tested**, what we ran and the gaps we found. The Maturity column in every table in this repo uses the same three words.
+
+| Label | What it means for you |
+|---|---|
+| **verified** | Its main path passed a live end-to-end run in a real Claude Code session, and no known major defect is left on that path. Use it, and still read the gaps on its page. |
+| **beta** | It works in the runs we did, with known gaps that its page names, or its latest fixes are only unit-tested. Read What we tested before you rely on it. |
+| **new** | Little or no live testing yet. Try it on something low stakes first. |
+
+A fix counts toward **verified** only after it is re-run live; a unit test alone does not move an item up. In a table, a script or template carries the label of the skill that ships it. Labels change only when new evidence comes in. If an item breaks for you, [open an issue](https://github.com/ai-foundry-byu/foundry-marketplace/issues/new) with the item name and what you ran.
+
+## Known limits
+
+- **On smaller models, call a skill by name.** Triggering is tuned for Sonnet and Opus (about 93% of plain requests load the right item). On Haiku about a quarter do not, so name it: `/foundry-sdlc:ship`, `/foundry-qa:done-gate`.
+- **Guardrails are a seatbelt, not a vault.** The hooks recognize secrets and risky commands by file names and command shapes. Simple tricks (a variable, a loop, `find -exec`, copying the file first) are caught, but an unusual command such as an archive round trip (`gzip -c .env | zcat`, or `zcat env.gz` on a compressed copy) still gets past them. To list variable names, put `cut` first (`env | cut -d= -f1 | grep AWS`): `env | grep AWS | cut -d= -f1` is denied even though it prints only names. A key pasted into ordinary source code is not hidden when the agent reads that file; the commit guard still blocks committing it. The output of a `!` command goes into the conversation.
+- **Parallel lanes are protected only as subagents with worktree isolation.** While lanes are active, worktree-guard denies a subagent's edits to the main checkout. It does not stop shell writes, or one lane editing another lane's worktree.
+- **Projects scaffolded before this release** keep an old `tools/gen_stories.py` that lets untracked code go LIVE, and their open tasks use the old status words, so the stage readout stays at 4 after a ship. new-project, write-prd and ship now refresh the old copy, and ship marks leftover tasks `FOLLOW-UP (blocks US-xx)`, but both steps are unit-tested only. If the readout still says 4, run `gen_stories.py --refresh-tools .` and `sdlc_stage.py . --mark-follow-ups` from the foundry-sdlc scripts.
+- **Signed-in QA needs a test-only sign-in route,** for example `/test-login` behind an environment flag that is off in production. Describe it in your README so the QA agents can find it.
+- **For a story on a detail page, add `qa.start` with a real path** (for example `/groups/1`). A pattern like `/groups/:id` is reported INCONCLUSIVE, not tested.
+- **web-qa returns `.qa/findings.md` as text.** Current Claude Code refuses a subagent's Write of a report file, so web-qa ends with the file's content in one block for the main session to save. In our test the main session printed the list instead of saving it, so ask it to save the block if you want the file.
+- **The full stage 6 check is heavy.** Each verifier and persona runs its own Chromium. On a laptop run a few at a time against one server, and stop servers by their PID, never with `pkill -f`.
+- **Evals:** a suite's score is not held-out accuracy unless you keep a test split and score it separately. For a target that gives the same output every time, add `"deterministic": true` to `suite.json` (or run 2 or more reps), or hillclimb reads a real fix as "within noise".
+- **Devices:** the Android, iOS Simulator, macOS and Windows commands pass on CI runners but have not run on a student's own app yet. macOS automation needs the Accessibility permission for your terminal. iPhone Mirroring has never driven a real phone, so treat it as experimental. device-matrix has never run end to end.
+- **Generated code needs a real run.** add-auth, scheduled-agents and tmux-agents produce code or config that is unit-tested but has not been run end to end. Build and run it yourself before you trust it.
+- **A copied skill brings only agents from its own plugin.** The site's "Just this skill" script also installs the agents of the same plugin that the skill hands work to. An agent from another plugin, such as foundry-qa's `persona-tester`, needs that plugin installed.
+- **recruit** lives in its own repository and installs from there. Read its README.
+
 ## Plugin or single item?
 
 Every skill and most agents work two ways. Pick per item.
@@ -97,13 +122,17 @@ Every skill and most agents work two ways. Pick per item.
 - An **agent** that runs scripts says `Requires skill: <name>` under its title. Install that skill too; the agent finds it in either skills folder. The site's "Just this agent" tab gives one script that installs both.
 - A few items say `Install: plugin only.` with the reason (they need the plugin's hooks, MCP server or a compiled helper). **Hooks** always need the plugin, because `hooks.json` and the scripts it runs install together.
 
+- A **skill** that hands work to an agent says `Uses agent: <name>` under its title. The "Just this skill" script installs that agent too, plus any skill the agent needs.
+
 Each plugin README lists which of its items are standalone, which need a skill, and which are plugin only. The [site](https://ai-foundry-byu.github.io/foundry-marketplace/) shows the install for each item.
 
 ## Let your agent do it
 
-Paste this into Claude Code from your project root:
+Paste this into Claude Code from your project root. It reads the slim catalog index (no item bodies, so it fits in one tool call when parsed) instead of the full `catalog.json`:
 
-> Read the catalog at https://github.com/ai-foundry-byu/foundry-marketplace (README.md, SDLC.md and .claude-plugin/marketplace.json). Look at this project: its stack, whether it is web or native, whether it has a PRD, tests, CI or a deploy, and whether it has an LLM feature. Recommend the smallest set of plugins from that marketplace that fits, with one line each on why and its maturity label. Do not recommend a "new" item as if it were proven. Then give me the exact /plugin commands to add the marketplace and install them, and the lines to add to .claude/settings.json for my team. Do not install anything or edit any file until I say yes.
+> Read the catalog index at https://ai-foundry-byu.github.io/foundry-marketplace/catalog-index.json. It is about 90 KB of JSON, so parse it with python3 instead of printing it whole. Look at this project: its stack, whether it is web or native, whether it has a PRD, tests, CI or a deploy, and whether it has an LLM feature. Recommend the smallest set of whole plugins that fits, with one line each on why and the labels (verified, beta or new) of the items you will rely on. Do not present a beta or new item as verified. Then give me the exact commands: `claude plugin marketplace add ai-foundry-byu/foundry-marketplace --scope project` and `claude plugin install <plugin>@ai-foundry --scope project` for each plugin, and the lines to add to .claude/settings.json for my team. Do not install anything or edit any file until I say yes.
+
+The [site](https://ai-foundry-byu.github.io/foundry-marketplace/) has a second prompt that picks by SDLC stage and installs right away.
 
 ## Catalog
 
@@ -113,151 +142,151 @@ Every item in every plugin. Stage numbers follow [SDLC.md](SDLC.md): 0 scaffold,
 
 | Item | Type | What it does | Stage | Maturity |
 |---|---|---|---|---|
-| sdlc | skill | Router: the 8-stage map, the exit gate per stage, and current-stage detection | all | proven |
-| new-project | skill | Scaffolds the artifact set from templates into your project | 0 | proven |
-| gather-requirements | skill | Verbatim asks with R-ids and sources, a decisions log, and an "Already exists" audit | 1 | proven |
-| write-prd | skill | PRD with inline user stories and observable criteria, compiled to stories.json, critiqued, then a dated "PRD approved" D-row in the human's words before stage 3 | 2 | proven |
-| write-workplan | skill | Task table with owner, model, effort and review tier by blast radius, plus milestones | 3 | proven |
-| parallel-lanes | skill | One git worktree and one agent per task, lane brief, merge-back | 4 | proven |
-| ship | skill | The ship ritual on a commit: done gate, persona testers, one verifier per story, then LIVE (only through the guarded `--set`) and changelog. No hosting needed: the committed HEAD run locally is the build under test | 6, 7 | proven (ritual), new (local path and LIVE guard) |
-| bug-to-story | skill | Every bug becomes a story plus a regression test that fails before the fix | 8 | proven |
-| prd-critic | agent | Adversarial read-only PRD reviewer in a fresh context | 2 | proven (pattern) |
-| story-verifier | agent | Verifies one story on the deployed build from criteria and evidence only | 6 | proven (pattern) |
-| SessionStart stage hint | hook | Prints the current stage and failing check when the project has a PRD.md or REQUIREMENTS.md | all | new |
-| gen_stories.py | script | Compiles PRD stories into stories.json; `--check` fails if stale or malformed; `--set ID=LIVE` refuses a dirty tree, a missing or failing done-gate report for HEAD, or no evidence | 2, 7 | proven (generalized port) |
-| new_project.py | script | Scaffolds the artifact set (name from the folder unless `--name`) and a fresh stories.json, plus `tools/gen_stories.py` and the CI check at the git root; never overwrites without `--force` | 0 | new |
-| sdlc_stage.py | script | Deterministic stage detector from files on disk: R-id coverage and the PRD approval row at stage 2, task evidence at 4, `.qa/done-gate/last.json` for HEAD and a verifier report per story at 6, `commit:` evidence on LIVE stories at 7 | all | new |
-| REQUIREMENTS.md | template | Verbatim asks table, Already exists audit, open questions | 1 | proven |
-| DECISIONS.md | template | Verbatim human decisions and what each authorizes | 1-3 | proven |
-| PRD.md | template | PRD with stories, rollout gates, Addressed critiques appendix | 2 | proven |
-| WORKPLAN.md | template | Status, review tiers, milestones, task table, Blocked on human | 3 | proven |
-| stories.schema.json | template | JSON Schema for stories.json | 2 | proven |
-| done-journey.yaml | template | The journey the done gate runs | 6 | proven (format) |
-| CHANGELOG.md | template | Dated entries with story ids and evidence | 7 | proven |
-| README.md | template | Project README that indexes the artifact set | 0 | new |
-| CLAUDE-md-snippet.md | template | Always-on norms to paste into your CLAUDE.md | all | proven |
+| sdlc | skill | Router: the 8-stage map, the exit gate per stage, and current-stage detection | all | verified |
+| new-project | skill | Scaffolds the artifact set from templates into your project | 0 | verified |
+| gather-requirements | skill | Verbatim asks with R-ids and sources, a decisions log, and an "Already exists" audit | 1 | verified |
+| write-prd | skill | PRD with inline user stories and observable criteria, compiled to stories.json, critiqued, then a dated "PRD approved" D-row in the human's words before stage 3 | 2 | verified |
+| write-workplan | skill | Task table with owner, model, effort and review tier by blast radius, plus milestones | 3 | verified |
+| parallel-lanes | skill | One git worktree and one agent per task, lane brief, merge-back | 4 | verified |
+| ship | skill | The ship ritual on a commit: done gate, persona testers, one verifier per story, then LIVE (only through the guarded `--set`) and changelog. No hosting needed: the committed HEAD run locally is the build under test | 6, 7 | beta |
+| bug-to-story | skill | Every bug becomes a story plus a regression test that fails before the fix | 8 | verified |
+| prd-critic | agent | Adversarial read-only PRD reviewer in a fresh context | 2 | verified |
+| story-verifier | agent | Verifies one story on the deployed build from criteria and evidence only | 6 | verified |
+| SessionStart stage hint | hook | Prints the current stage and failing check when the project has a PRD.md or REQUIREMENTS.md | all | verified |
+| gen_stories.py | script | Compiles PRD stories into stories.json; `--check` fails if stale or malformed; `--set ID=LIVE` refuses a dirty tree, a missing or failing done-gate report for HEAD, or no evidence | 2, 7 | verified |
+| new_project.py | script | Scaffolds the artifact set (name from the folder unless `--name`) and a fresh stories.json, plus `tools/gen_stories.py` and the CI check at the git root; never overwrites without `--force` | 0 | verified |
+| sdlc_stage.py | script | Deterministic stage detector from files on disk: R-id coverage and the PRD approval row at stage 2, task evidence at 4, `.qa/done-gate/last.json` for HEAD and a verifier report per story at 6, `commit:` evidence on LIVE stories at 7 | all | verified |
+| REQUIREMENTS.md | template | Verbatim asks table, Already exists audit, open questions | 1 | verified |
+| DECISIONS.md | template | Verbatim human decisions and what each authorizes | 1-3 | verified |
+| PRD.md | template | PRD with stories, rollout gates, Addressed critiques appendix | 2 | verified |
+| WORKPLAN.md | template | Status, review tiers, milestones, task table, Blocked on human | 3 | verified |
+| stories.schema.json | template | JSON Schema for stories.json | 2 | verified |
+| done-journey.yaml | template | The journey the done gate runs | 6 | verified |
+| CHANGELOG.md | template | Dated entries with story ids and evidence | 7 | verified |
+| README.md | template | Project README that indexes the artifact set | 0 | verified |
+| CLAUDE-md-snippet.md | template | Always-on norms to paste into your CLAUDE.md | all | verified |
 
 ### foundry-guardrails (hooks)
 
 | Item | Type | What it does | Stage | Maturity |
 |---|---|---|---|---|
-| destructive-guard | hook | Blocks rm -rf of root or home, force-push to main, reset --hard on a dirty tree, DROP/TRUNCATE, curl pipe sh, and similar | 4, 7 | new |
-| secret-guard | hook | Keeps secrets out of the transcript: denies reading .env, keys, token printers and env dumps | 4 | proven |
-| verify-before-done | hook | Blocks stopping after code edits with no test run, and blocks push or deploy without verification | 5, 7 | proven |
-| worktree-guard | hook | Inside a linked worktree, denies edits that land in the main checkout | 4 | proven |
-| stale-write-guard | hook | Denies a whole-file Write over uncommitted changes this session did not make (`FOUNDRY_STALE_WRITE_ENFORCE=0` only warns) | 4 | new |
-| ship-stop | hook | Keeps the agent working until the named WORKPLAN milestone is checked | 3, 4 | proven |
-| _common.py | script | Shared hook library: command normalizer, fail-open runner, deny log | all | new |
-| guardrails-help | skill | How to respond when a hook blocks you, and every config switch | all | new |
-| WORKPLAN milestone format | template | The `- [ ] M3.2 title` checkbox format ship-stop enforces | 3 | new |
+| destructive-guard | hook | Blocks rm -rf of root or home, force-push to main, reset --hard on a dirty tree, DROP/TRUNCATE, curl pipe sh, and similar | 4, 7 | verified |
+| secret-guard | hook | Keeps secrets out of the transcript: denies reading .env, keys, token printers and env dumps | 4 | beta |
+| verify-before-done | hook | Blocks stopping after code edits with no test run, and blocks push or deploy without verification | 5, 7 | verified |
+| worktree-guard | hook | Inside a linked worktree, or for a subagent while parallel lanes are active, denies edits that land in the main checkout | 4 | verified |
+| stale-write-guard | hook | Denies a whole-file Write over uncommitted changes this session did not make (`FOUNDRY_STALE_WRITE_ENFORCE=0` only warns) | 4 | verified |
+| ship-stop | hook | Keeps the agent working until the named WORKPLAN milestone is checked | 3, 4 | verified |
+| _common.py | script | Shared hook library: command normalizer, fail-open runner, deny log | all | verified |
+| guardrails-help | skill | How to respond when a hook blocks you, and every config switch | all | verified |
+| WORKPLAN milestone format | template | The `- [ ] M3.2 title` checkbox format ship-stop enforces | 3 | verified |
 
 ### foundry-qa (web QA)
 
 | Item | Type | What it does | Stage | Maturity |
 |---|---|---|---|---|
-| done-gate | skill | Deployed-SHA check (when hosted) plus a Playwright journey on 3 devices, locally or on a deploy; signed-in apps via an `auth` block; writes `.qa/done-gate/last.json` for the SDLC gates; only exit 0 is done | 6, 7 | proven |
-| regression-check | skill | Stack-neutral blast-radius method: list changes, grep consumers, test the at-risk ones | 5 | proven |
-| a11y-check | skill | axe-core on device profiles plus a manual WCAG 2.2 AA floor checklist | 6 | proven |
-| visual-baseline | skill | Screenshot baselines with pixel diff and a deliberate approve step | 6 | proven |
-| web-qa | agent | Drives the app: journeys, axe, baselines, console and network errors; files findings | 6 | proven |
-| persona-tester | agent | Tests every story as a persona across devices, read-only by default | 6 | proven |
-| explorer | agent | Curious-human tester: read-only crawl plus a manual probe list | 6 | proven (pattern) |
-| done_gate.py | script | The done gate runner with an exit-code contract and evidence in .qa/ | 6, 7 | proven |
-| persona_run.py | script | Persona story runner over the project's one stories.json (unknown keys are warnings), with patience, overflow and tap-target checks | 6 | proven |
-| a11y_check.py | script | axe-core runner with an impact floor | 6 | proven |
-| visual_baseline.py | script | capture, compare, check, approve with a stdlib PNG diff | 6 | proven |
-| explore.py | script | Read-only same-origin crawler | 6 | proven (pattern) |
-| qa_yaml.py | script | Dependency-free YAML subset parser | support | new |
-| qa_session.py | script | Signed-in sessions for every QA script (storage state, headers, login steps), a `login` helper that saves a storage state, and the settle wait | support | new |
-| done-journey.yaml | template | Annotated journey covering every step and assertion kind | 6 | new |
-| stories.example.json | template | Example stories mixing mechanical and human criteria | 2, 6 | new |
-| personas/ | template | Persona template plus two example personas | 6 | new |
+| done-gate | skill | Deployed-SHA check (when hosted) plus a Playwright journey on 3 devices, locally or on a deploy; signed-in apps via an `auth` block; writes `.qa/done-gate/last.json` for the SDLC gates; only exit 0 is done | 6, 7 | verified |
+| regression-check | skill | Stack-neutral blast-radius method: list changes, grep consumers, test the at-risk ones | 5 | verified |
+| a11y-check | skill | axe-core on device profiles plus a manual WCAG 2.2 AA floor checklist | 6 | verified |
+| visual-baseline | skill | Screenshot baselines with pixel diff and a deliberate approve step | 6 | beta |
+| web-qa | agent | Drives the app: journeys, axe, baselines, console and network errors; files findings | 6 | verified |
+| persona-tester | agent | Tests every story as a persona across devices, read-only by default | 6 | beta |
+| explorer | agent | Curious-human tester: read-only crawl plus a manual probe list | 6 | beta |
+| done_gate.py | script | The done gate runner with an exit-code contract and evidence in .qa/ | 6, 7 | verified |
+| persona_run.py | script | Persona story runner over the project's one stories.json (unknown keys are warnings), with patience, overflow and tap-target checks | 6 | verified |
+| a11y_check.py | script | axe-core runner with an impact floor | 6 | verified |
+| visual_baseline.py | script | capture, compare, check, approve with a stdlib PNG diff | 6 | beta |
+| explore.py | script | Read-only same-origin crawler | 6 | verified |
+| qa_yaml.py | script | Dependency-free YAML subset parser | support | verified |
+| qa_session.py | script | Signed-in sessions for every QA script (storage state, headers, login steps), a `login` helper that saves a storage state, and the settle wait | support | verified |
+| done-journey.yaml | template | Annotated journey covering every step and assertion kind | 6 | verified |
+| stories.example.json | template | Example stories mixing mechanical and human criteria | 2, 6 | verified |
+| personas/ | template | Persona template plus two example personas | 6 | verified |
 
-The foundry-qa scripts are clean-room rewrites of production tools: the method and contracts are proven, the code is tested against a fixture site.
+The foundry-qa scripts are clean-room rewrites of production tools: the method and contracts come from those tools, and the code is tested against fixture sites and in the live runs behind each label.
 
 ### foundry-design (design gates)
 
 | Item | Type | What it does | Stage | Maturity |
 |---|---|---|---|---|
-| design-critique | skill | Subtract-only design critic: 8-question constitution, findings schema with no "add" verb, a four-tier resolver | 4, 6 | proven |
-| ui-ux-spec | skill | Turns a story into a buildable UI spec: breakpoints, state matrix, keyboard and touch, copy, checkable acceptance | 2-4 | proven |
-| design-system | skill | Inventories raw values, collapses them to tokens, measures contrast, fills a template | 2 | new |
-| ui-reviewer | agent | Read-only review from screenshots and code with a 10-dimension rubric and token-level must-fixes | 6, 7 | proven |
-| design_gate.py | script | Deterministic gate: clicks to goal, dead controls, tap targets, contrast, labels, regressions vs a baseline | 6 | new |
-| validate_findings.py | script | Validates critique findings files against the schema and rules | 6 | new |
-| design-gate.config.json | template | Example gate config | setup | new |
-| findings.example.json | template | Example critique run | 6 | new |
-| decision.yaml | template | Design decision log entry | 6, 8 | new |
+| design-critique | skill | Subtract-only design critic: 8-question constitution, findings schema with no "add" verb, a four-tier resolver | 4, 6 | verified |
+| ui-ux-spec | skill | Turns a story into a buildable UI spec: breakpoints, state matrix, keyboard and touch, copy, checkable acceptance | 2-4 | verified |
+| design-system | skill | Inventories raw values, collapses them to tokens, measures contrast, fills a template | 2 | beta |
+| ui-reviewer | agent | Read-only review from screenshots and code with a 10-dimension rubric and token-level must-fixes | 6, 7 | beta |
+| design_gate.py | script | Deterministic gate: clicks to goal, dead controls, tap targets, contrast, labels, regressions vs a baseline | 6 | verified |
+| validate_findings.py | script | Validates critique findings files against the schema and rules | 6 | verified |
+| design-gate.config.json | template | Example gate config | setup | verified |
+| findings.example.json | template | Example critique run | 6 | verified |
+| decision.yaml | template | Design decision log entry | 6, 8 | verified |
 
 ### foundry-devices (native and desktop QA)
 
 | Item | Type | What it does | Stage | Maturity |
 |---|---|---|---|---|
-| ios-qa | agent | iOS Simulator QA with simctl and Maestro, crash and log capture | 6 | new |
-| android-qa | agent | Android QA with emulator, adb, uiautomator and Maestro | 6 | new |
-| windows-qa | agent | Windows desktop QA with pywinauto (UIA) and PowerShell | 6 | new |
-| macos-qa | agent | macOS desktop QA via the accessibility tree, plus Playwright for Electron | 6 | new |
+| ios-qa | agent | iOS Simulator QA with simctl and Maestro, crash and log capture | 6 | beta |
+| android-qa | agent | Android QA with emulator, adb, uiautomator and Maestro | 6 | beta |
+| windows-qa | agent | Windows desktop QA with pywinauto (UIA) and PowerShell | 6 | beta |
+| macos-qa | agent | macOS desktop QA via the accessibility tree, plus Playwright for Electron | 6 | beta |
 | device-matrix | skill | Maps stories' devices to lanes, runs them in parallel, merges one verdict | 6 | new |
-| doctor.py | script | Per-platform preflight: are the tools present and answering | setup | new |
-| uitree.py | script | Reads an Android uiautomator dump; prints a tap only for a unique match | 6 | new |
-| ax_tree.py | script | macOS accessibility helper: dump, find, press, window bounds | 6 | new |
+| doctor.py | script | Per-platform preflight: are the tools present and answering | setup | verified |
+| uitree.py | script | Reads an Android uiautomator dump; prints a tap only for a unique match | 6 | beta |
+| ax_tree.py | script | macOS accessibility helper: dump, find, press, window bounds | 6 | beta |
 | device_matrix.py | script | plan, init and report for the device matrix | 6 | new |
-| maestro flows | template | Android and iOS sign-in flows | 6 | new |
+| maestro flows | template | Android and iOS sign-in flows | 6 | beta |
 | stories / results / matrix examples | template | stories.example.json, results.example.json, matrix.template.md | 6 | new |
 
 ### foundry-iphone-mirror (real iPhone)
 
 | Item | Type | What it does | Stage | Maturity |
 |---|---|---|---|---|
-| iphone-mirror | skill | The screenshot, read, act, verify loop through macOS iPhone Mirroring | 6 | proven |
-| iphone-driver | agent | Takes a whole on-phone task, one verified action at a time | 6 | proven |
-| bin/iphone-mirror | script | CLI: doctor, build, shot, tap, swipe, type, key, home | 6 | proven |
-| engine/ | script | The signed helper app's worker and launcher | 6 | proven |
-| build-helper-app.sh | script | Builds, signs and registers the helper app | setup | proven |
+| iphone-mirror | skill | The screenshot, read, act, verify loop through macOS iPhone Mirroring | 6 | new |
+| iphone-driver | agent | Takes a whole on-phone task, one verified action at a time | 6 | new |
+| bin/iphone-mirror | script | CLI: doctor, build, shot, tap, swipe, type, key, home | 6 | new |
+| engine/ | script | The signed helper app's worker and launcher | 6 | new |
+| build-helper-app.sh | script | Builds, signs and registers the helper app | setup | new |
 | mcp/server.py | script | Stdlib MCP server with typed iphone_* tools | 6 | new |
 | tests/ | template | 42 tests that need no phone | 6 | new |
 
-The engine changes from the proven original are unit-tested but have not driven a real phone yet; see that plugin's README.
+The engine changes from the original production engine are unit-tested but have not driven a real phone yet; see that plugin's README.
 
 ### foundry-evals (agent and LLM features)
 
 | Item | Type | What it does | Stage | Maturity |
 |---|---|---|---|---|
-| new-eval | skill | Scaffold a suite: cases with oracles, code graders first, a binary judge, negative controls, a threshold | 5, 8 | method proven, tooling new |
-| run-eval | skill | Pilot, full run, read the report and the comparison, report only measured numbers | 5, 8 | method proven, tooling new |
-| hillclimb | skill | One change per round, keep or revert on val by the noise band, confirm on test | 8 | method proven, manual loop |
-| eval-auditor | agent | Read-only audit of a suite and its last run: cheatable graders, missing controls, noisy runs | 5 | new |
-| evalkit.py | script | Stdlib runner: init, run, check, compare, history, with CI gating | 5, 8 | new |
-| judge_claude.py | script | Binary LLM judge via `claude -p` | 5 | new |
-| test_evalkit.py | script | 32 offline tests | 5 | new |
-| example-suite | template | 9-case refund-triage suite with a deliberate bug to find | learning | new |
+| new-eval | skill | Scaffold a suite: cases with oracles, code graders first, a binary judge, negative controls, a threshold | 5, 8 | beta |
+| run-eval | skill | Pilot, full run, read the report and the comparison, report only measured numbers | 5, 8 | verified |
+| hillclimb | skill | One change per round, keep or revert on val by the noise band (on a deterministic target, by cases fixed and broken), confirm on test | 8 | verified |
+| eval-auditor | agent | Read-only audit of a suite and its last run: cheatable graders, missing controls, noisy runs | 5 | verified |
+| evalkit.py | script | Stdlib runner: init, run, check, compare, history, with CI gating | 5, 8 | verified |
+| judge_claude.py | script | Binary LLM judge via `claude -p` | 5 | beta |
+| test_evalkit.py | script | 45 offline tests | 5 | beta |
+| example-suite | template | 9-case refund-triage suite with a deliberate bug to find | learning | beta |
 
 ### foundry-builder-kit (day-one build skills)
 
 | Item | Type | What it does | Stage | Maturity |
 |---|---|---|---|---|
-| add-auth | skill | Pick an auth provider, implement sign-in, verify protected routes | 4 | proven |
-| scale-10k | skill | Launch-readiness audit for 10k+ users with a scorecard and ordered fixes | 7 | proven |
-| secrets-hygiene | skill | Prevent leaks, and the probe-first rotation flow when one happens | 4, ops | proven (rotation), new (templates) |
-| cheap-llm-routing | skill | Route schema-pinned extraction to free or cheap models with a privacy bar and a paid fallback | 4 | proven (pattern) |
-| scheduled-agents | skill | Headless `claude -p` jobs on cron, launchd, systemd, Task Scheduler or GitHub Actions, with a deadman | ops | proven (cron, launchd), new (Windows, Actions) |
-| tmux-agents | skill | Drive REPLs, dev servers and parallel agents through tmux | 4, 5 | proven (pattern) |
-| commit-secret-guard | hook | Blocks an agent-run git commit that contains a secret. Off switch: start Claude Code with `FOUNDRY_COMMIT_SECRET_GUARD=0` (the old name `FOUNDRY_SECRETS_GUARD` still works; not the guardrails `FOUNDRY_SECRET_GUARD`) | 4 | new |
-| scan_secrets.py | script | Stdlib secret scanner with redacted output | 4 | new |
+| add-auth | skill | Pick an auth provider, implement sign-in, verify protected routes | 4 | beta |
+| scale-10k | skill | Launch-readiness audit for 10k+ users with a scorecard and ordered fixes | 7 | verified |
+| secrets-hygiene | skill | Prevent leaks, and the probe-first rotation flow when one happens | 4, ops | verified |
+| cheap-llm-routing | skill | Route schema-pinned extraction to free or cheap models with a privacy bar and a paid fallback | 4 | verified |
+| scheduled-agents | skill | Headless `claude -p` jobs on cron, launchd, systemd, Task Scheduler or GitHub Actions, with a deadman | ops | beta |
+| tmux-agents | skill | Drive REPLs, dev servers and parallel agents through tmux | 4, 5 | beta |
+| commit-secret-guard | hook | Blocks an agent-run git commit that contains a secret. Off switch: start Claude Code with `FOUNDRY_COMMIT_SECRET_GUARD=0` (the old name `FOUNDRY_SECRETS_GUARD` still works; not the guardrails `FOUNDRY_SECRET_GUARD`) | 4 | verified |
+| scan_secrets.py | script | Stdlib secret scanner with redacted output | 4 | verified |
 | probe_key.py | script | Asks a provider whether a key still authenticates (LIVE/DEAD/ERR) | ops | new |
-| structured_router.py | script | Forced-tool-call structured output across a privacy-aware provider chain | 4 | new |
-| run_headless.py | script | One `claude -p` job with a lock, timeout, transcript and heartbeat | ops | new |
-| deadman.py | script | Heartbeat writer and staleness alert | ops | new |
-| tmux_agent.py | script | start, send, read, wait, run on a private tmux socket | 4, 5 | new |
-| secrets-hygiene templates | template | gitignore lines, env.example, pre-commit config, CI secret scan | 4 | new |
-| scheduled-agents templates | template | crontab, launchd plist, Task Scheduler script, GitHub Actions workflow | ops | new |
-| cheap-llm-routing examples | template | Schema, synthetic input, provider policy file | 4 | new |
+| structured_router.py | script | Forced-tool-call structured output across a privacy-aware provider chain | 4 | verified |
+| run_headless.py | script | One `claude -p` job with a lock, timeout, transcript and heartbeat | ops | beta |
+| deadman.py | script | Heartbeat writer and staleness alert | ops | beta |
+| tmux_agent.py | script | start, send, read, wait, run on a private tmux socket | 4, 5 | beta |
+| secrets-hygiene templates | template | gitignore lines, env.example, pre-commit config, CI secret scan | 4 | verified |
+| scheduled-agents templates | template | crontab, launchd plist, Task Scheduler script, GitHub Actions workflow | ops | beta |
+| cheap-llm-routing examples | template | Schema, synthetic input, provider policy file | 4 | verified |
 
 ### External plugins
 
 | Plugin | What it does | Install | Maturity |
 |---|---|---|---|
-| recruit (from jddavenportOpen/recruit-copilot) | Resume builder and job finder: experience bank, role scoring, tailored ATS-safe resumes. Never applies for you | `/plugin install recruit@ai-foundry` | external, MIT, maintained in its own repo |
+| recruit (from jddavenportOpen/recruit-copilot) | Resume builder and job finder: experience bank, role scoring, tailored ATS-safe resumes. Never applies for you | `/plugin install recruit@ai-foundry` | beta (external, MIT, maintained in its own repo) |
 
 ## Related Foundry and community repos
 
@@ -299,7 +328,7 @@ Rules of thumb:
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the plugin layout, the maturity rules, the scrub checklist and how to validate before opening a PR.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the plugin layout, the item rules, how labels and evidence work, the scrub checklist and how to validate before opening a PR.
 
 ## License
 

@@ -29,7 +29,8 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/new_project.py" product --name "<Project Na
 What it does:
 - It creates `README.md`, `REQUIREMENTS.md`, `DECISIONS.md`, `PRD.md`, `WORKPLAN.md`, `CHANGELOG.md`, `stories.schema.json`, `done-journey.yaml`, and `stories.json` compiled from the new PRD, so the story check passes from the first commit.
 - At the **project root** (the git root, else the folder above `product/`), it copies `tools/gen_stories.py` and writes `.github/workflows/stories.yml`, which runs the story check in CI. `--no-tools` and `--no-ci` skip them; `--root <dir>` sets the root by hand.
-- It never overwrites an existing file. It prints `skipped (exists)` instead.
+- It writes `.foundry/generated.json` at the project root: each file it wrote, with its SHA-256. The `foundry-guardrails` verify-before-done hook skips a listed file while its bytes are unchanged, so the scaffold itself does not count as an untested code edit. Commit it with the rest.
+- It never overwrites an existing file. It prints `skipped (exists)` instead. The one exception is an older `tools/gen_stories.py` from an earlier scaffold: it is refreshed to this skill's copy, and the line says `refreshed (unversioned -> 0.2.0, +40 -12 lines)`. Show that line to the student.
 - It prints the exact stories command for this layout. Every skill uses the same form, from the project root:
   ```bash
   python3 tools/gen_stories.py --prd product/PRD.md --out product/stories.json
@@ -43,6 +44,12 @@ What it does:
 3. Commit: `git add -A && git commit -m "Scaffold foundry-sdlc artifact set"`.
 
 ## Acceptance check
+
+On a project scaffolded earlier, refresh its copy of the compiler first and show the student the line it prints:
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/gen_stories.py" --refresh-tools .
+```
 
 ```bash
 python3 tools/gen_stories.py --prd product/PRD.md --out product/stories.json --check

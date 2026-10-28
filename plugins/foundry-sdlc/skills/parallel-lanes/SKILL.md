@@ -1,108 +1,113 @@
 ---
 name: parallel-lanes
-description: Stage 4 of the Foundry SDLC. Execute the workplan, either as parallel lanes (one git worktree and one agent per independent task, with a branch naming scheme, a lane brief template, the "edit only inside your worktree" rule and a merge-back procedure) or in one session, and mark each task DONE with its commit sha as it lands. Use when someone says "build it", "execute the workplan", "run these in parallel", "spin up agents for each task", "fan out the build", "git worktree", "work on several tasks at once", "merge the lanes back", or when sdlc_stage.py reports stage 4.
+description: Stage 4 of the Foundry SDLC. Execute the workplan, either as parallel lanes (one git worktree and one agent per set of independent tasks, launched with the Agent tool's worktree isolation, a lane brief that names its task ids, a lane registry, the "edit only inside your worktree" rule and a merge-back procedure) or in one session, and mark each task DONE with its commit sha as it lands. It also answers whether tasks can safely run at the same time (a file-ownership check per task). Use when someone says "build it", "execute the workplan", "run these in parallel", "can three agents work on these tasks at the same time", "can several Claude agents work on this without stepping on each other's files", "split the workplan across agents", "spin up agents for each task", "fan out the build", "git worktree", "work on several tasks at once", "merge the lanes back", or when sdlc_stage.py reports stage 4.
 ---
 
 # Stage 4: execute in parallel lanes
 
-A **lane** is one task from WORKPLAN.md, built by one agent, in its own git worktree, on its own branch. Worktrees let several agents edit the same repo at the same time without overwriting each other's files, because each lane has its own working directory and the history is shared.
+A **lane** is one or more WORKPLAN tasks, built by one agent, in its own git worktree, on its own branch. Worktrees let several agents edit the same repo at the same time without overwriting each other's files: each lane has its own working directory, and the history is shared.
 
 ## Rules (MUST, lanes or not)
 
-1. **Commit every task as it lands.** Uncommitted work is not done, and nothing later in the flow can be LIVE without a commit.
-2. **Mark the task in WORKPLAN.md in the same step:** `DONE 2026-11-04: commit 3f2a9c1` (or `PR #9`). The stage detector reads this column; stage 4 ends only when every task is DONE with evidence or PARKED.
-3. **Set the stories it built to BUILT** (`python3 tools/gen_stories.py --prd product/PRD.md --out product/stories.json --set US-04=BUILT`), never LIVE. LIVE needs stage 6.
+1. **Every lane runs in its own worktree.** Launch it with the Agent tool and `isolation: "worktree"`, or as its own `claude` session started inside a worktree. A subagent launched without isolation runs in the main checkout, so it is not a lane.
+2. **Every lane names its WORKPLAN task ids** in its brief (`Tasks this lane covers: T-02, T-03`). If you want to group the work differently, first edit WORKPLAN.md so each lane maps to task ids.
+3. **Write the lane registry before you launch** (`.git/foundry-lanes.json`, below) and set `"active": false` after the last merge.
+4. **Commit every task as it lands.** Uncommitted work is not done, and nothing later can be LIVE without a commit.
+5. **Bookkeeping in the same step as each merge or commit:** every task it covers becomes `DONE 2026-11-04: commit 3f2a9c1`, and every story it built becomes BUILT (`python3 tools/gen_stories.py --prd product/PRD.md --out product/stories.json --set US-04=BUILT`; drop `product/` when the artifacts are at the root). Never LIVE: LIVE needs stage 6. Then rerun `python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .` and check it no longer lists those tasks.
+
+## Can these tasks run at the same time?
+
+Answer with a file-ownership check, not from the Deps column alone. For each task, list the files it will create or change (from its stories' `Surfaces:` and a `grep -rn` of the repo). Two tasks can run in parallel when:
+
+- every Dep of each is DONE, and
+- their file lists do not overlap, counting shared files: `package.json` or `requirements.txt`, the database schema or migrations, a routes index, a shared layout or stylesheet.
+
+Report a short table (task, files it owns, verdict), then run the safe ones as lanes and the rest in sequence. Start with 2 or 3 lanes: more lanes than you can review is not faster.
 
 ## Single-session build (no lanes)
 
-For a small app, or tasks that touch the same files, one session builds the tasks in dependency order. For each task: write the tests, build, run the tests, `git add -A && git commit -m "T-03: magic-link sign-in (US-01, US-02)"`, then apply rules 2 and 3 with that commit's short sha (`git rev-parse --short HEAD`). Then the next task.
+For a small app, or tasks that touch the same files, one session builds the tasks in dependency order. For each task: write the tests, build, run the tests, `git add -A && git commit -m "T-03: magic-link sign-in (US-01, US-02)"`, then apply rule 5 with that commit's short sha (`git rev-parse --short HEAD`).
 
-## When to use lanes (and when not to)
+## Launch lanes with the Agent tool
 
-- Use them for tasks whose Deps are all DONE and which touch mostly different files. Example: T-02 (data model) and T-03 (auth) both depend only on T-01.
-- Do not use them for two tasks that edit the same file heavily. Run those in sequence, or merge the first before starting the second.
-- Start with 2-3 lanes. Each lane costs review attention, and more lanes than you can review is not faster.
+1. **Commit the main checkout first.** A lane starts from a commit, never from your uncommitted edits. Add `.claude/worktrees/` to `.gitignore` once, so `git add -A` never picks up a lane.
+2. **Write the registry** in the main checkout's git directory (`.git` in a normal clone):
+   ```bash
+   cat > "$(git rev-parse --git-common-dir)/foundry-lanes.json" <<'JSON'
+   {"active": true, "lanes": [
+     {"id": "L1", "tasks": ["T-02"], "branch": null, "worktree": null},
+     {"id": "L2", "tasks": ["T-03", "T-04"], "branch": null, "worktree": null}
+   ]}
+   JSON
+   ```
+   When a lane reports, fill in its `branch` and `worktree` the same way.
+3. **Launch up to 3 lanes in one message**, each an Agent call with `subagent_type: "general-purpose"`, `isolation: "worktree"`, `run_in_background: false`, and the brief below as its prompt. Wait for every lane to return.
 
-## The non-negotiable rule
+What happens: Claude Code creates `<repo>/.claude/worktrees/agent-<id>` on branch `worktree-agent-<id>`, and every tool call of that lane runs with that worktree as its working directory. A worktree with changes is left in place for you to merge. If a result does not name its worktree, run `git worktree list`.
 
-**A lane agent edits files only inside its own worktree.** It never edits the main checkout, and never another lane's worktree. It never runs `git checkout`, `git stash` or `git reset --hard` in the main checkout. The `foundry-guardrails` plugin ships a hook that blocks out-of-worktree edits. Enable it when you run lanes.
+**What protects a lane.** With the `foundry-guardrails` plugin, its `worktree-guard` hook does exactly two things for Edit, Write, MultiEdit and NotebookEdit calls:
+- A call whose working directory is a linked worktree (every `isolation: "worktree"` lane) is denied when it targets a file in the main checkout. The denial names the same path inside the lane's worktree.
+- While the registry says `"active": true`, a subagent call from the main checkout (a lane launched without isolation) is denied when it targets a file in the main checkout outside `.claude/worktrees/`, a linked worktree or a registered lane worktree.
 
-## Create a lane
-
-Naming: branch `lane/<task-id>-<short-slug>`, worktree directory `../<repo>-lanes/<task-id>`. The worktree lives outside the repo, so it never gets committed or picked up by a file watcher.
-
-```bash
-git fetch origin && git switch main && git pull --ff-only
-```
-
-```bash
-git worktree add -b lane/T-03-magic-link ../myapp-lanes/T-03 origin/main
-```
-
-```bash
-git worktree list
-```
-
-Install dependencies inside the worktree (for example `cd ../myapp-lanes/T-03 && npm ci`). Each worktree has its own `node_modules` or `.venv`. If two lanes run dev servers, give each one its own port.
-
-Claude Code can also create a worktree for one session: start it with `claude --worktree` (or `-w`), or ask the agent to enter a worktree. Use whichever your team standardizes on, as long as each lane gets its own directory.
+It does not stop shell writes (`sed -i`, `>`, `cp`, `git checkout`), and it does not stop a lane from editing another lane's worktree. The brief's rule covers those. Your own calls as the integrator are never blocked.
 
 ## Brief the lane agent
 
-Open one Claude Code session per lane with its working directory set to the worktree. A good brief is self-contained, because the lane agent has none of your context. Template:
+The lane agent has none of your context, so the brief is self-contained. Template:
 
 ```text
-You are lane T-03 in <repo>. Your worktree is ../myapp-lanes/T-03 on branch lane/T-03-magic-link.
-Edit files ONLY inside this worktree.
+You are lane L2 in <repo>. Tasks this lane covers: T-03, T-04 (from product/WORKPLAN.md).
+First, print `git rev-parse --show-toplevel` and `git branch --show-current`, and put both in your
+report. If the top level is the main checkout <main path>, stop: you are not in a worktree.
+Edit files ONLY inside your worktree, by paths inside it. Never edit the main checkout or another
+lane's worktree. Never run git checkout, git stash or git reset --hard outside your worktree.
 
-Task: T-03 from product/WORKPLAN.md: magic-link sign-in.
 Stories: US-01 and US-02 in product/PRD.md. Every numbered acceptance criterion must hold.
 Reuse first: product/REQUIREMENTS.md "Already exists" says <what to reuse>. Search the repo
 for an existing helper before you write a new one.
-Out of scope: anything not in US-01/US-02. Note other problems you find in your report; do not fix them.
-Effort and review: opus/high, independent reviewer at top effort (auth = high blast radius).
+Out of scope: anything not in US-01/US-02. Note other problems in your report; do not fix them.
 
 Done means:
 1. Tests for each criterion you can test in code, all passing (run them, show the output).
 2. foundry-qa:regression-check run on anything shared you changed.
-3. Committed on your branch with a message citing T-03, US-01, US-02.
-4. A report: files changed, tests run with results, criteria you could NOT verify in code
-   (these go to visual QA), anything that surprised you.
-Do not merge. Do not mark the task DONE. The integrator does both.
+3. Committed on your branch, one commit per task, each message citing its task and story ids.
+4. A report: worktree path, branch, commit sha per task, files changed, tests run with results,
+   criteria you could NOT verify in code (these go to visual QA), anything that surprised you.
+Do not merge. Do not edit WORKPLAN.md or stories.json. The integrator does both.
 ```
 
 ## Review and merge back
 
-Review each lane at the tier its Owner cell names. Use an independent reviewer for high blast radius, and a self-check for docs. Then merge, one lane at a time:
+Review each lane at the tier its Owner cell names (an independent reviewer for high blast radius, a self-check for docs). Then, from the main checkout, one lane at a time:
 
 ```bash
-cd ../myapp-lanes/T-03 && git fetch origin && git rebase origin/main
+git -C .claude/worktrees/agent-<id> rebase main
 ```
 
-Run the full test suite in the worktree after the rebase, and stop if anything fails. Then push and open a PR:
+Run the full test suite in the lane's worktree after the rebase. If the rebase conflicts, resolve it there, never in the main checkout. Then merge:
 
 ```bash
-git push -u origin lane/T-03-magic-link && gh pr create --fill
+git merge --no-ff worktree-agent-<id> -m "Merge lane L2: T-03, T-04 (US-01, US-02)"
 ```
 
-After CI is green and the PR is merged, clean up the lane:
+Run the tests again on main, then apply rule 5 for every task in the lane's `tasks` (`DONE <date>: commit <merge sha>`, its stories BUILT), commit that bookkeeping, and remove the lane:
 
 ```bash
-git worktree remove ../myapp-lanes/T-03 && git branch -d lane/T-03-magic-link
+git worktree remove .claude/worktrees/agent-<id> && git branch -d worktree-agent-<id>
 ```
 
-Then update WORKPLAN.md: `DONE 2026-11-04: PR #9, CI green`. Set the stories it built to BUILT in `stories.json` (not LIVE: LIVE needs stage 6). Check the next lane's Deps again, because a task that was WAITING may now be ready.
+After the last lane, set `"active": false` in the registry. Check the next tasks' Deps again: a WAITING task may now be ready.
 
-If two lanes conflict on rebase, the second lane resolves the conflict in its own worktree, reruns its tests, and asks for review again. Never resolve conflicts in the main checkout.
+## Lanes as separate sessions (a team, or several terminals)
 
-## A ready-made implementation
+Each lane can instead be its own `claude` session started inside a worktree you create: `git worktree add -b lane/T-03-magic-link ../myapp-lanes/T-03 main`, then `cd ../myapp-lanes/T-03 && claude` (or `claude --worktree`). Install dependencies inside the worktree, and give each dev server its own port. Register the lane the same way (`"worktree": "../myapp-lanes/T-03"`). Merge back as above, or push the branch and open a PR (`git push -u origin lane/T-03-magic-link && gh pr create --fill`); the task is then `DONE <date>: PR #9`.
 
-Scott Murff's **agent-team-kit** (https://github.com/ai-foundry-byu/agent-team-kit) is a ready implementation of worktree mode for a team: `worktree-commands.sh` with `wt`, `cs` and `wtls` launchers, a multi-lane launcher, a `merge-worktree` skill, and docs on tending several agents (`docs/WORKTREE-MODE.md`, `docs/TENDING-AGENTS.md`). Follow its README to install it into your project. It is linked here, not copied, so read its repo for current usage and license.
+Scott Murff's **agent-team-kit** (https://github.com/ai-foundry-byu/agent-team-kit) is a ready implementation of this mode for a team: `wt`, `cs` and `wtls` launchers, a multi-lane launcher, a `merge-worktree` skill, and docs on tending several agents. It is linked here, not copied, so read its repo for current usage and license.
 
 ## Exit gate
 
-- Every task in WORKPLAN.md is `DONE <date>: commit <sha>` (or a PR) or PARKED.
-- `git worktree list` shows only the main checkout (no forgotten lanes).
+- Every task in WORKPLAN.md is `DONE <date>: commit <sha>` (or a PR), PARKED or FOLLOW-UP, and every story a lane built is BUILT.
+- `git worktree list` shows only the main checkout, and the registry says `"active": false`.
 - `python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .` reports past stage 4. Stage 5 (code QA) is checked by CI, not by files.
 
-Next: code QA with `foundry-qa:regression-check` and CI, then stage 6 visual QA.
+Next: code QA with `foundry-qa:regression-check` and CI, then stage 6 visual QA with the `ship` skill.

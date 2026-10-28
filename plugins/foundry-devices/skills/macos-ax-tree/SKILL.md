@@ -1,11 +1,11 @@
 ---
 name: macos-ax-tree
-description: Read and act on a macOS app's accessibility tree through System Events instead of guessing click coordinates. Dumps the tree to JSON, outlines it, finds elements by role, name, description, value or identifier, presses one with AXPress, and prints a window's bounds for screencapture -R. Use when driving a Mac desktop app (AppKit, SwiftUI, Catalyst, Electron), when someone says "what buttons does this Mac app have", "press Sign In in the Mac app", "dump the accessibility tree", or "screenshot just the app window".
+description: Read and act on a macOS app's accessibility tree through System Events instead of guessing click coordinates. Dumps the tree to JSON, outlines it, finds elements by role, name, description, value or identifier, presses one with AXPress, and prints a window's bounds for screencapture -R. Use when driving a Mac desktop app (AppKit, SwiftUI, Catalyst, Electron), when someone wants a script that clicks a button or key in a Mac app (for example the Calculator equals key) without hardcoding pixel coordinates, or says "what buttons does this Mac app have", "click X in the Mac app", "press Sign In in the Mac app", "dump the accessibility tree", or "screenshot just the app window".
 ---
 
 # macOS accessibility tree
 
-Maturity: **new** (parsing unit-tested; dump, find, press and bounds were run against Calculator and TextEdit on a macOS 26 CI runner; the live calls need a Mac). Python 3 standard library only; it shells out to `osascript`.
+Maturity: **beta** (parsing unit-tested; dump, find, press and bounds were run against Calculator and TextEdit on a macOS 26 CI runner; the live calls need a Mac). Python 3 standard library only; it shells out to `osascript`.
 
 Needs Accessibility permission for the app that runs Claude Code (Terminal, iTerm, VS Code): System Settings > Privacy & Security > Accessibility, then quit and reopen that app. Without it, System Events calls fail with `-25211` or hang on a permission prompt.
 

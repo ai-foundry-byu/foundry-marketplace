@@ -128,6 +128,36 @@ class ScanLineTests(unittest.TestCase):
         ])
         self.assertEqual(scan_secrets.scan_text(".env.example", text), [])
 
+    def test_key_shaped_values_containing_placeholder_words_are_flagged(self):
+        """R2-D6: a student's 'fake' test key must still be caught; only whole placeholders skip."""
+        cases = {
+            "aws-access-key-id": "AKIA" + "Q7FAKEFAKEFAKE12",
+            "openai-key": "sk-" + "proj-" + "FAKEq8Lm2Pv8Rt4Wz6Yb1Nc3Kd5Hf0JsGa7",
+            "github-token": "ghp" + "_" + "dummy" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6",
+            "anthropic-key": "sk-ant-" + "api03-example" + "Q7x9Lm2Pv8Rt4Wz6Yb1N",
+            "google-api-key": "AIza" + "SyXXXXq7x9Lm2Pv8Rt4Wz6Yb1Nc3Kd5Hf0J",
+        }
+        for rule, value in cases.items():
+            found = scan_secrets.scan_text("settings.py", f'KEY = "{value}"')
+            self.assertEqual([f.rule for f in found], [rule], value)
+        generic = scan_secrets.scan_text("cfg.py", 'db_password = "test' + 'Xk9hvL2qPz7Rw4Tn8"')
+        self.assertEqual([f.rule for f in generic], ["generic-assignment"])
+
+    def test_whole_placeholder_values_are_skipped(self):
+        text = "\n".join([
+            "OPENAI_API_KEY=sk-proj-" + "your-key-here-" + "0" * 24,
+            "OPENAI_API_KEY=sk-" + "REPLACE_ME_" * 3,
+            "GITHUB_TOKEN=ghp_" + "<your-github-token>" + "x" * 20,
+            "API_KEY = 'your_api_key_goes_here'",
+            "SECRET_KEY=changeme_changeme_changeme",
+            "AUTH_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxx",
+            "STRIPE_KEY=sk_live_" + "FAKEFAKEFAKEFAKEFAKEFAKE",
+            "url = postgres://app:<password>@db.prod.internal/app",
+            "url = postgres://app:your-password@db.prod.internal/app",
+            "CLERK_SECRET_KEY=sk_test_" + "REPLACE_ME",
+        ])
+        self.assertEqual(scan_secrets.scan_text("x", text), [])
+
     def test_gitleaks_allow_marker_is_honored(self):
         self.assertEqual(scan_secrets.scan_text("t.py", f'X = "{FAKE_GH}"  # gitleaks:allow'), [])
 
@@ -617,6 +647,12 @@ class PlainHookInstallTests(unittest.TestCase):
             git(repo, "add", "cfg.py")
             bad = subprocess.run(["git", "commit", "-q", "-m", "leak"], cwd=repo, env=env, capture_output=True, text=True)
             self.assertNotEqual(bad.returncode, 0)
+            # Refused by the bundled scanner's finding, not by the "no secret scanner found" path.
+            self.assertIn("aws-access-key-id", bad.stdout + bad.stderr)
+            self.assertNotIn("no secret scanner found", bad.stderr)
+            self.assertNotIn(FAKE_AWS, bad.stdout + bad.stderr)
+            count = git(repo, "rev-list", "--count", "HEAD").stdout.strip()
+            self.assertEqual(count, "2", "only the init and the clean commit should exist")
         finally:
             shutil.rmtree(repo, ignore_errors=True)
 

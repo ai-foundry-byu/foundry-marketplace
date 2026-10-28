@@ -44,18 +44,25 @@ People install a whole plugin, or copy one skill folder or one agent file. Insid
 
   then runs `"$SKILL_DIR/scripts/x.py"`. In the plugin the first path is real; copied on its own, the variable is empty and the fallback finds the copied skill. An agent that runs no scripts needs neither line. An agent that needs a plugin-only capability says `Install: plugin only. <reason>.` under its title instead.
 - **R4. Hooks are plugin only.** They keep `${CLAUDE_PLUGIN_ROOT}` in `hooks/hooks.json`.
+- **R5. A skill names the agents it hands work to.** When a SKILL.md tells the model to launch one of this plugin's agents (write-prd launches `prd-critic`), it says so on a line right under its H1 title, next to any other marker line:
+
+  ```
+  Uses agent: <agent-name>[, <agent-name>]
+  ```
+
+  The site's "Just this skill" script then installs those agents into the same `agents/` folder, plus any skill they list in `Requires skill:`. Name only agents of the same plugin: a copy cannot bring an agent from another plugin, so mention those in the text instead. A skill that installs on its own cannot name a plugin-only agent.
 
 Two scripts enforce this, and CI runs both on every push and pull request:
 
 ```bash
-python3 scripts/check_items.py          # R1-R3; prints path:line: rule: message, exits 1 on any violation (--json too)
+python3 scripts/check_items.py          # R1-R3, R5 and the evidence entries (E1-E4); prints path:line: rule: message, exits 1 on any violation (--json too)
 ```
 
 ```bash
 python3 scripts/sync_vendor.py --check  # every vendor.json copy matches its canonical file; drop --check to fix
 ```
 
-The site reads the same two marker lines to decide what the "Just this skill/agent" tab shows: a full-folder download for a standalone skill, the agent plus its skills for an agent that needs one, and the plugin install with the reason for a plugin-only item.
+The site reads the same marker lines to decide what the "Just this skill/agent" tab shows: a full-folder download for a standalone skill (plus the agents it names in `Uses agent:`), the agent plus its skills for an agent that needs one, and the plugin install with the reason for a plugin-only item.
 
 ### plugin.json
 
@@ -94,7 +101,7 @@ The site reads the same two marker lines to decide what the "Just this skill/age
 
 ### README for each plugin
 
-Cover: what it does, how to install (each `/plugin` command in its own code block), how to use each item, requirements, and a maturity label for every item. Add a short "Install one item on its own" note: which items are standalone, which agents need which skill, and which items are plugin only.
+Cover: what it does, how to install (each `/plugin` command in its own code block), how to use each item, requirements, and a label for every item that matches its entry in `evidence/evidence.json`. Add a short "Install one item on its own" note: which items are standalone, which agents need which skill, and which items are plugin only.
 
 ### Register it
 
@@ -110,19 +117,23 @@ Add an entry to `.claude-plugin/marketplace.json`:
 }
 ```
 
-Categories in use: `sdlc`, `guardrails`, `qa`, `design`, `devices`, `evals`, `build`, `career`. Then add every item to the catalog table in the root `README.md`, and to `SDLC.md` if it runs a stage.
+Categories in use: `sdlc`, `guardrails`, `qa`, `design`, `devices`, `evals`, `build`, `career`. Then add every item to the catalog table in the root `README.md`, to `SDLC.md` if it runs a stage, and to `evidence/evidence.json` (see below).
 
 An external plugin (one that lives in its own repo) uses a `github` source, or `git-subdir` if the plugin is in a subdirectory. Its entry `name` must equal the `name` in that repo's `plugin.json`. Only list repos that are real Claude Code plugins; link the rest in the README's related-repos section.
 
-## Maturity labels
+## Labels and evidence
 
-Every item gets one, in its plugin README and in the root catalog.
+Every catalog item (skill, agent, hook, template, external plugin) has one entry in `evidence/evidence.json`, keyed `<plugin>/<type>/<name>`:
 
-- **proven**: generalized from a tool that runs in production in a real harness today. You can say what it ran on and for how long.
-- **new**: written from docs or best practice for this marketplace. It may have good tests. It is still new until it has run on real projects.
-- A mix is fine when it is honest, for example "method proven, tooling new" or "proven (pattern)" for a pattern that is proven while this exact code is a fresh rewrite.
+```json
+"foundry-example/skill/do-thing": {"label": "new", "date": "2026-10-28", "note": "Unit tests pass; not yet run in a live session."}
+```
 
-Never label new work proven. Students choose what to trust from these labels. A wrong "proven" costs them more than a missing feature.
+- **verified**: its main path passed a live end-to-end run in a real Claude Code session. The note names the runs.
+- **beta**: partly live-tested or unit-tested, with known gaps. The note names the gaps.
+- **new**: little or no live evidence yet. Every new item starts here.
+
+The catalog takes each item's label from this file and shows the note under **What we tested** on the item page. An item with no entry shows as new, and `check_items.py` fails (E2), as it does for an entry with another label, no note or no date (E3), or an entry that names no item (E4). Keep one entry per line. In your PR, say what you ran; a maintainer moves the label to beta or verified from that evidence. Never claim more than you ran. Students choose what to trust from these labels, and a wrong "verified" costs them more than a missing feature.
 
 ## Scrub checklist (this repo is public)
 
@@ -152,7 +163,7 @@ Before every PR:
 
 ## Validate
 
-Run the item rules and the vendored-copy check (see "Item rules" above), then rebuild the site catalog:
+Run the item rules and the vendored-copy check (see "Item rules" above), then rebuild the site catalog (`site/catalog.json` for the site and the slim `site/catalog-index.json` for agents):
 
 ```bash
 python3 scripts/check_items.py && python3 scripts/sync_vendor.py --check && python3 scripts/build_catalog.py
@@ -181,6 +192,6 @@ Then try it for real from a clone:
 ## Open a PR
 
 1. Branch from `main`: `git checkout -b add-<your-plugin>`.
-2. Commit the plugin, the marketplace.json entry and the README catalog rows together.
-3. In the PR description, list each item with its type, SDLC stage and maturity, paste the `claude plugin validate` output and the test output, and list known limitations.
+2. Commit the plugin, the marketplace.json entry, the README catalog rows and the evidence entries together.
+3. In the PR description, list each item with its type, SDLC stage and label (and what you ran to earn it), paste the `claude plugin validate` output and the test output, and list known limitations.
 4. A maintainer reviews it at a depth that matches its blast radius: a hook that blocks commands or touches secrets gets a careful review, a docs fix gets a quick one.

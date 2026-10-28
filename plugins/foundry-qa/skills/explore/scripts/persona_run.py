@@ -8,10 +8,16 @@
 
 Stories: the project's ONE stories.json (the foundry-sdlc format, a list or
 {"stories": [...]}). Per story: id, title, acceptance, surfaces, devices, status,
-plus an optional "qa" block {start, steps, assertions, wait_for}. Without a qa
-block the run opens surfaces[0] (when it is a path), takes the screenshot and
-marks the row needs-judgment against the acceptance criteria. Unknown keys are
-ignored with a warning. NOT_BUILT and PARKED stories are skipped unless named
+plus an optional "qa" block {start, steps, assertions, wait_for, params}. A
+story with no steps and no assertions opens EVERY path in surfaces, one after
+the other in the same session, runs the persona checks on each, screenshots
+each (<story>-<device>-<n>.png when there are several), and marks the row
+needs-judgment against the acceptance criteria. A story with steps or
+assertions runs them once, from qa.start or else surfaces[0]. A route pattern
+(/groups/:id, /groups/{id}, /groups/[id]) is never opened literally: qa.params
+{"id": 1} fills it, qa.start gives a real path; otherwise the row is
+INCONCLUSIVE "needs a concrete URL (add qa.start)". Unknown keys are ignored
+with a warning. NOT_BUILT and PARKED stories are skipped unless named
 with --story. Device ids that are not web profiles (ios-sim, android-emu) are
 skipped with a warning.
   python3 persona_run.py ... --plan            # print the story x device matrix, run nothing
@@ -122,18 +128,44 @@ class Story:
     wait_for: Optional[str] = None
     scripted: bool = False             # True when the story carries a qa block (or legacy start/steps/assertions)
     skip_reason: str = ""
+    pages: list[str] = field(default_factory=list)       # every concrete path the run opens, in order
+    unresolved: list[str] = field(default_factory=list)  # route-pattern surfaces nothing filled in
+    inconclusive: str = ""             # set when nothing concrete can be opened: reported, never a 404 failure
+    expect_console: list[str] = field(default_factory=list)  # substrings of console errors the story expects
 
 
 # The foundry-sdlc stories.json shape (contract C1), plus foundry-qa's optional keys.
 STORY_KEYS = {"id", "title", "acceptance", "surfaces", "devices", "status", "waits_on", "covers",
               "notes", "evidence", "qa", "writes", "as_a",
               "start", "steps", "assertions", "wait_for"}   # last row: legacy top-level qa keys
-QA_KEYS = {"start", "steps", "assertions", "wait_for"}
+QA_KEYS = {"start", "steps", "assertions", "wait_for", "params", "expect_console"}
 SKIP_STATUSES = {"NOT_BUILT", "PARKED"}
 
 
 def _is_path(v: Any) -> bool:
     return isinstance(v, str) and (v.startswith(("/", "#/", "#!/")) or re.match(r"^https?://", v) is not None)
+
+
+# /groups/:id, /groups/{id}, /groups/<id>, /groups/[id] (Express, OpenAPI, prose, Next.js)
+_PARAM_RE = re.compile(r"(?<=/):([A-Za-z_][\w-]*)|\{([^}/]+)\}|<([^>/]+)>|\[([^\]/]+)\]")
+
+
+def is_route_pattern(path: str) -> bool:
+    """True for a path with an unfilled route parameter. Pure."""
+    return bool(_PARAM_RE.search(urlsplit(path).path + "/" + (urlsplit(path).fragment or "")))
+
+
+def fill_params(path: str, params: dict) -> str:
+    """Fill :id / {id} / <id> / [id] from params; a name not in params stays a pattern. Pure."""
+    def sub(m: "re.Match[str]") -> str:
+        name = next(g for g in m.groups() if g is not None)
+        return str(params[name]) if name in params else m.group(0)
+    return _PARAM_RE.sub(sub, path)
+
+
+def needs_url(patterns: list[str]) -> str:
+    return (f"needs a concrete URL (add qa.start): {', '.join(patterns)} is a route pattern; set qa.start "
+            f"to a real path such as /groups/1, or qa.params such as {{\"id\": 1}}")
 
 
 def parse_stories(data: Any, source: str = "", warnings: Optional[list[str]] = None) -> list[Story]:
@@ -185,12 +217,40 @@ def parse_stories(data: Any, source: str = "", warnings: Optional[list[str]] = N
         start = qa.get("start")
         if start is not None and (not isinstance(start, str) or not start):
             raise ConfigError(f"{where}: qa.start must be a path or URL")
-        skip = ""
-        if not start:
-            start = next((x for x in surfaces[:1] if _is_path(x)), None)
-            if not start:
+        expect_console = qa.get("expect_console") or []
+        if not isinstance(expect_console, list) or not all(isinstance(x, str) and x for x in expect_console):
+            raise ConfigError(f"{where}: qa.expect_console must be a list of non-empty strings, "
+                              "each a substring of a console error the story expects (an intentional 404)")
+        params = qa.get("params") or {}
+        if not isinstance(params, dict):
+            raise ConfigError(f"{where}: qa.params must be an object such as {{\"id\": 1}}")
+        skip, inconclusive, pages, unresolved = "", "", [], []
+        mechanical = bool(steps or asserts)
+        if start:
+            start = fill_params(start, params)
+            if is_route_pattern(start):
+                inconclusive, start = needs_url([start]), None
+            else:
+                pages = [start]
+        else:
+            paths = [x for x in surfaces if _is_path(x)]
+            other = [x for x in surfaces if not _is_path(x)]
+            if paths and other:
+                warn.append(f"{sid}: surface(s) {other} are not paths and are not opened")
+            filled = [fill_params(x, params) for x in paths]
+            if mechanical:
+                filled = filled[:1]          # steps and assertions belong to the first surface
+            for orig, x in zip(paths, filled):
+                if is_route_pattern(x):
+                    unresolved.append(orig)
+                elif x not in pages:
+                    pages.append(x)
+            start = pages[0] if pages else None
+            if not paths:
                 skip = ("no start path: add qa.start, or make surfaces[0] a path like /login"
                         if not surfaces else f"surfaces[0] {surfaces[0]!r} is not a path; add qa.start")
+            elif not pages:
+                inconclusive = needs_url(unresolved)
         devs = s.get("devices")
         if devs is not None:
             if isinstance(devs, str):
@@ -208,7 +268,8 @@ def parse_stories(data: Any, source: str = "", warnings: Optional[list[str]] = N
         status = str(s.get("status") or "")
         out.append(Story(id=sid, title=s["title"], start=start, steps=steps, assertions=asserts,
                          acceptance=acc, devices=devs, writes=bool(s.get("writes", False)), status=status,
-                         wait_for=wait_for, scripted=bool(qa), skip_reason=skip))
+                         wait_for=wait_for, scripted=bool(qa), skip_reason=skip, pages=pages,
+                         unresolved=unresolved, inconclusive=inconclusive, expect_console=list(expect_console)))
     return out
 
 
@@ -261,20 +322,32 @@ class StoryResult:
     acceptance: list[str] = field(default_factory=list)
     blocked_writes: list[dict] = field(default_factory=list)
     console_errors: list[str] = field(default_factory=list)
+    expected_console: list[str] = field(default_factory=list)  # errors qa.expect_console matched: not failures
     screenshot: str = ""
+    screenshots: list[dict] = field(default_factory=list)   # [{surface, path}], one per surface opened
     final_url: str = ""
     elapsed_s: float = 0.0
     steps: list[dict] = field(default_factory=list)
 
 
+def unexpected_console(errors: list[str], expected: list[str]) -> list[str]:
+    """Console errors no qa.expect_console substring matches. Pure."""
+    return [e for e in errors if not any(x in e for x in expected)]
+
+
+def failure_lines(assertions: list[dict], checks: list[dict]) -> list[str]:
+    """Every failing assertion and story-scoped check, in order. Site-wide checks are not story failures."""
+    return ([a["detail"] for a in assertions if not a["passed"]]
+            + [f"{c['check']}: {c['detail']}" for c in checks if not c["passed"] and c.get("scope") != "site"])
+
+
 def classify(assertions: list[dict], checks: list[dict], has_assertions: bool) -> tuple[str, str]:
     """A story's status comes from its assertions and story-scoped checks; site-wide checks never fail it."""
-    failed_a = [a for a in assertions if not a["passed"]]
-    failed_c = [c for c in checks if not c["passed"] and c.get("scope") != "site"]
-    if failed_a:
-        return "failed", failed_a[0]["detail"]
-    if failed_c:
-        return "failed", f"{failed_c[0]['check']}: {failed_c[0]['detail']}"
+    failed = failure_lines(assertions, checks)
+    if len(failed) == 1:
+        return "failed", failed[0]
+    if failed:
+        return "failed", f"{len(failed)} checks failed: " + "; ".join(failed)
     if not has_assertions:
         return "needs-judgment", "no mechanical assertions; judge the screenshot against the acceptance criteria"
     return "passed", "all assertions and persona checks passed"
@@ -321,7 +394,7 @@ Reproduced on two consecutive persona runs.
 {acc}
 
 ## Evidence
-- Screenshot: {r.get('screenshot', '')}
+- Screenshot(s): {', '.join(x['path'] for x in r.get('screenshots') or []) or r.get('screenshot', '')}
 - Console errors: {len(r.get('console_errors', []))}
 - Writes blocked by the read-only guard: {len(r.get('blocked_writes', []))}
 """
@@ -371,8 +444,31 @@ def render_report(persona: Persona, results: list[StoryResult], base_url: str, r
     if judge:
         lines += ["", "## Needs judgment (look at each screenshot, then report it as JUDGED pass or JUDGED fail)", ""]
         for r in judge:
-            lines.append(f"- **{r.story} @ {r.device}**: {r.screenshot}")
+            shots = r.screenshots or [{"surface": "", "path": r.screenshot}]
+            if len(shots) == 1:
+                lines.append(f"- **{r.story} @ {r.device}**: {shots[0]['path']}")
+            else:
+                lines.append(f"- **{r.story} @ {r.device}**: {len(shots)} screenshots, judge every one")
+                lines += [f"  - {x['surface']}: {x['path']}" for x in shots]
             lines += [f"  - [ ] {a}" for a in r.acceptance]
+    failing = [(r, failure_lines(r.assertions, r.checks)) for r in results if r.status == "failed"]
+    failing = [(r, f) for r, f in failing if f]
+    if failing:
+        lines += ["", "## Every failing check (the table's Reason column is cut at 140 characters)", ""]
+        for r, f in failing:
+            lines.append(f"- **{r.story} @ {r.device}**:")
+            lines += [f"  - {x}" for x in f]
+    expected = [r for r in results if r.expected_console]
+    if expected:
+        lines += ["", "## Console errors the stories expected (qa.expect_console; not failures)", ""]
+        for r in expected:
+            lines.append(f"- {r.story} @ {r.device}: {len(r.expected_console)}, e.g. {r.expected_console[0][:160]}")
+    shown = [r for r in results if r.status in ("failed", "inconclusive") and r.screenshots]
+    if shown:
+        lines += ["", "## Screenshots of failed and inconclusive rows", ""]
+        for r in shown:
+            lines.append(f"- **{r.story} @ {r.device}** ({r.status}):")
+            lines += [f"  - {x['surface']}: {x['path']}" for x in r.screenshots]
     writes = [(r, w) for r in results for w in r.blocked_writes]
     if writes:
         lines += ["", "## Writes the guard blocked (the UI may show success that did not happen)", ""]
@@ -389,7 +485,9 @@ def render_report(persona: Persona, results: list[StoryResult], base_url: str, r
 
 # ── browser checks ────────────────────────────────────────────────────────────
 
-OVERFLOW_JS = "() => ({sw: document.documentElement.scrollWidth, iw: window.innerWidth})"
+# clientWidth is the layout viewport. Under mobile emulation window.innerWidth grows to the
+# content width (939 = 939 on a 939 px page at 390), so comparing against it hides overflow.
+OVERFLOW_JS = "() => ({sw: document.documentElement.scrollWidth, iw: document.documentElement.clientWidth})"
 TAP_JS = """
 (min) => {
   const sel = 'a[href], button, input:not([type=hidden]), select, textarea, [role=button], [role=link], [role=tab], [role=checkbox]';
@@ -410,7 +508,7 @@ TAP_JS = """
 
 
 def persona_checks(page: Any, persona: Persona, device: str, elapsed: float, console_errors: list[str],
-                   note: str = "") -> list[dict]:
+                   note: str = "", surface: str = "") -> list[dict]:
     checks = [{"check": "patience", "passed": elapsed <= persona.patience_seconds,
                "detail": f"{elapsed:.1f}s to content against a {persona.patience_seconds:g}s budget"
                          + (f" ({note})" if note else "")}]
@@ -426,21 +524,48 @@ def persona_checks(page: Any, persona: Persona, device: str, elapsed: float, con
                        f"{len(small)} control(s) under {persona.min_tap_target_px}px, e.g. {small[0]}"})
     checks.append({"check": "console", "passed": not console_errors,
                    "detail": "clean" if not console_errors else f"{len(console_errors)} error(s): {console_errors[0][:160]}"})
+    if surface:
+        for c in checks:
+            c["surface"] = surface
+            c["detail"] = f"{surface}: {c['detail']}"
     return checks
+
+
+def inconclusive_result(story: Story, device: str) -> StoryResult:
+    """A row for a story nothing concrete can be opened for (a route pattern): no browser, no 404 failure."""
+    return StoryResult(story=story.id, title=story.title, device=device, status="inconclusive",
+                       reason=story.inconclusive, acceptance=story.acceptance)
 
 
 def run_one(pw: Any, browser_name: str, persona: Persona, story: Story, device: str, base_url: str,
             out_dir: Path, read_only: bool, timeout_ms: int, auth: Optional[dict] = None,
             settle_ms: int = qa_session.DEFAULT_SETTLE_MS, wait_for: Optional[str] = None) -> StoryResult:
     from playwright.sync_api import TimeoutError as PWTimeout
+    if story.inconclusive:
+        return inconclusive_result(story, device)
+    pages = story.pages or [story.start]
+    many = len(pages) > 1
     steps = [{"goto": story.start}] + story.steps
     res = StoryResult(story=story.id, title=story.title, device=device, status="inconclusive",
-                      acceptance=story.acceptance, steps=steps)
+                      acceptance=story.acceptance, steps=steps if not many else [{"goto": p} for p in pages])
     browser = qa_session.launch(pw, browser_name)
+
+    def shoot(n: int, surface: str) -> None:
+        name = f"{story.id}-{device}-{n}.png" if many else f"{story.id}-{device}.png"
+        shot = out_dir / "screenshots" / name
+        shot.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            page.screenshot(path=str(shot), full_page=True)
+            res.screenshots.append({"surface": surface, "path": str(shot)})
+            res.screenshot = res.screenshot or str(shot)
+        except Exception:  # noqa: BLE001
+            pass
+
     try:
         ctx = browser.new_context(**context_kwargs(device, browser_name), **qa_session.context_options(auth))
         page = ctx.new_page()
         t0 = time.monotonic()
+        n = 0
         try:
             try:  # sign in before the read-only guard, so a sign-in POST goes through
                 qa_session.apply_auth(ctx, page, auth, base_url,
@@ -452,31 +577,38 @@ def run_one(pw: Any, browser_name: str, persona: Persona, story: Story, device: 
             page.on("console", lambda m: res.console_errors.append(m.text) if m.type == "error" else None)
             page.on("pageerror", lambda e: res.console_errors.append(f"uncaught: {e}"))
             tracker = qa_session.NetTracker(page)
-            t0 = time.monotonic()                      # navigation start
-            run_steps(page, steps, base_url, timeout_ms, [], PWTimeout)
             selector = story.wait_for or wait_for
-            try:
-                ready, note = qa_session.settle(page, tracker, timeout_ms, selector, settle_ms)
-            except PWTimeout:
-                raise StepFailure("fail", f"content never appeared: {selector} not visible within {timeout_ms} ms") from None
-            res.elapsed_s = round(ready - t0, 2)
-            res.assertions = check_assertions(page, story.assertions, timeout_ms, res.console_errors, [])
-            res.checks = persona_checks(page, persona, device, res.elapsed_s, res.console_errors, note)
+            for n, surface in enumerate(pages, 1):
+                first_error = len(res.console_errors)
+                t0 = time.monotonic()                  # navigation start
+                run_steps(page, steps if n == 1 else [{"goto": surface}], base_url, timeout_ms, [], PWTimeout)
+                try:
+                    ready, note = qa_session.settle(page, tracker, timeout_ms, selector, settle_ms)
+                except PWTimeout:
+                    raise StepFailure("fail", f"content never appeared{' on ' + surface if many else ''}: "
+                                              f"{selector} not visible within {timeout_ms} ms") from None
+                res.elapsed_s = max(res.elapsed_s, round(ready - t0, 2))
+                if n == 1:
+                    res.assertions = check_assertions(page, story.assertions, timeout_ms,
+                                                      unexpected_console(res.console_errors, story.expect_console), [])
+                res.checks += persona_checks(page, persona, device, round(ready - t0, 2),
+                                             unexpected_console(res.console_errors[first_error:], story.expect_console),
+                                             note, surface if many else "")
+                res.final_url = page.url
+                shoot(n, surface)
+            res.expected_console = [e for e in res.console_errors if any(x in e for x in story.expect_console)]
             res.status, res.reason = classify(res.assertions, res.checks, bool(story.assertions))
+            if story.unresolved and res.status != "failed":
+                res.status, res.reason = "inconclusive", needs_url(story.unresolved) + (
+                    f" ({len(res.screenshots)} other surface(s) opened, see the screenshots)" if res.screenshots else "")
             if story.writes and read_only and res.blocked_writes:
                 res.reason += " (writes were simulated by the read-only guard)"
         except StepFailure as sf:
-            res.elapsed_s = round(time.monotonic() - t0, 2)
+            res.elapsed_s = max(res.elapsed_s, round(time.monotonic() - t0, 2))
             res.status = "failed" if sf.status == "fail" else "inconclusive"
             res.reason = sf.message
-        res.final_url = page.url
-        shot = out_dir / "screenshots" / f"{story.id}-{device}.png"
-        shot.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            page.screenshot(path=str(shot), full_page=True)
-            res.screenshot = str(shot)
-        except Exception:  # noqa: BLE001
-            pass
+            res.final_url = page.url
+            shoot(max(n, 1), pages[max(n, 1) - 1])
         ctx.close()
     except qa_session.SessionError:
         raise
@@ -516,7 +648,8 @@ def main(argv: list[str] | None = None) -> int:
         if only and any(d not in DEVICE_PROFILES for d in only):
             raise ConfigError(f"unknown device in {only}; known: {sorted(DEVICE_PROFILES)}")
         for s in stories:
-            resolve_url(s.start, args.base_url)
+            for path in s.pages:
+                resolve_url(path, args.base_url)
         if args.allow_writes and not writes_allowed(args.base_url):
             raise ConfigError(f"--allow-writes is refused for {args.base_url}: only localhost targets may take writes")
         auth = qa_session.auth_from_args(args, validate_step)
@@ -532,8 +665,12 @@ def main(argv: list[str] | None = None) -> int:
     matrix = plan(stories, persona, only)
     if args.plan:
         for s, d in matrix:
-            mode = "scripted" if s.scripted else "judge acceptance"
-            print(f"{s.id:10} {d:18} {s.start:24} {mode:17} {s.title}")
+            if s.inconclusive:
+                print(f"{s.id:10} {d:18} INCONCLUSIVE: {s.inconclusive}")
+                continue
+            mode = "scripted" if (s.steps or s.assertions) else "judge acceptance"
+            where = s.start if len(s.pages) < 2 else f"{s.start} (+{len(s.pages) - 1} more)"
+            print(f"{s.id:10} {d:18} {where:24} {mode:17} {s.title}")
         for sid, why in skipped_rows:
             print(f"{sid:10} {'(skipped)':18} {why}")
         print(f"{len(matrix)} run(s) for persona {persona.name}")

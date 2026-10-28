@@ -7,8 +7,10 @@ import os
 import shutil
 import sys
 import tempfile
+import io
 import textwrap
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import build_catalog as bc  # noqa: E402
@@ -186,6 +188,26 @@ def make_fixture(root):
         # Maturity is not in a table for this one.
         echo word
         """)
+    write(root, "plugins/demo/skills/drafter/SKILL.md", """
+        ---
+        name: drafter
+        description: Writes a draft, then hands it to the checker.
+        ---
+        # Drafter
+
+        Uses agent: checker, runner-agent
+
+        Write the draft, then launch the `checker` agent.
+        """)
+    write(root, "evidence/evidence.json", json.dumps({
+        "demo/skill/check-it": {"label": "verified", "date": "2026-10-28", "note": "Ran live twice."},
+        "demo/skill/other-skill": {"label": "beta", "date": "2026-10-28", "note": "One gap."},
+        "demo/agent/checker": {"label": "new", "date": "2026-10-28", "note": "Not run yet."},
+        "demo/hook/tidy-guard": {"label": "verified", "date": "2026-10-27", "note": "Denied 3/3."},
+        "demo/template/thing.md": {"label": "beta", "date": "2026-10-28", "note": "Copied once."},
+        "demo/skill/no-label": {"label": "proven", "date": "2026-10-28", "note": "Not a valid label."},
+        "outside/plugin/outside": {"label": "beta", "date": "2026-10-28", "note": "Installed once."},
+    }, indent=1))
     write(root, "plugins/demo/templates/thing.md", "# Thing\n\nA template for things.\n")
     write(root, "plugins/demo/templates/kit/a.yaml", "a: 1\n")
     write(root, "plugins/demo/templates/kit/b.yaml", "b: 2\n")
@@ -237,6 +259,9 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(bc.classify_maturity("new (generalized from a proven gate)"), "new")
         self.assertEqual(bc.classify_maturity("method proven; tooling new"), "proven")
         self.assertEqual(bc.classify_maturity("**new**. Written here"), "new")
+        self.assertEqual(bc.classify_maturity("verified"), "verified")
+        self.assertEqual(bc.classify_maturity("**beta** (CI-tested)"), "beta")
+        self.assertEqual(bc.classify_maturity("beta; the shell-edit path is verified"), "beta")
         self.assertIsNone(bc.classify_maturity("n/a"))
         self.assertIsNone(bc.classify_maturity(""))
 
@@ -295,7 +320,9 @@ class CatalogTests(unittest.TestCase):
         s = self.items["demo/check-it"]
         self.assertEqual(s["type"], "skill")
         self.assertEqual(s["description"], 'Check the thing carefully. Use when "check it".')
-        self.assertEqual(s["maturity"], "proven")
+        self.assertEqual(s["maturity"], "verified")  # from evidence/evidence.json
+        self.assertEqual(s["readme_maturity"], "proven")
+        self.assertEqual(s["evidence"], {"label": "verified", "note": "Ran live twice.", "date": "2026-10-28"})
         self.assertEqual(s["stages"], [5])  # SDLC.md wins over the README "verify" cell
         self.assertTrue(s["body"].startswith("# Check it"))
         self.assertTrue(s["needs_plugin"])
@@ -306,13 +333,18 @@ class CatalogTests(unittest.TestCase):
 
     def test_maturity_line_beats_table_and_frontmatter_stage(self):
         s = self.items["demo/other-skill"]
-        self.assertEqual(s["maturity"], "new")
+        self.assertEqual(s["readme_maturity"], "new")
+        self.assertEqual(s["maturity"], "beta")
         self.assertEqual(s["stages"], [7])
         self.assertEqual(s["description"], "Quoted: with a colon")
         self.assertFalse(s["needs_plugin"])
 
     def test_unlabeled(self):
-        self.assertEqual(self.items["demo/no-label"]["maturity"], "unlabeled")
+        nl = self.items["demo/no-label"]
+        self.assertEqual(nl["readme_maturity"], "unlabeled")
+        # an invalid evidence label counts as no evidence: the item is "new"
+        self.assertEqual(nl["maturity"], "new")
+        self.assertIsNone(nl["evidence"])
         # no SDLC.md mention, no README row: category default (qa -> 6)
         self.assertEqual(self.items["demo/no-label"]["stages"], [6])
 
@@ -321,13 +353,15 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(a["tools"], ["Read", "Grep", "Glob"])
         self.assertEqual(a["model"], "sonnet")
         self.assertEqual(a["maturity"], "new")
+        self.assertEqual(a["readme_maturity"], "new")
         self.assertEqual(a["stages"], [6])
         self.assertEqual(a["body"].strip(), "You check.")
 
     def test_hook_from_args_and_table(self):
         h = self.items["demo/tidy-guard"]
         self.assertEqual(h["type"], "hook")
-        self.assertEqual(h["maturity"], "proven")
+        self.assertEqual(h["maturity"], "verified")
+        self.assertEqual(h["evidence"]["date"], "2026-10-27")
         self.assertEqual(h["disable"], "DEMO_TIDY=0")
         self.assertEqual(h["triggers"][0]["event"], "PreToolUse")
         self.assertEqual(h["triggers"][0]["matcher"], "Bash|Read")
@@ -367,21 +401,41 @@ class CatalogTests(unittest.TestCase):
             self.assertIn(it["install_mode"], ("standalone", "needs-skill", "plugin-only"), it["id"])
             self.assertIn("requires_skills", it)
             self.assertIn("plugin_only_reason", it)
+            self.assertIn("uses_agent_ids", it)
+            self.assertIn(it["maturity"], ("verified", "beta", "new"), it["id"])
+
+    def test_uses_agents(self):
+        d = self.items["demo/drafter"]
+        self.assertEqual(d["uses_agents"], ["checker", "runner-agent"])
+        self.assertEqual(d["uses_agent_ids"], ["demo/checker", "demo/runner-agent"])
+        self.assertEqual(d["install_mode"], "standalone")
+        self.assertEqual(self.items["demo/runner"]["uses_agent_ids"], [])
+        # agents never carry a uses list of their own
+        self.assertEqual(self.items["demo/checker"]["uses_agents"], [])
+
+    def test_plugin_maturity_from_evidence(self):
+        demo = self.data["plugins"][0]
+        self.assertEqual(demo["maturity"], "mixed")
+        self.assertEqual(self.data["plugins"][1]["maturity"], "external")
+        self.assertEqual(set(self.data["labels"]), {"verified", "beta", "new"})
 
     def test_hook_from_command_string_and_section_switch(self):
         h = self.items["demo/word-hook"]
         self.assertEqual(h["triggers"][0]["event"], "Stop")
         self.assertEqual(h["disable"], "DEMO_WORD=0")
-        self.assertEqual(h["maturity"], "unlabeled")
+        self.assertEqual(h["readme_maturity"], "unlabeled")
+        self.assertEqual(h["maturity"], "new")  # no evidence entry
         self.assertIn("says a word", h["description"])
 
     def test_templates(self):
         t = self.items["demo/thing.md"]
-        self.assertEqual(t["maturity"], "new")
+        self.assertEqual(t["readme_maturity"], "new")
+        self.assertEqual(t["maturity"], "beta")
         self.assertEqual(t["stages"], [1])
         self.assertEqual(t["description"], "A thing to copy")
         kit = self.items["demo/kit"]
         self.assertEqual([f["path"] for f in kit["files"]], ["kit/a.yaml", "kit/b.yaml"])
+        self.assertEqual(kit["readme_maturity"], "new")
         self.assertEqual(kit["maturity"], "new")
         self.assertEqual(kit["description"], "Kit files.")
         self.assertEqual(kit["raw_url"], "")
@@ -391,6 +445,8 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(o["type"], "plugin")
         self.assertTrue(o["external"])
         self.assertEqual(o["source_url"], "https://github.com/someone/outside")
+        self.assertEqual(o["maturity"], "beta")  # external items take an evidence label too
+        self.assertEqual(self.items["sub/sub"]["maturity"], "new")
         sub = self.items["sub/sub"]
         self.assertIn("example.com/r.git", sub["external_repo"])
 
@@ -400,13 +456,57 @@ class CatalogTests(unittest.TestCase):
 
     def test_main_writes_and_check(self):
         out = os.path.join(self.root, "site", "catalog.json")
-        self.assertEqual(bc.main(["--root", self.root, "--out", out]), 0)
-        with open(out) as fh:
-            self.assertEqual(json.load(fh)["schema"], 1)
-        self.assertEqual(bc.main(["--root", self.root, "--out", out, "--check"]), 0)
-        with open(out, "a") as fh:
-            fh.write(" ")
-        self.assertEqual(bc.main(["--root", self.root, "--out", out, "--check"]), 1)
+        index = os.path.join(self.root, "site", "catalog-index.json")
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(bc.main(["--root", self.root, "--out", out]), 0)
+            with open(out) as fh:
+                self.assertEqual(json.load(fh)["schema"], 1)
+            with open(index) as fh:
+                self.assertEqual(json.load(fh)["schema"], 1)
+            self.assertEqual(bc.main(["--root", self.root, "--out", out, "--check"]), 0)
+            with open(index, "a") as fh:
+                fh.write(" ")
+            self.assertEqual(bc.main(["--root", self.root, "--out", out, "--check"]), 1)  # stale index alone fails
+            self.assertEqual(bc.main(["--root", self.root, "--out", out]), 0)
+            with open(out, "a") as fh:
+                fh.write(" ")
+            self.assertEqual(bc.main(["--root", self.root, "--out", out, "--check"]), 1)
+
+    def test_index_is_slim_and_complete(self):
+        idx = bc.build_index(self.data)
+        text = bc.dump_index(idx)
+        self.assertEqual(json.loads(text), idx)
+        self.assertEqual(len(idx["items"]), len(self.data["items"]))
+        for row in idx["items"]:
+            for key in ("id", "plugin", "type", "name", "description", "stages", "maturity", "install_mode",
+                        "requires_skills", "uses_agents", "page_url", "raw_url", "files"):
+                self.assertIn(key, row, row["id"])
+            for key in ("body", "readme", "script_doc", "evidence"):
+                self.assertNotIn(key, row, row["id"])
+            self.assertTrue(row["page_url"].startswith(bc.SITE_URL + "#/item/"), row["page_url"])
+        rows = {r["id"]: r for r in idx["items"]}
+        self.assertEqual(rows["demo/runner"]["dir"], "runner-dir")
+        self.assertEqual([f["path"] for f in rows["demo/runner"]["files"]],
+                         ["SKILL.md", "scripts/lib/util.py", "scripts/run.py"])
+        self.assertEqual(rows["demo/runner"]["files"][2]["raw_url"],
+                         bc.RAW_BASE + "plugins/demo/skills/runner-dir/scripts/run.py")
+        self.assertEqual(rows["demo/runner-agent"]["requires_skills"], ["demo/runner"])
+        self.assertEqual(rows["demo/drafter"]["uses_agents"], ["demo/checker", "demo/runner-agent"])
+        self.assertEqual(rows["demo/check-it"]["maturity"], "verified")
+        self.assertIn("demo", [p["name"] for p in idx["plugins"]])
+        self.assertNotIn("readme", idx["plugins"][0])
+        self.assertIn("--scope project", idx["install"]["plugin"][0])
+        # one plugin or item per line, so an agent can grep it
+        item_lines = [ln for ln in text.split("\n") if ln.startswith(' {"id": ')]
+        self.assertEqual(len(item_lines), len(idx["items"]))
+
+    def test_real_repo_index_is_small(self):
+        """The repo's own index stays readable in one tool call (R7-D1: catalog.json overflowed at 612 KB)."""
+        repo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+        data = bc.build(repo)
+        text = bc.dump_index(bc.build_index(data))
+        self.assertLess(len(text.encode("utf-8")), 120 * 1024)
+        self.assertLess(len(text), len(json.dumps(data)) / 4)
 
     def test_no_local_paths_leak(self):
         blob = json.dumps(self.data)

@@ -2,7 +2,7 @@
   "name": "foundry-iphone-mirror",
   "displayName": "iPhone Mirror Driver",
   "version": "0.1.0",
-  "description": "Drive a real iPhone from your Mac through macOS iPhone Mirroring: screenshot the phone, read it, tap, type, swipe, verify. Ships a skill (the screenshot-read-act-verify loop), an iphone-driver subagent, a stdlib MCP server with typed iphone_* tools, a CLI on PATH, and a doctor. Use it for real-device iOS QA and for on-phone tasks with no Mac-side API. Proven engine, port not yet device-tested.",
+  "description": "Drive a real iPhone from your Mac through macOS iPhone Mirroring: screenshot the phone, read it, tap, type, swipe, verify. Ships a skill (the screenshot-read-act-verify loop), an iphone-driver subagent, a stdlib MCP server with typed iphone_* tools, a CLI on PATH, and a doctor. Use it for real-device iOS QA and for on-phone tasks with no Mac-side API. Ported from a production engine; this port has not driven a phone yet.",
   "author": { "name": "AI Foundry (BYU Marriott)" },
   "license": "MIT",
   "repository": "https://github.com/ai-foundry-byu/foundry-marketplace",

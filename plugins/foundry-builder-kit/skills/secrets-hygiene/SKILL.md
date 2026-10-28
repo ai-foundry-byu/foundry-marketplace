@@ -72,6 +72,8 @@ TEST_FIXTURE = "sk-test-not-a-real-key-000000000000"  # secrets-hygiene: allow (
 
 Or use a `.gitleaksignore` file with the finding fingerprints gitleaks prints.
 
+The bundled scanner skips only values that are wholly a placeholder (`your-key-here`, `<token>`, `xxxxxxxx`, `REPLACE_ME`, `changeme`). A key-shaped value that merely contains `fake`, `dummy` or `example` is still reported, so a made-up test key needs the allow comment above.
+
 ### Acceptance check for Part 1
 
 ```bash

@@ -7,18 +7,21 @@ plugin adds the missing editor, a spec step before the build, and a scored revie
 
 | Item | Type | What it does | SDLC stage | Maturity |
 |---|---|---|---|---|
-| `design-critique` | skill | Subtract-only critic: 8-question constitution (C1-C8), findings schema, four-tier resolver, decision log | build (pre-build) and visual QA | proven |
-| `ui-ux-spec` | skill | Turns a user story into a buildable UI spec: layout per breakpoint, full state matrix, keyboard and touch, copy, tokens, machine-checkable acceptance checks | design / pre-build | proven |
-| `design-system` | skill | Fill-in template for your design system (tokens, contrast table, type scale, spacing, components, vocabulary) that the other items grade against | design | new |
-| `ui-reviewer` | agent | Read-only REVIEW: scores screenshots plus code on a 10-dimension 0-4 rubric, returns token-level must-fixes with file:line. Never edits source | visual QA / ship | proven |
-| `design_gate.py` | script (in `design-critique`, vendored into `design-system`) | Deterministic gate: clicks-to-goal, dead controls, entry points, primary buttons, tap targets, contrast, horizontal scroll, context present; fails on regression vs a baseline | visual QA / CI | new (generalized from a proven per-project gate) |
-| `validate_findings.py` | script (in `design-critique`) | Validates a critique findings file: no "add" verb, deltas on flow findings, nit cap, grounding; with `--verdicts`, one C1-C8 verdict line per surface | visual QA | new |
-| `design-gate.config.json`, `findings.example.json`, `decision.yaml` | templates (in `design-critique/templates/`) | Starting files for the gate config, a findings run, and a decision-log entry | setup | new |
+| `design-critique` | skill | Subtract-only critic: 8-question constitution (C1-C8), findings schema, four-tier resolver, decision log | build (pre-build) and visual QA | verified |
+| `ui-ux-spec` | skill | Turns a user story into a buildable UI spec: layout per breakpoint, full state matrix, keyboard and touch, copy, tokens, machine-checkable acceptance checks | design / pre-build | verified |
+| `design-system` | skill | Fill-in template for your design system (tokens, contrast table, type scale, spacing, components, vocabulary) that the other items grade against | design | beta |
+| `ui-reviewer` | agent | Read-only REVIEW: scores screenshots plus code on a 10-dimension 0-4 rubric, returns token-level must-fixes with file:line. Never edits source | visual QA / ship | beta |
+| `design_gate.py` | script (in `design-critique`, vendored into `design-system`) | Deterministic gate: clicks-to-goal, dead controls, entry points, primary buttons, tap targets, contrast, horizontal scroll, context present; fails on regression vs a baseline | visual QA / CI | verified |
+| `validate_findings.py` | script (in `design-critique`) | Validates a critique findings file: no "add" verb, deltas on flow findings, nit cap, grounding; with `--verdicts`, one C1-C8 verdict line per surface | visual QA | verified |
+| `design-gate.config.json`, `findings.example.json`, `decision.yaml` | templates (in `design-critique/templates/`) | Starting files for the gate config, a findings run, and a decision-log entry | setup | verified |
 
-Maturity: **proven** means generalized from a tool that runs in production in our harness today.
-**new** means written for this marketplace from docs and best practice, not yet battle-tested.
-`design_gate.py` is the generalized form of a gate that runs in production for one of our apps;
-the generic config-driven version, the contrast and target checks, and the validator are new.
+Maturity: the labels come from our test runs on 2026-10-28, recorded in
+[`evidence/evidence.json`](../../evidence/evidence.json). **verified** means the main path passed
+a live end-to-end run in a real Claude Code session with no known major defect left on it.
+**beta** means it works with known gaps: `design-system`'s rewritten extraction commands and
+`ui-reviewer`'s scoring and saved-report fixes have not been re-run live. **new** means little
+or no live testing. A script or template carries the label of the skill that ships it.
+`design_gate.py` is the generalized form of a gate that runs in production for one of our apps.
 
 ## Install
 
@@ -92,7 +95,7 @@ and must stay byte-identical to their canonical file.
 
 ## Using each item
 
-### design-critique (skill, proven)
+### design-critique (skill, verified)
 
 Ask: "critique the design of my app", "what can I remove from the settings page", or
 `/foundry-design:design-critique`. Pre-build it critiques the plan. Post-build it runs the gate
@@ -125,13 +128,13 @@ For CI, copy `skills/design-critique/scripts/design_gate.py` and
 stdlib file; `validate_findings.py` reads `../findings.schema.json` by default (pass `--schema`
 to point elsewhere).
 
-### ui-ux-spec (skill, proven)
+### ui-ux-spec (skill, verified)
 
 Ask: "spec the checkout screen from story US-14" or `/foundry-design:ui-ux-spec`. It fills
 `references/spec-template.md` into `design/specs/<surface>.md`, self-checks against
 `references/floor-checklist.md`, and maps its acceptance checks to gate metrics.
 
-### design-system (skill, new)
+### design-system (skill, beta)
 
 Ask: "set up our design system" or `/foundry-design:design-system`. It inventories the raw
 values your code actually uses, collapses them into tokens, measures contrast for every
@@ -139,7 +142,7 @@ text/background pair, and writes `design/design-system.md` from the template. Fo
 aesthetic direction on a greenfield product, use Anthropic's official `frontend-design` skill from
 the `claude-plugins-official` marketplace; this plugin does not copy it.
 
-### ui-reviewer (agent, proven)
+### ui-reviewer (agent, beta)
 
 Ask: "have the ui-reviewer score the dashboard against design/specs/dashboard.md". It captures
 screenshots (via the gate or Playwright), reads the code, scores 10 dimensions 0-4, and returns a
@@ -151,7 +154,7 @@ it). Every cited `file:line` is re-read before it is reported. It always saves t
 `design/reviews/captures/`, and never edits product source. The rubric is
 `skills/ui-ux-spec/references/rubric.md`.
 
-### design_gate.py (script, new)
+### design_gate.py (script, verified)
 
 1. Install Playwright (only the measuring step needs it):
 

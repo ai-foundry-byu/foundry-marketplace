@@ -1,6 +1,6 @@
 ---
 name: persona-run
-description: Run every user story as a persona (qa/personas/<name>.md) on that persona's device profiles in a real browser, read-only by default so it is safe on production data. Reads the project's own stories.json (the foundry-sdlc format) as is, waits for async data before judging, checks each story's assertions plus the persona's patience budget, horizontal overflow and console errors, reports tap-target size once per device, and reports passed, failed, needs-judgment and inconclusive separately. Use when asked to "run the persona tests", "test as a first-time user", "which stories pass for <persona>", or to set up personas for a project. The persona-tester agent runs this skill.
+description: Run every user story as a persona (qa/personas/<name>.md) on that persona's device profiles in a real browser. Its script is read-only by default (writes are answered inside the browser, never sent). Reads the project's own stories.json (the foundry-sdlc format) as is, opens every surface of each story, waits for async data, checks assertions plus the persona's patience budget, horizontal overflow and console errors, reports tap-target size once per device, and reports passed, failed, needs-judgment and inconclusive separately. With no app built yet, it writes the personas and the run plan and says what it needs to run. Use when asked to "run the persona tests", "test as a first-time user", "see how my app holds up for <a kind of user>" (a busy parent, a new student, a power user), "how would a first-time user do on their phone", "which stories pass for <persona>", or to set up personas for a project, even before the app exists. The persona-tester agent runs this skill.
 ---
 
 # persona-run
@@ -11,12 +11,26 @@ the persona's eyes) belongs to whoever runs it, usually the `persona-tester` age
 
 ## You MUST
 
-1. Pass the project's ONE stories.json (`--stories product/stories.json` in a foundry-sdlc
+1. **Only `persona_run.py` is read-only.** Its guard blocks writes; nothing you write by hand
+   has one. Never hand-write a probe (curl, fetch, a Playwright script) that submits a form or
+   sends POST, PUT, PATCH or DELETE, on any target. A criterion that needs a real write is
+   tested by rerunning `persona_run.py --allow-writes` on localhost only, and the report says so.
+2. Pass the project's ONE stories.json (`--stories product/stories.json` in a foundry-sdlc
    project). Never write a second stories file for this script.
-2. Judge every `needs-judgment` row against its acceptance criteria: JUDGED PASS or JUDGED FAIL,
-   with one sentence of why. Never count a judged row as passed.
-3. Report the site-wide tap-target findings once, as warnings, not as story failures.
-4. Keep it read-only on anything but localhost.
+3. Judging: when the Agent tool is available, delegate the run and the judgment to the
+   `persona-tester` agent. Otherwise judge every `needs-judgment` row yourself, every
+   screenshot of it: JUDGED PASS or JUDGED FAIL with one sentence of why, or say why it could
+   not be judged. Never count a judged row as passed.
+4. Report the site-wide tap-target findings once, as warnings, not as story failures.
+5. An INCONCLUSIVE "needs a concrete URL" row is a route pattern (`/groups/:id`), not a product
+   failure: add `qa.start` (a real path such as `/groups/1`) or `qa.params` to that story.
+6. Signed-in app: before saying you cannot sign in, read `README*`, `docs/` and the stories'
+   `notes` for a documented test-only sign-in route (for example `/__test/login`) and use it.
+7. Stay inside the project: personas come from its `qa/personas/` (or this skill's templates),
+   temp files go under `.qa/tmp/`, never `/tmp`, and never search outside the project
+   (no `find /`).
+8. No app running yet: still copy and fill in the personas (from the PRD) and run `--plan`, then
+   say what is needed to run it: the app started on a local URL and Playwright installed.
 
 ## Setup (once)
 
@@ -48,8 +62,10 @@ block. Example with one scripted story: `templates/stories.example.json`.
 
 | Story has | What the run does |
 |---|---|
-| no `qa` block | opens `surfaces[0]` (when it is a path such as `/groups` or `#/create`), waits for the page to settle, screenshots it: **needs-judgment** against `acceptance` |
+| no steps and no assertions | opens **every** path in `surfaces` (`/groups`, `#/create`) in one session, settles, runs the persona checks and screenshots each (`<story>-<device>-<n>.png`): **needs-judgment** against `acceptance` |
 | `qa: {start, steps, assertions, wait_for}` | opens `qa.start` (default `surfaces[0]`), runs the steps (done-journey format), checks the assertions: passed or failed |
+| a route pattern (`/groups/:id`, `{id}`, `[id]`) | never opened literally. `qa.params: {"id": 1}` fills it (every surface still opens); `qa.start: /groups/1` gives one real path. Otherwise the row is **inconclusive** "needs a concrete URL (add qa.start)" |
+| `qa.expect_console: ["404 (Not Found)"]` | a console error containing any listed substring is expected (an intentional 404 on an invalid route): it does not fail the console check or a `no_console_errors` assertion, and REPORT.md lists it under "Console errors the stories expected" |
 | `status` NOT_BUILT or PARKED | not run (listed under "Not run"), unless you name it with `--story` |
 | a device that is not a web profile (`ios-sim`, `android-emu`) | that device is skipped with a warning |
 | an unknown key | ignored with a warning, never rejected |
@@ -83,19 +99,24 @@ The patience check measures navigation start to content ready (the last data req
 the selector visible), not the load event.
 
 Output: `.qa/persona/<persona-name>/` with `REPORT.md`, `results.json` (including
-`site_findings`, `skipped` and `warnings`), a screenshot per story and device, and
-`tickets/<story>-<device>.md` when `--file-tickets` finds a repeat failure.
+`site_findings`, `skipped` and `warnings`), a screenshot per story, device and surface, and
+`tickets/<story>-<device>.md` when `--file-tickets` finds a repeat failure. A failed row's
+reason names every failing assertion and check ("3 checks failed: a; b; c"), and REPORT.md
+repeats them one per line under "Every failing check", since the table cuts the reason at 140
+characters.
 
-**Read-only by default.** Every POST, PUT, PATCH and DELETE is answered inside the browser and
-never sent. `--allow-writes` is refused for anything but localhost. A simulated write proves
-only that the UI responded.
+**Read-only by default, in the script.** Every POST, PUT, PATCH and DELETE `persona_run.py`'s
+browser makes is answered inside the browser and never sent. `--allow-writes` is refused for
+anything but localhost. A simulated write proves only that the UI responded. The guard covers
+only this script, which is why MUST 1 forbids hand-written write probes.
 
 ## Statuses and exit codes
 
 - `passed`: every assertion and story check (patience, overflow, console) held
 - `failed`: an assertion, step or story check failed
 - `needs-judgment`: no mechanical assertions; a person or agent must judge the screenshot
-- `inconclusive`: nothing was proven (unreachable, sign-in failed, harness error)
+- `inconclusive`: nothing was proven (unreachable, sign-in failed, harness error, a route
+  pattern with no concrete URL)
 
 Tap targets under the persona's `min_tap_target_px` are a **site-wide** check: REPORT.md lists
 them once per device as warnings and they never change a story's status. The WCAG 2.5.8 floor
@@ -109,4 +130,4 @@ ran.
 
 - The run used the project's stories.json and a persona from the project, not the templates.
 - Every `needs-judgment` row has a written JUDGED PASS or JUDGED FAIL with one sentence of why.
-- No real write reached a non-local server.
+- No real write reached a non-local server, and no hand-written probe sent one anywhere.

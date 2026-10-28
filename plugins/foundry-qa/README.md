@@ -44,25 +44,25 @@ python3 -m playwright install webkit
 
 | Item | Type | What it does | SDLC stage | Maturity |
 |---|---|---|---|---|
-| `done-gate` | skill | Definition-of-done gate: deployed SHA check, then a Playwright journey on each device, strict exit codes | ship / verify | proven |
-| `regression-check` | skill | Stack-neutral blast-radius method: grep every consumer, judge each, behavior-test the at-risk ones | build / verify | proven |
-| `a11y-check` | skill | axe-core in a real browser plus a manual WCAG 2.2 AA floor checklist | verify | proven |
-| `visual-baseline` | skill | Screenshot baselines, pixel diff with threshold and tolerance, deliberate approve step | verify | proven |
-| `persona-run` | skill | Runs every user story as a persona on its devices, read-only; persona checks and repeat-failure tickets (used by persona-tester) | verify / user acceptance | proven |
-| `explore` | skill | Read-only same-origin crawler for console errors, broken links, 5xx, overflow and empty states (used by explorer and web-qa) | verify | proven (pattern) |
-| `web-qa` | agent | Drives the app with Playwright: journeys, a11y, visual, console and network errors, mobile emulation; files findings with repro steps | verify | proven |
-| `persona-tester` | agent | Tests every user story as a persona across device profiles, read-only by default; reports judged versus passed; tickets repeated failures | verify / user acceptance | proven |
-| `explorer` | agent | Curious-human crawler plus a manual probe list: edge cases, empty states, Back, refresh, double submit | verify | proven (pattern) |
-| `skills/done-gate/scripts/done_gate.py` | script | The gate itself (journey runner, SHA check, read-only guard) | ship / verify | proven |
-| `skills/persona-run/scripts/persona_run.py` | script | Persona story runner with persona checks and ticket filing | verify | proven |
-| `skills/a11y-check/scripts/a11y_check.py` | script | axe-core runner | verify | proven |
-| `skills/visual-baseline/scripts/visual_baseline.py` | script | capture / compare / check / approve | verify | proven |
-| `skills/explore/scripts/explore.py` | script | Same-origin read-only crawler | verify | proven (pattern) |
-| `skills/done-gate/scripts/qa_yaml.py` | script | Dependency-free YAML subset parser so students do not need PyYAML | support | new |
-| `skills/done-gate/scripts/qa_session.py` | script | Shared browser-session helper: the `auth` block for signed-in apps (storage state, headers, cookies, login steps), the `login` helper that saves a storage state, the settle wait, and the Playwright-missing fix | support | new |
-| `skills/done-gate/templates/done-journey.yaml` | template | Annotated journey to copy into your repo | ship | new |
-| `skills/persona-run/templates/stories.example.json` | template | Example of the foundry-sdlc stories.json shape, with an optional `qa` block on scripted stories | requirements / verify | new |
-| `skills/persona-run/templates/personas/*.md` | template | Persona template plus two examples: first-time mobile user, power user on desktop | requirements / verify | new |
+| `done-gate` | skill | Definition-of-done gate: deployed SHA check, then a Playwright journey on each device, strict exit codes | ship / verify | verified |
+| `regression-check` | skill | Stack-neutral blast-radius method: grep every consumer, judge each, behavior-test the at-risk ones | build / verify | verified |
+| `a11y-check` | skill | axe-core in a real browser plus a manual WCAG 2.2 AA floor checklist | verify | verified |
+| `visual-baseline` | skill | Screenshot baselines, pixel diff with threshold and tolerance, deliberate approve step | verify | beta |
+| `persona-run` | skill | Runs every user story as a persona on its devices, read-only; persona checks and repeat-failure tickets (used by persona-tester) | verify / user acceptance | verified |
+| `explore` | skill | Read-only same-origin crawler for console errors, broken links, 5xx, overflow and empty states (used by explorer and web-qa) | verify | verified |
+| `web-qa` | agent | Drives the app with Playwright: journeys, a11y, visual, console and network errors, mobile emulation; files findings with repro steps | verify | verified |
+| `persona-tester` | agent | Tests every user story as a persona across device profiles, read-only by default; reports judged versus passed; tickets repeated failures | verify / user acceptance | beta |
+| `explorer` | agent | Curious-human crawler plus a manual probe list: edge cases, empty states, Back, refresh, double submit | verify | beta |
+| `skills/done-gate/scripts/done_gate.py` | script | The gate itself (journey runner, SHA check, read-only guard) | ship / verify | verified |
+| `skills/persona-run/scripts/persona_run.py` | script | Persona story runner with persona checks and ticket filing | verify | verified |
+| `skills/a11y-check/scripts/a11y_check.py` | script | axe-core runner | verify | verified |
+| `skills/visual-baseline/scripts/visual_baseline.py` | script | capture / compare / check / approve | verify | beta |
+| `skills/explore/scripts/explore.py` | script | Same-origin read-only crawler | verify | verified |
+| `skills/done-gate/scripts/qa_yaml.py` | script | Dependency-free YAML subset parser so students do not need PyYAML | support | verified |
+| `skills/done-gate/scripts/qa_session.py` | script | Shared browser-session helper: the `auth` block for signed-in apps (storage state, headers, cookies, login steps), the `login` helper that saves a storage state, the settle wait, and the Playwright-missing fix | support | verified |
+| `skills/done-gate/templates/done-journey.yaml` | template | Annotated journey to copy into your repo | ship | verified |
+| `skills/persona-run/templates/stories.example.json` | template | Example of the foundry-sdlc stories.json shape, with an optional `qa` block on scripted stories | requirements / verify | verified |
+| `skills/persona-run/templates/personas/*.md` | template | Persona template plus two examples: first-time mobile user, power user on desktop | requirements / verify | verified |
 
 Every script lives inside the skill that uses it, so each skill folder works on its own.
 `done_gate.py`, `qa_yaml.py` and `qa_session.py` are shared: the canonical copies are in `skills/done-gate/scripts/`,
@@ -72,14 +72,19 @@ copy of `persona_run.py`). `vendor.json` lists every copy and its canonical file
 
 ### What "maturity" means here
 
-- **proven**: generalized from a tool that runs in production in our own Claude Code harness
-  today. The method and the exit-code contracts come from that tool. The code in this plugin is
-  a fresh, dependency-light rewrite of it for public use, tested against a fixture site in a
-  real browser (see Tests below).
-- **proven (pattern)**: the approach runs in production in our harness; this version's
-  details (the crawl signals and probe list) were written for this marketplace.
-- **new**: written for this marketplace from documentation and best practice, not yet
-  battle-tested.
+The labels come from our test runs on 2026-10-28, recorded with what we ran in
+[`evidence/evidence.json`](../../evidence/evidence.json). A script or template carries the
+label of the skill that ships it.
+
+- **verified**: the main path passed a live end-to-end run in a real Claude Code session, with
+  no known major defect left on it. The method and exit-code contracts come from tools that run
+  in production in our own harness; the code here is a fresh, dependency-light rewrite.
+- **beta**: works with known gaps. `visual-baseline`: an agent once read the red diff marker as
+  the page's colour, and the doc fix has not been re-run live. `explorer`: its fixes for finding
+  a test sign-in route and reporting every crawler finding are not re-run live yet.
+  `persona-tester`: in its one live run after the fixes it found 7 of 12 planted defects and
+  4 of 8 story verdicts matched.
+- **new**: little or no live testing yet.
 
 ## How to use each item
 
@@ -179,8 +184,12 @@ The red is a marker for changed pixels, not the page's color: compare `current/`
 Ask: "use web-qa to QA the checkout flow on localhost" or "QA prod after the deploy
 (read-only)". It plans journeys from your acceptance criteria (or one per core flow when there
 are none), runs the done gate on desktop and phone, axe, a visual check and a crawl, reads the
-screenshots, re-runs failures, and always writes `.qa/findings.md` with a Repro section per
-finding.
+screenshots, re-runs failures, and ends every run with the full text of `.qa/findings.md` in
+one fenced block, each finding with a severity, numbered Repro steps and a `Reproduced: N of N`
+line. The calling session saves that block to `.qa/findings.md` verbatim: Claude Code refuses a
+subagent's Write of a report file, so the agent returns it as text. explorer and
+persona-tester also report as text; their scripts write their own `.qa/` outputs. Plain
+requests such as "QA this app like a tester" are meant to route to it.
 
 ### persona-tester (agent)
 
@@ -193,8 +202,12 @@ mkdir -p qa/personas && cp "${CLAUDE_PLUGIN_ROOT}"/skills/persona-run/templates/
 Edit them to match your real users, then ask: "use persona-tester to test every story as the
 first-time mobile user on staging". It reads the project's ONE stories.json as is (the
 foundry-sdlc format, `product/stories.json`; unknown keys are warnings, never errors). A story
-without a `qa` block opens `surfaces[0]` and is judged against its acceptance criteria; a
-`qa: {start, steps, assertions, wait_for}` block makes it scripted. Under the hood it runs the
+with no steps or assertions opens **every** path in `surfaces`, checks and screenshots each,
+and is judged against its acceptance criteria; a `qa: {start, steps, assertions, wait_for}`
+block makes it scripted. A route pattern such as `/groups/:id` is never opened literally: add
+`qa.params: {"id": 1}` or `qa.start: /groups/1`, otherwise the row is `inconclusive` "needs a
+concrete URL (add qa.start)" rather than a false 404 failure. The agent reports one row per
+story and device and judges every needs-judgment screenshot. Under the hood it runs the
 `persona-run` skill:
 
 ```bash
@@ -205,9 +218,10 @@ Checks run after the page settles (network quiet, then `qa.wait_for`, then 800 m
 patience check measures navigation start to content ready. Tap targets under the persona's
 minimum are reported once per device as site-wide warnings, not as story failures.
 
-It is **read-only by default**: every POST/PUT/PATCH/DELETE is answered inside the browser and
-never sent, so it is safe against production. `--allow-writes` is refused for anything but
-localhost. It reports `passed`, `failed`, `needs-judgment` and `inconclusive` separately, and
+The script is **read-only by default**: every POST/PUT/PATCH/DELETE its browser makes is
+answered inside the browser and never sent. Only the script's guard is read-only, so the skill
+and the agent forbid hand-written probes (curl, fetch, a Playwright script) that submit a form or
+send a write. `--allow-writes` is refused for anything but localhost. It reports `passed`, `failed`, `needs-judgment` and `inconclusive` separately, and
 the agent labels its own screenshot judgments JUDGED, never passed. `--file-tickets` writes a
 ticket only for failures seen on two runs in a row.
 
@@ -220,7 +234,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/explore/scripts/explore.py" --url http://l
 ```
 
 It crawls hash routes (`#/group/1`) as pages and keeps each page's console and network errors
-on that page. Then the agent always runs four probes on the core flow (Back after a search keeps
+on that page. Phone and tablet overflow compares `scrollWidth` with
+`document.documentElement.clientWidth`, so a 939 px page on a 390 px phone is caught (mobile
+emulation widens `window.innerWidth` to the content, which hid it before). The Back-button check
+never clicks a skip link or `#anchor`, and skips a click that does not navigate within 3 s. The
+agent carries every crawler `error` and `warn` into its report. Then the agent always runs four probes on the core flow (Back after a search keeps
 its state, a slow first load shows a loading indicator, the empty state has a message, double
 submit), then the rest of its list (refresh mid-flow, odd input, deep links), with submit and
 double-submit probes only on local or staging.
@@ -274,16 +292,18 @@ cd tests && python3 -m unittest -v
 The unit tests (vendored copies match their canonical files, YAML parser, journey validation
 including the foundry-sdlc template keys, `last.json`, SHA extraction and matching, the
 exit-code contract, PNG codec, pixel diff, persona and foundry-sdlc stories.json parsing,
-site-wide checks, the auth block and login-step validation, the Playwright-missing fix,
-read-only rules, ticket logic, crawler URL rules for hash routes) need no browser. `test_browser_integration.py` starts a local fixture site
+site-wide checks, route patterns and `qa.params`, the auth block and login-step validation, the
+Playwright-missing fix, read-only rules, ticket logic, crawler URL rules for hash routes and the
+Back-check target choice) need no browser. `test_browser_integration.py` starts a local fixture site
 and runs every script in headless Chromium, including a list that loads 1.2 s after the load
-event, a hash-routed page, and a page behind sign-in (headers, cookies, login steps and a saved
+event, a hash-routed page, a hash app with a skip link, a page 939 px wide at a 390 px phone, a
+story with several surfaces and one with a route pattern, and a page behind sign-in (headers, cookies, login steps and a saved
 storage state); it skips itself if Playwright or Chromium is not installed, and the a11y cases
 skip if axe-core cannot be downloaded.
 
 Maturity note: signed-in sessions (`qa_session.py`), the 2.5.8 target-size check, hash-route
-crawling and the settle wait are new in this release and so far tested only against the
-fixture site.
+crawling and the settle wait were used in live student-journey runs as well as against the
+fixture sites.
 
 ## Known limitations
 
@@ -300,6 +320,15 @@ fixture site.
 - Visual baselines are sensitive to OS fonts and browser version. Capture baselines and checks
   in the same environment.
 - axe-core catches only part of WCAG. The manual checklist is not optional.
+- The QA agents look for a documented test-only sign-in route (README, `docs/`, stories
+  `notes`) before giving up on signed-in pages, so describe yours there. They keep probes, cookie
+  jars and temp files under `.qa/` and never search outside the project.
+- A console 404 your story expects counts as a failure unless the story lists it in
+  `qa.expect_console` (substrings, matched against each console error).
+- Claude Code refuses a subagent's Write of a report file. web-qa returns `.qa/findings.md` as
+  one fenced block for the calling session to save; if the session does not save it, the file
+  is not there. In our test the main session printed the list after a background run instead
+  of saving it, so ask it to save the block.
 - The persona judgments are an agent's reading of screenshots. They are labeled JUDGED for a
   reason: they are not a substitute for watching real users.
 

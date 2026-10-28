@@ -16,7 +16,16 @@ What counts as a code change (any of these):
   * an Edit/Write/MultiEdit/NotebookEdit to a non-doc file inside the project.
   * outside git only, a command-pattern fallback: write targets of > and >>,
     tee, sed -i, perl -i, cp, mv, and inline python/node code that writes a
-    file, git apply and patch.
+    file (the literal path it opens when every write names one), git apply and
+    patch. A baseline taken outside git is retaken once the project is a repo
+    (a session that starts with git init).
+
+Generated files do not count while unchanged: a generator (the foundry-sdlc
+scaffolder) lists what it wrote in .foundry/generated.json at the project or
+repo root, {"version": 1, "generator": "<name>", "files": [{"path": "<relative to
+the folder holding .foundry/>", "sha256": "<hex digest of the file bytes>"}]}.
+A listed file whose bytes still hash to its sha256 is not a code change; once
+edited it counts again. A missing or malformed manifest changes nothing.
 
 A Bash test or typecheck command (pytest, npm test, tsc, go test, cargo test,
 ...) marks the session tested and moves the snapshot to "after this test run".
@@ -276,6 +285,54 @@ def _dirty_sources(root: str, project: str) -> list[str] | None:
     return out
 
 
+MANIFEST = os.path.join(".foundry", "generated.json")
+
+
+def _sha256(path: str) -> str:
+    import hashlib
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return "-"
+
+
+def generated_files(*roots: str) -> dict:
+    """realpath -> sha256 from each root's .foundry/generated.json (malformed: ignored)."""
+    out: dict = {}
+    for root in dict.fromkeys(r for r in roots if r):
+        data = c.read_json(os.path.join(root, MANIFEST))
+        files = data.get("files") if isinstance(data, dict) else None
+        if not isinstance(files, list):
+            continue
+        for entry in files[:MAX_FILES]:
+            if not isinstance(entry, dict):
+                continue
+            rel, digest = entry.get("path"), entry.get("sha256")
+            if isinstance(rel, str) and rel and isinstance(digest, str) and \
+                    re.fullmatch(r"[0-9a-f]{64}", digest.lower()) and not os.path.isabs(rel):
+                full = c.realpath(os.path.join(root, rel))
+                if c.is_inside(full, c.realpath(root)):
+                    out[full] = digest.lower()
+    return out
+
+
+def _drop_generated(files: list[str], project: str, root: str, sid: str) -> list[str]:
+    gen = generated_files(project, root)
+    if not gen:
+        return files
+    keep, skipped = [], []
+    for f in files:
+        rp = c.realpath(f) if f != UNKNOWN else f
+        (skipped if rp in gen and _sha256(rp) == gen[rp] else keep).append(f)
+    if skipped:
+        c.log(HOOK, "skip-generated", sid, files=", ".join(skipped[:10]))
+    return keep
+
+
 def take_snapshot(project: str) -> dict:
     root = _repo_root(project)
     if not root:
@@ -332,8 +389,10 @@ def changed_since(snap: dict, project: str) -> list[str]:
         return []
     cands = set(base) | set(now)
     head = _head(root)
-    if snap.get("head") and head and head != snap.get("head"):
-        r = c.git(root, "diff", "--name-only", "-z", snap["head"], head)
+    if head and head != snap.get("head"):
+        # no HEAD at the snapshot (a fresh git init): every file of the new history is a candidate
+        r = c.git(root, "diff", "--name-only", "-z", snap["head"], head) if snap.get("head") else \
+            c.git(root, "ls-tree", "-r", "--name-only", "-z", head)
         if r is not None and r.returncode == 0:
             cands |= {os.path.join(root, x) for x in r.stdout.split("\0")
                       if x and is_source_file(os.path.join(root, x), project)}
@@ -356,6 +415,10 @@ def _drop_unchanged(snap: dict, files: list[str]) -> list[str]:
 _REDIR = re.compile(r"^(?:\d|&)?>>?\|?(.*)$")
 _INLINE_WRITE = re.compile(r"open\([^)]*,\s*(?:mode\s*=\s*)?['\"][^'\"]*[wax]|\.write_(?:text|bytes)\(|"
                            r"writeFile(?:Sync)?\(|File\.write\(|shutil\.(?:copy|move)")
+_LITERAL_WRITE = re.compile(
+    r"open\(\s*(['\"])([^'\"]+)\1\s*,\s*(?:mode\s*=\s*)?['\"][^'\"]*[wax]|"
+    r"Path\(\s*(['\"])([^'\"]+)\3\s*\)\.write_(?:text|bytes)\(|"
+    r"writeFile(?:Sync)?\(\s*(['\"])([^'\"]+)\5|File\.write\(\s*(['\"])([^'\"]+)\7")
 _INTERP = {"python", "python3", "node", "ruby", "perl", "deno", "bun"}
 
 
@@ -409,7 +472,12 @@ def shell_write_targets(cmd: str, cwd: str) -> list[str]:
             out.append(UNKNOWN)
         elif head in _INTERP and _INLINE_WRITE.search(cmd) and (
                 "<<" in cmd or any(t in ("-c", "-e", "-") for t in argv[1:])):
-            out.append(UNKNOWN)
+            named = [m.group(2) for m in _LITERAL_WRITE.finditer(cmd)]
+            if named and len(named) >= len(_INLINE_WRITE.findall(cmd)):
+                for t in named:
+                    add(t)  # every write names its file: README.md is a doc, not code
+            else:
+                out.append(UNKNOWN)
     return out
 
 
@@ -426,6 +494,8 @@ def snapshot(event: dict, sid: str, fresh: bool = False) -> dict:
     after a test command (so it reflects the code the tests saw)."""
     m = _paths(sid)
     snap = None if fresh or os.path.exists(m["rebase"]) else c.read_json(_snap_path(sid))
+    if isinstance(snap, dict) and not snap.get("git") and _repo_root(project_dir(event)):
+        snap = None  # taken before git init: measure effects from here on (fallback marks stay)
     if not isinstance(snap, dict):
         snap = take_snapshot(project_dir(event))
         c.write_json(_snap_path(sid), snap)
@@ -446,7 +516,7 @@ def untested_changes(event: dict, sid: str) -> list[str]:
         if p not in seen and rp not in seen:
             files.append(p)
             seen.update((p, rp))
-    return files
+    return _drop_generated(files, project_dir(event), snap.get("root") or "", sid)
 
 
 def _chain(cmd: str) -> list[tuple[list[str], str]]:
@@ -565,7 +635,8 @@ def _mark_dirty(m: dict, paths: list[str]) -> None:
 
 
 def _short(files: list[str]) -> str:
-    return ", ".join(os.path.basename(f) for f in files[:6]) + (" ..." if len(files) > 6 else "")
+    names = [UNKNOWN.strip("()") if f == UNKNOWN else os.path.basename(f) for f in files[:6]]
+    return ", ".join(names) + (" ..." if len(files) > 6 else "")
 
 
 def handle_pre(event: dict) -> None:

@@ -5,14 +5,18 @@
 
   var SITE = "https://ai-foundry-byu.github.io/foundry-marketplace/";
   var CATALOG_URL = SITE + "catalog.json";
+  // The slim index (no bodies) is what agents read: catalog.json is too big for one tool call.
+  var INDEX_URL = SITE + "catalog-index.json";
   var TYPE_ORDER = { skill: 0, agent: 1, hook: 2, template: 3, plugin: 4 };
   var TYPE_LABEL = { skill: "Skill", agent: "Agent", hook: "Hook", template: "Template", plugin: "Plugin" };
-  var MAT_LABEL = { proven: "Proven", "new": "New", unlabeled: "Unlabeled", external: "External", mixed: "Mixed" };
+  var MAT_ORDER = ["verified", "beta", "new"];
+  var MAT_LABEL = { verified: "Verified", beta: "Beta", "new": "New", external: "External", mixed: "Mixed" };
   var MAT_EXPLAIN = {
-    proven: "Runs in production in our own harness today, generalized for this marketplace.",
-    "new": "Written for this marketplace, not yet battle-tested. Please report what breaks.",
-    unlabeled: "The plugin README does not say how mature this is yet.",
-    external: "Maintained in its own repository. Read its README for status."
+    verified: "Passed a live end-to-end run of its main path in a real Claude Code session.",
+    beta: "Partly live-tested or unit-tested, with known gaps listed under What we tested.",
+    "new": "Little or no live testing yet. Try it on something low stakes first, and report what breaks.",
+    external: "Maintained in its own repository. Read its README for status.",
+    mixed: "Its items carry different labels. Each item page says what we tested."
   };
 
   var app = document.getElementById("app");
@@ -172,6 +176,31 @@
   function requiredSkills(it) {
     return (it.requires_skill_ids || []).map(function (id) { return byId[id]; }).filter(Boolean);
   }
+  function usedAgents(it) {
+    return (it.uses_agent_ids || []).map(function (id) { return byId[id]; }).filter(Boolean);
+  }
+  // Everything a single install must bring along: agents a skill hands work to, skills an
+  // agent runs, and so on, each once, never the item itself.
+  function deps(it) {
+    var out = { skills: [], agents: [] };
+    var seen = {};
+    seen[it.id] = true;
+    var queue = [it];
+    while (queue.length) {
+      var cur = queue.shift();
+      usedAgents(cur).concat(requiredSkills(cur)).forEach(function (d) {
+        if (seen[d.id]) return;
+        seen[d.id] = true;
+        (d.type === "agent" ? out.agents : out.skills).push(d);
+        queue.push(d);
+      });
+    }
+    return out;
+  }
+  function depNames(list) { return list.map(function (d) { return d.dir || d.name; }); }
+  function depLinks(list) {
+    return list.map(function (d) { return '<a href="' + itemHref(d) + '">' + esc(d.dir || d.name) + "</a>"; }).join(", ");
+  }
   function codeList(names) {
     return names.map(function (n) { return "<code>" + esc(n) + "</code>"; }).join(", ");
   }
@@ -193,7 +222,7 @@
     lines.push("done");
     return lines.join("\n");
   }
-  function skillCmd(it, scope) {
+  function skillFilesCmd(it, scope) {
     var dir = skillDir(it, scope);
     var files = it.files || [];
     if (files.length <= 1) {
@@ -202,16 +231,22 @@
     var base = it.raw_url.replace(/\/SKILL\.md$/, "");
     return fileLoop(dir, base, files.map(function (f) { return f.path; }), true);
   }
-  function agentCmd(it, scope) {
+  function agentFileCmd(it, scope) {
     var dir = agentDir(scope);
-    var one = "mkdir -p " + dir + " && curl -fsSL " + it.raw_url + " -o " + dir + "/" + it.name + ".md";
-    var skills = requiredSkills(it);
-    if (!skills.length) return one;
-    // One script: the agent file, then every skill whose scripts it runs.
-    return ["# The agent", one].concat(skills.map(function (sk) {
-      return "\n# The skill it needs: " + (sk.dir || sk.name) + "\n" + skillCmd(sk, scope);
+    return "mkdir -p " + dir + " && curl -fsSL " + it.raw_url + " -o " + dir + "/" + it.name + ".md";
+  }
+  // One script: the item, then every agent and skill it brings along (see deps).
+  function withDeps(it, scope, head, first) {
+    var d = deps(it);
+    if (!d.agents.length && !d.skills.length) return first;
+    return ["# " + head, first].concat(d.agents.map(function (ag) {
+      return "\n# The agent " + ag.name + ", which this " + it.type + " hands work to\n" + agentFileCmd(ag, scope);
+    }), d.skills.map(function (sk) {
+      return "\n# The skill it needs: " + (sk.dir || sk.name) + "\n" + skillFilesCmd(sk, scope);
     })).join("\n");
   }
+  function skillCmd(it, scope) { return withDeps(it, scope, "The skill", skillFilesCmd(it, scope)); }
+  function agentCmd(it, scope) { return withDeps(it, scope, "The agent", agentFileCmd(it, scope)); }
   function templateCmd(it) {
     var files = it.files || [];
     if (files.length === 1 && it.raw_url) {
@@ -222,26 +257,38 @@
     var base = first.raw_url.slice(0, first.raw_url.length - first.path.length).replace(/\/$/, "");
     return fileLoop(".", base, files.map(function (f) { return f.path; }));
   }
+  function quoted(list) { return list.map(function (d) { return "\"" + d.id + "\""; }).join(" and "); }
+  function depsPrompt(it, scope) {
+    var d = deps(it);
+    var parts = [];
+    if (d.agents.length) {
+      parts.push(" It hands work to " + (d.agents.length > 1 ? "the agents " : "the agent ") + quoted(d.agents) +
+        ", so install " + (d.agents.length > 1 ? "each one" : "it") + " too: download its raw_url to " + agentDir(scope) + "/<its name>.md.");
+    }
+    if (d.skills.length) {
+      parts.push(" " + (it.type === "agent" ? "It" : "Those agents") + " run scripts from " + (d.skills.length > 1 ? "the skills " : "the skill ") +
+        quoted(d.skills) + ", so install " + (d.skills.length > 1 ? "each one" : "it") + " too: download every file in its \"files\" list into " +
+        (scope === "project" ? ".claude/skills/" : "~/.claude/skills/") + "<its dir>/ keeping the folder layout, and make the files under scripts/ executable.");
+    }
+    return parts.join("");
+  }
   function agentPrompt(it, scope) {
     var where = scope === "project" ? "this project only" : "all my projects";
     var id = it.id;
+    var read = "Read " + INDEX_URL + " (parse it with python3 or jq) and find the item with id \"" + id + "\". ";
     if (it.type === "skill" && !pluginOnly(it)) {
-      return "Read " + CATALOG_URL + " and find the item with id \"" + id + "\". Install that skill for " + where +
+      return read + "Install that skill for " + where +
         ": download every file in its \"files\" list from its raw_url into " + skillDir(it, scope) +
-        "/ keeping the folder layout, and make the files under scripts/ executable. Then read the SKILL.md and tell me in two sentences when you will use it.";
+        "/ keeping the folder layout, and make the files under scripts/ executable." + depsPrompt(it, scope) +
+        " Then read the SKILL.md and tell me in two sentences when you will use it.";
     }
     if (it.type === "agent" && !pluginOnly(it)) {
-      var skills = requiredSkills(it);
-      return "Read " + CATALOG_URL + " and find the item with id \"" + id + "\". Install that subagent for " + where +
-        ": download its raw_url to " + agentDir(scope) + "/" + it.name + ".md." +
-        (skills.length ? " It runs scripts from " + (skills.length > 1 ? "the skills " : "the skill ") +
-          skills.map(function (sk) { return "\"" + sk.id + "\""; }).join(" and ") +
-          ", so install " + (skills.length > 1 ? "each one" : "it") + " too: download every file in its \"files\" list into " +
-          (scope === "project" ? ".claude/skills/" : "~/.claude/skills/") + "<its dir>/ keeping the folder layout, and make the files under scripts/ executable." : "") +
+      return read + "Install that subagent for " + where +
+        ": download its raw_url to " + agentDir(scope) + "/" + it.name + ".md." + depsPrompt(it, scope) +
         " Then tell me in two sentences what it does and when you will hand work to it.";
     }
     if (it.type === "template") {
-      return "Read " + CATALOG_URL + " and find the item with id \"" + id + "\". Copy that template's files into this project where they belong, " +
+      return read + "Copy that template's files into this project where they belong, " +
         "fill in the placeholders from what you know about this project, and show me what you changed.";
     }
     return "Install the " + it.plugin + " plugin from the AI Foundry marketplace: run /plugin marketplace add " + DATA.marketplace.repo +
@@ -250,10 +297,15 @@
       " and tell me what it now does on its own" + (it.type === "hook" ? ", including how to turn the " + it.name + " hook off" : "") + ".";
   }
   function sitePrompt() {
-    return "Read " + CATALOG_URL + ". It lists skills, agents, hooks and templates for Claude Code, each with an SDLC stage (0 Scaffold to 8 Feedback) and a maturity label. " +
-      "Work out which stage this project is in from its files, pick the items that fit that stage, and tell me which ones you picked and why. " +
-      "Then install them: prefer whole plugins (/plugin marketplace add " + DATA.marketplace.repo + ", then /plugin install <plugin>@" + DATA.marketplace.name +
-      "), and for a single skill or agent copy its files from their raw_url into .claude/skills/<name>/ or .claude/agents/.";
+    var mp = DATA.marketplace;
+    return "Read the catalog index at " + INDEX_URL + ". It is about 90 KB of JSON, so parse it instead of printing it whole, for example: " +
+      "curl -fsSL " + INDEX_URL + " | python3 -c \"import json,sys; [print(i['id'], i['type'], i['stages'], i['maturity'], i['description'][:100]) for i in json.load(sys.stdin)['items']]\". " +
+      "It lists skills, agents, hooks and templates for Claude Code, each with an SDLC stage (0 Scaffold to 8 Feedback) and a maturity label (verified, beta or new). " +
+      "Work out which stage this project is in from its files and its README, pick the plugins whose items fit that stage, and tell me which you picked, which you skipped, and why. " +
+      "Then install whole plugins for this project: in the shell run `claude plugin marketplace add " + mp.repo + " --scope project`, then " +
+      "`claude plugin install <plugin>@" + mp.name + " --scope project` for each one (if there is no claude command, give me the /plugin commands to type instead). " +
+      "Copy a single skill or agent only if I ask for one: then download every file in its files list into .claude/skills/<dir>/ or .claude/agents/<name>.md, plus the items in its requires_skills and uses_agents. " +
+      "Finish by telling me to run /reload-plugins or restart Claude Code.";
   }
 
   // ------------------------------------------------------------ cards
@@ -292,7 +344,7 @@
   function pageHome() {
     setTitle("");
     var items = DATA.items.filter(function (i) { return !i.external; });
-    var proven = items.filter(function (i) { return i.maturity === "proven"; }).length;
+    var verified = items.filter(function (i) { return i.maturity === "verified"; }).length;
     var starters = DATA.plugins.filter(function (p) { return p.starter; });
     var others = DATA.plugins.filter(function (p) { return !p.starter; });
     var mp = DATA.marketplace;
@@ -300,10 +352,10 @@
       '<section class="hero"><div class="wrap">' +
       "<h1 tabindex=\"-1\">Build your own Claude Code harness, one tested piece at a time.</h1>" +
       "<p>The AI Foundry Marketplace is a free, open set of skills, agents, hooks and templates for Claude Code, organized around the eight-stage SDLC we use to ship software with agents. " +
-      "Every item says whether it runs in our own harness today or was written for this marketplace and is not yet battle-tested.</p>" +
+      "Every item carries a label from our own live tests: verified, beta or new, and its page says what we tested.</p>" +
       '<div class="actions"><a class="btn btn-primary" href="#/browse">Browse everything</a><a class="btn btn-ghost" href="#/sdlc">See the SDLC</a></div>' +
       '<div class="stats"><span><strong>' + items.length + "</strong>items</span><span><strong>" + DATA.plugins.length +
-      "</strong>plugins</span><span><strong>" + proven + "</strong>proven in production</span><span><strong>9</strong>SDLC stages</span></div>" +
+      "</strong>plugins</span><span><strong>" + verified + "</strong>verified in live runs</span><span><strong>9</strong>SDLC stages</span></div>" +
       "</div></section>" +
 
       '<div class="wrap">' +
@@ -380,7 +432,7 @@
     var types = ["skill", "agent", "hook", "template", "plugin"].filter(function (t) {
       return DATA.items.some(function (i) { return i.type === t; });
     });
-    var mats = ["proven", "new", "unlabeled", "external"].filter(function (m) {
+    var mats = MAT_ORDER.concat(["external"]).filter(function (m) {
       return DATA.items.some(function (i) { return i.maturity === m; });
     });
     return {
@@ -526,12 +578,19 @@
       tabs.push(pluginTab);
     } else if (it.type === "skill") {
       var n = (it.files || []).length;
+      var sd = deps(it);
+      var missing = (it.uses_agents || []).length > usedAgents(it).length;
       tabs.push({
         id: "single", label: "Just this skill",
-        html: "<p>No plugin system needed. The skill is self-contained: this copies " +
+        html: "<p>No plugin system needed. " + (sd.agents.length ? "" : "The skill is self-contained: ") + "This copies " +
           (n > 1 ? "all " + n + " of its files" : "its file") + " from GitHub into one folder" +
           (n > 1 ? ", keeping the subfolders and making its scripts executable" : "") + ". A copy does not update; reinstall to update it.</p>" +
-          scopeToggle("scope-skill") + '<div data-cmd="skill"></div>'
+          (sd.agents.length ? "<p>This skill hands work to " + (sd.agents.length > 1 ? "the agents " : "the agent ") + codeList(depNames(sd.agents)) +
+            ", so the script installs " + (sd.agents.length > 1 ? "them" : "it") + " into the agents folder too" +
+            (sd.skills.length ? ", plus " + (sd.skills.length > 1 ? "the skills " : "the skill ") + codeList(depNames(sd.skills)) + " that " +
+              (sd.agents.length > 1 ? "they need" : "it needs") : "") + ".</p>" : "") +
+          scopeToggle("scope-skill") + '<div data-cmd="skill"></div>' +
+          (missing ? '<div class="notice notice-info"><p>One of the agents it names is not in this plugin, so this script cannot bring it along. Install the whole <strong>' + esc(it.plugin) + "</strong> plugin instead.</p></div>" : "")
       });
       tabs.push(pluginTab);
     } else if (it.type === "agent") {
@@ -545,7 +604,8 @@
             ". The agent is one Markdown file that runs scripts living in " + (names.length > 1 ? "those skills" : "that skill") +
             ", and it looks for " + (names.length > 1 ? "them" : "it") + " in <code>.claude/skills/</code> or <code>~/.claude/skills/</code>. This script installs the agent and " +
             (names.length > 1 ? "each skill" : "the skill") + " together.</p>" :
-          "<p>No plugin system needed. A subagent is one Markdown file.</p>") +
+          "<p>No plugin system needed. A subagent is one Markdown file" +
+            (deps(it).agents.length ? ", and this script also installs the agents it hands work to" : "") + ".</p>") +
           scopeToggle("scope-agent") + '<div data-cmd="agent"></div>' +
           (needs && skills.length < (it.requires_skills || []).length ? '<div class="notice notice-info"><p>One of the skills it needs is not in the catalog. Install the whole <strong>' + esc(it.plugin) + "</strong> plugin instead.</p></div>" : "")
       });
@@ -611,13 +671,19 @@
       if (it.all_stages) stLinks.unshift('<a href="#/browse?stage=all">Every stage</a>');
       facts.push(["SDLC stage", stLinks.join(", ") || esc(stageText(it))]);
     }
-    facts.push(["Maturity", esc(MAT_LABEL[it.maturity]) + (it.maturity_note && it.maturity_note.toLowerCase() !== it.maturity ? ' <span class="muted">(' + inlineCode(it.maturity_note.replace(/\*\*/g, "")) + ")</span>" : "")]);
+    facts.push(["Maturity", esc(MAT_LABEL[it.maturity] || it.maturity) + (it.evidence && it.evidence.date ? ' <span class="muted">(tested ' + esc(it.evidence.date) + ")</span>" : "")]);
     if (it.type === "skill" || it.type === "agent" || it.type === "hook") {
       var mode = installMode(it);
-      var req = requiredSkills(it);
+      var dd = deps(it);
+      var brought = dd.agents.concat(dd.skills);
       facts.push(["Install as", pluginOnly(it) ? "Plugin only" : mode === "needs-skill" ?
-        "One file plus " + (req.length ? req.map(function (sk) { return '<a href="' + itemHref(sk) + '">' + esc(sk.dir || sk.name) + "</a>"; }).join(", ") : codeList(it.requires_skills || [])) :
+        "One file plus " + (brought.length ? depLinks(brought) : codeList(it.requires_skills || [])) :
+        brought.length ? "Plugin, or this folder plus " + depLinks(brought) :
         "Plugin, or this " + (it.type === "skill" ? "folder" : "file") + " on its own"]);
+    }
+    if (it.type === "agent") {
+      var users = sortItems(DATA.items.filter(function (o) { return (o.uses_agent_ids || []).indexOf(it.id) >= 0; }));
+      if (users.length) facts.push(["Used by", depLinks(users)]);
     }
     if (it.tools && it.tools.length) facts.push(["Tools", it.tools.map(function (t) { return "<code>" + esc(t) + "</code>"; }).join(" ")]);
     if (it.model) facts.push(["Model", "<code>" + esc(it.model) + "</code>"]);
@@ -633,8 +699,8 @@
       return (it.stages || []).some(function (s) { return (o.stages || []).indexOf(s) >= 0; });
     })).slice(0, 6);
 
-    var notice = it.maturity === "new" ? '<div class="notice notice-new"><p><strong>New.</strong> Written for this marketplace, not yet battle-tested. Try it on something low stakes first, and please report what breaks.</p></div>' :
-      it.maturity === "unlabeled" ? '<div class="notice notice-info"><p><strong>Unlabeled.</strong> The plugin README does not say whether this is proven or new yet.</p></div>' : "";
+    var notice = it.maturity === "new" ? '<div class="notice notice-new"><p><strong>New.</strong> Little or no live testing yet. Try it on something low stakes first, and please report what breaks.</p></div>' :
+      it.maturity === "beta" ? '<div class="notice notice-info"><p><strong>Beta.</strong> It works in the runs we did, with known gaps. Read What we tested, below, before you rely on it.</p></div>' : "";
 
     var bodyHtml = renderMarkdown(it.body, dirOf(it.source_url), dirOf(it.raw_url || (it.files && it.files[0] && it.files[0].raw_url)));
     var files = (it.files || []);
@@ -646,6 +712,7 @@
       '<p class="desc">' + inlineCode(it.description || "") + "</p></div>" +
       '<div class="detail"><div>' + notice +
       '<section class="panel" aria-labelledby="install-h"><h2 id="install-h">Install</h2><div id="tabs">' + tabsHtml(installTabs(it)) + "</div></section>" +
+      testedPanel(it) +
       (bodyHtml ? '<section class="panel" aria-labelledby="how-h"><h2 id="how-h">How to use</h2><p class="muted small">The full ' +
         (it.type === "skill" ? "SKILL.md" : it.type === "agent" ? "agent definition" : it.type === "hook" ? "README section and script header" : "file") +
         ", straight from the repository.</p><div class=\"md\">" + bodyHtml + "</div></section>" : "") +
@@ -661,6 +728,18 @@
       "</aside></div></div>";
     wireTabs(document.getElementById("tabs"));
     wireScopes(it);
+  }
+
+  // The evidence behind the label, and what each label means.
+  function testedPanel(it) {
+    var ev = it.evidence;
+    var said = ev && ev.note ? '<p class="small muted">' + esc(MAT_LABEL[ev.label] || ev.label) + (ev.date ? ", tested " + esc(ev.date) : "") + "</p>" +
+      "<p>" + inlineCode(ev.note) + "</p>" :
+      "<p>No test results are recorded for this item yet, so it is labeled New.</p>";
+    return '<section class="panel" aria-labelledby="tested-h"><h2 id="tested-h">What we tested</h2>' + said +
+      '<dl class="labels">' + MAT_ORDER.map(function (m) {
+        return '<div class="label-row' + (m === it.maturity ? " is-current" : "") + '"><dt>' + matBadge(m) + "</dt><dd>" + esc(MAT_EXPLAIN[m]) + "</dd></div>";
+      }).join("") + "</dl></section>";
   }
 
   // ----- plugin page
@@ -704,7 +783,7 @@
       '<h1 tabindex="-1">The Foundry SDLC</h1>' +
       '<p class="lede">How we take software from an idea to something people use, with agents doing most of the building. Each stage produces one file and ends at a gate. Never skip a gate.</p>' +
       '<p><a href="' + esc(DATA.marketplace.sdlc_url) + '" rel="noopener">Read the full SDLC.md</a> <span aria-hidden="true">·</span> <a href="' + itemHrefSafe("foundry-sdlc", "sdlc") + '">The sdlc router skill</a></p>' +
-      '<div class="legend" aria-label="Legend"><span><i style="background:var(--t-skill)"></i>Skill</span><span><i style="background:var(--t-agent)"></i>Agent</span><span><i style="background:var(--t-hook)"></i>Hook</span><span><i style="background:var(--t-template)"></i>Template</span><span><span class="chip-new" style="color:var(--new-text);font-weight:700;font-size:.72rem;text-transform:uppercase">new</span> not yet battle-tested</span></div>' +
+      '<div class="legend" aria-label="Legend"><span><i style="background:var(--t-skill)"></i>Skill</span><span><i style="background:var(--t-agent)"></i>Agent</span><span><i style="background:var(--t-hook)"></i>Hook</span><span><i style="background:var(--t-template)"></i>Template</span><span><span class="chip-new" style="color:var(--new-text);font-weight:700;font-size:.72rem;text-transform:uppercase">new</span> little or no live testing yet</span></div>' +
       (always.length ? '<section class="panel" style="margin-top:22px" aria-labelledby="always-h"><h2 id="always-h">Runs at every stage</h2><p class="muted small">The router and the guardrail hooks. Once installed, the hooks check every tool call and every stop.</p><ul class="chips">' + always.map(chip).join("") + "</ul></section>" : "") +
       '<ol class="stages">' + DATA.stages.map(function (s) {
         var its = sortItems(DATA.items.filter(function (i) { return (i.stages || []).indexOf(s.id) >= 0; }));
@@ -732,19 +811,20 @@
       '<ol class="steps">' +
       "<li>Fork <a href=\"" + esc(mp.repo_url) + "\" rel=\"noopener\">" + esc(mp.repo) + "</a> and add your plugin under <code>plugins/&lt;your-plugin&gt;/</code>, or add an item to an existing plugin.</li>" +
       "<li>Give every skill and agent frontmatter with a <code>name</code> and a <code>description</code> that says when to use it. That description is what Claude reads to decide, and it is what this site shows on the card.</li>" +
-      "<li>In your plugin README, add a table with a <code>Maturity</code> column (and an <code>SDLC stage</code> column if you like). Say <code>proven</code> only if it runs in a real harness today; otherwise say <code>new</code>.</li>" +
+      "<li>Add an entry for every item to <code>evidence/evidence.json</code>: <code>new</code> until it has been tested, then what you ran and what you saw. A maintainer sets <code>beta</code> or <code>verified</code> from that evidence.</li>" +
       "<li>List the plugin in <code>.claude-plugin/marketplace.json</code>, then run <code>python3 scripts/build_catalog.py</code> and open <code>site/index.html</code> through a local server to see your cards.</li>" +
       "<li>Open a pull request. When it merges, this site rebuilds itself from the files.</li>" +
       "</ol>" +
       '<h2 style="margin-top:28px">How this site reads your files</h2>' +
       "<p>The site has no database. A small script reads the repository and writes <a href=\"catalog.json\">catalog.json</a>, and these pages render that file. It reads:</p>" +
       "<ul><li><strong>Skills</strong> from <code>skills/*/SKILL.md</code>, with every file in the folder listed for the single-skill install. A skill must be self-contained: it points at its own files as <code>${CLAUDE_SKILL_DIR}/...</code>.</li>" +
-      "<li><strong>Install mode</strong> from two lines right under the title: <code>Install: plugin only. &lt;reason&gt;.</code> for an item that needs the plugin, and <code>Requires skill: &lt;name&gt;</code> for an agent that runs a skill's scripts.</li>" +
+      "<li><strong>Install mode</strong> from lines right under the title: <code>Install: plugin only. &lt;reason&gt;.</code> for an item that needs the plugin, and <code>Requires skill: &lt;name&gt;</code> for an agent that runs a skill's scripts.</li>" +
       "<li><strong>Agents</strong> from <code>agents/*.md</code>, including the <code>tools</code> line.</li>" +
       "<li><strong>Hooks</strong> from <code>hooks/hooks.json</code> and the header comment of each script. A <code>FOO=0</code> switch in your README or script header shows up as the way to turn it off.</li>" +
       "<li><strong>Templates</strong> from <code>templates/</code>, one card per file or folder.</li>" +
       "<li><strong>Stage</strong> from a <code>stage:</code> frontmatter line, then SDLC.md, then your README's stage column.</li>" +
-      "<li><strong>Maturity</strong> from a <code>Maturity:</code> line in the body, then your README table. If neither exists, the card says Unlabeled.</li></ul>" +
+      "<li><strong>Maturity</strong> from <code>evidence/evidence.json</code>, with its note shown under What we tested. An item with no entry shows as New.</li>" +
+      "<li><strong>Agents a skill hands work to</strong> from a <code>Uses agent: &lt;name&gt;</code> line under the skill's title. The single-skill install brings those agents along.</li></ul>" +
       "<p>Found a problem with an item? <a href=\"" + esc(mp.repo_url) + "/issues/new\" rel=\"noopener\">Open an issue</a> and name the item.</p>" +
       "</div>";
   }

@@ -12,10 +12,10 @@ Everything in this plugin is **new**. It was written for this marketplace from o
 
 What we do run in production today, for comparison:
 
-- A **real iPhone** driver (iPhone Mirroring on a Mac). That one is proven and lives in its own plugin, **foundry-iphone-mirror**. Use it for stories that need real hardware.
+- A **real iPhone** driver (iPhone Mirroring on a Mac). That one lives in its own plugin, **foundry-iphone-mirror**. It is a port of a driver we use in production, but this version has not driven a phone yet, so it is labeled new.
 - **Playwright mobile emulation** for web apps, in the **foundry-qa** plugin.
 
-We have nothing proven for the iOS Simulator, Android native, Windows desktop or macOS desktop apps. These agents are CI-verified for the drive loops listed below, which is more than a written plan and less than a field record. **If you use one, please report back** (open an issue or a pull request on the marketplace repo) with what worked, what broke, and the exact tool versions. Two or three good field reports and we will promote an item to proven.
+The labels come from our test runs on 2026-10-28, recorded in [`evidence/evidence.json`](../../evidence/evidence.json). The iOS Simulator, Android, Windows and macOS agents are **beta**: their drive loops listed below are green on real GitHub Actions runners, which is more than a written plan and less than a field record, since no student's agent has run one on a real app yet. `device-doctor` is **verified** (run live on a Mac and in CI on all four platforms); `device-matrix` is **new** (never run end to end). A script or template carries the label of the skill that ships it. **If you use one, please report back** (open an issue or a pull request on the marketplace repo) with what worked, what broke, and the exact tool versions. Two or three good field reports and we will promote an item to verified.
 
 ## Install
 
@@ -41,20 +41,20 @@ claude plugin install foundry-devices@ai-foundry --scope project
 
 | item | type | what it does | SDLC stage | maturity |
 |---|---|---|---|---|
-| `ios-qa` | agent | iOS Simulator QA: simctl boot/install/launch/openurl/screenshot/recordVideo/privacy/status_bar, Maestro flows, optional XCUITest | QA / verify | new (CI-verified drive loop) |
-| `android-qa` | agent | Android QA: AVD + emulator, adb install/am start/input/screencap, uiautomator UI tree, logcat crashes, dumpsys, Maestro, optional Appium | QA / verify | new (CI-verified drive loop) |
-| `windows-qa` | agent | Windows desktop QA: pywinauto UIA backend, find by automation id/name, invoke/type, control tree, screenshots, event log; Playwright for web, WinAppDriver/Appium optional | QA / verify | new (CI-verified drive loop) |
-| `macos-qa` | agent | macOS desktop QA: System Events accessibility tree, AXPress, keystroke, screencapture, cliclick, Playwright `_electron` for Electron apps | QA / verify | new (CI-verified drive loop) |
+| `ios-qa` | agent | iOS Simulator QA: simctl boot/install/launch/openurl/screenshot/recordVideo/privacy/status_bar, Maestro flows, optional XCUITest | QA / verify | beta (drive loop green in CI) |
+| `android-qa` | agent | Android QA: AVD + emulator, adb install/am start/input/screencap, uiautomator UI tree, logcat crashes, dumpsys, Maestro, optional Appium | QA / verify | beta (drive loop green in CI) |
+| `windows-qa` | agent | Windows desktop QA: pywinauto UIA backend, find by automation id/name, invoke/type, control tree, screenshots, event log; Playwright for web, WinAppDriver/Appium optional | QA / verify | beta (drive loop green in CI) |
+| `macos-qa` | agent | macOS desktop QA: System Events accessibility tree, AXPress, keystroke, screencapture, cliclick, Playwright `_electron` for Electron apps | QA / verify | beta (drive loop green in CI) |
 | `device-matrix` | skill | choose device lanes from each story's `devices[]`, run them in parallel, merge one matrix and verdict | QA / plan + report | new |
-| `device-doctor` | skill | preflight per platform (tools present and responding, host OS, permissions), writes `.qa/<platform>/doctor.json` | QA / setup | new (unit-tested, CI-run on all 4 platforms) |
-| `android-ui-tree` | skill | read an Android `uiautomator dump`: outline, find by text/id/desc, print a safe `adb -s <serial> shell input tap` for exactly one match | QA / drive | new (unit-tested on a real dump, CI-run) |
-| `macos-ax-tree` | skill | dump, outline, search and AXPress a macOS app's accessibility tree; window bounds for screenshots | QA / drive | new (parsing unit-tested, CI-run) |
+| `device-doctor` | skill | preflight per platform (tools present and responding, host OS, permissions), writes `.qa/<platform>/doctor.json` | QA / setup | verified (live on a Mac, CI-run on all 4 platforms) |
+| `android-ui-tree` | skill | read an Android `uiautomator dump`: outline, find by text/id/desc, print a safe `adb -s <serial> shell input tap` for exactly one match | QA / drive | beta (unit-tested on a real dump, CI-run) |
+| `macos-ax-tree` | skill | dump, outline, search and AXPress a macOS app's accessibility tree; window bounds for screenshots | QA / drive | beta (parsing unit-tested, CI-run) |
 | `skills/device-matrix/scripts/device_matrix.py` | script | `plan`, `init`, `report` for the device matrix | QA / plan + report | new (unit-tested) |
-| `skills/device-doctor/scripts/doctor.py` | script | the device-doctor check runner | QA / setup | new (unit-tested) |
-| `skills/android-ui-tree/scripts/uitree.py` | script | the android-ui-tree helper | QA / drive | new (unit-tested) |
-| `skills/macos-ax-tree/scripts/ax_tree.py` | script | the macos-ax-tree helper | QA / drive | new (parsing unit-tested) |
-| `skills/device-matrix/templates/maestro/android-sign-in.yaml` | template | Maestro sign-in flow for Android | QA / drive | new |
-| `skills/device-matrix/templates/maestro/ios-sign-in.yaml` | template | Maestro sign-in flow for the iOS Simulator | QA / drive | new |
+| `skills/device-doctor/scripts/doctor.py` | script | the device-doctor check runner | QA / setup | verified |
+| `skills/android-ui-tree/scripts/uitree.py` | script | the android-ui-tree helper | QA / drive | beta |
+| `skills/macos-ax-tree/scripts/ax_tree.py` | script | the macos-ax-tree helper | QA / drive | beta |
+| `skills/device-matrix/templates/maestro/android-sign-in.yaml` | template | Maestro sign-in flow for Android | QA / drive | beta (run in CI) |
+| `skills/device-matrix/templates/maestro/ios-sign-in.yaml` | template | Maestro sign-in flow for the iOS Simulator | QA / drive | beta (run in CI) |
 | `skills/device-matrix/templates/stories.example.json` | template | stories with `devices[]` | QA / plan | new |
 | `skills/device-matrix/templates/results.example.json` | template | the per-lane results file every agent writes | QA / report | new |
 | `skills/device-matrix/templates/matrix.template.md` | template | what a finished matrix looks like | QA / report | new |

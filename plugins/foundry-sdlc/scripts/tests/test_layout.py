@@ -71,5 +71,43 @@ class SkillTests(unittest.TestCase):
             self.assertTrue((proj / "tools" / "gen_stories.py").is_file())
 
 
+class InstructionContractTests(unittest.TestCase):
+    """Wave D: what the CLI does (2.1.308) and what the instructions must therefore say."""
+
+    def read(self, rel):
+        return (PLUGIN / rel).read_text(encoding="utf-8")
+
+    def test_story_verifier_returns_its_report_as_text(self):
+        """The CLI refuses a subagent's Write of a report file ("Subagents should return findings
+        as text, not write report files."), so the verifier returns the exact file content."""
+        text = self.read("agents/story-verifier.md")
+        tools = re.search(r"^tools:(.*)$", text, re.M).group(1)
+        self.assertNotIn("Write", tools)
+        self.assertNotIn("Edit", tools)
+        out = text[text.index("## Output format"):]
+        self.assertIn("Never write the report file yourself", out)
+        self.assertIn("Subagents should return findings as text, not write report files.", out)
+        self.assertIn("one fenced block", out)
+        self.assertRegex(out, r"first line (inside the block|of the report) is `Commit: <sha>`")
+        self.assertRegex(out, r"```text\nCommit: ")
+
+    def test_callers_write_the_verifier_report_verbatim(self):
+        for rel in ("skills/ship/SKILL.md", "skills/sdlc/SKILL.md"):
+            text = self.read(rel)
+            with self.subTest(skill=rel):
+                self.assertRegex(text, r"(?s)you write `\.qa/verify/<id>\.md` yourself.{0,200}verbatim")
+                self.assertIn("never by the agent", text)
+
+    def test_skills_refresh_project_tools_before_using_them(self):
+        for rel in ("skills/new-project/SKILL.md", "skills/write-prd/SKILL.md", "skills/ship/SKILL.md"):
+            with self.subTest(skill=rel):
+                self.assertIn('python3 "${CLAUDE_SKILL_DIR}/scripts/gen_stories.py" --refresh-tools .',
+                              self.read(rel))
+
+    def test_ship_marks_leftover_tasks_follow_up(self):
+        self.assertIn('python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" . --mark-follow-ups',
+                      self.read("skills/ship/SKILL.md"))
+
+
 if __name__ == "__main__":
     unittest.main()

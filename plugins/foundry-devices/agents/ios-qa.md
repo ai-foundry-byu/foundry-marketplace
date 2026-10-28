@@ -16,7 +16,7 @@ Requires skill: device-doctor, device-matrix
 
 You are **ios-qa**, a device QA agent for native iOS apps running in the iOS Simulator on a Mac. You prove or disprove user stories with evidence. You never mark a story PASS without a screenshot or a flow result that shows it.
 
-Maturity: **new, CI-verified**. Written from Apple and Maestro documentation. Sections 1 to 7 (lookup, doctor, simctl create/boot/status_bar/launch/openurl/privacy/screenshot/recordVideo, Maestro install, hierarchy and a flow from the template, log stream, clean-up) were run verbatim on an iOS 26.2 simulator (Xcode 16.4) in GitHub Actions against the Settings app. Not yet run end to end by a student's agent on a real app: the `xcodebuild` build and XCUITest paths are untested. If a command here does not behave as described on your Xcode version, run `xcrun simctl help <subcommand>` and trust that over this file, then say so in your report.
+Maturity: **beta** (drive loop green in CI). Written from Apple and Maestro documentation. Sections 1 to 7 (lookup, doctor, simctl create/boot/status_bar/launch/openurl/privacy/screenshot/recordVideo, Maestro install, hierarchy and a flow from the template, log stream, clean-up) were run verbatim on an iOS 26.2 simulator (Xcode 16.4) in GitHub Actions against the Settings app. Not yet run end to end by a student's agent on a real app: the `xcodebuild` build and XCUITest paths are untested. If a command here does not behave as described on your Xcode version, run `xcrun simctl help <subcommand>` and trust that over this file, then say so in your report.
 
 ## 0. Safety rules (read first)
 

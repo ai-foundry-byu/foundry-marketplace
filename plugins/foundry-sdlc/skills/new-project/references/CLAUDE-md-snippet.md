@@ -9,8 +9,8 @@ Paste everything below the line into your project's `CLAUDE.md`. Plugin skills l
 This project follows the Foundry SDLC: scaffold, requirements, PRD and stories, workplan, execute, code QA, visual QA, ship, feedback. To find the current stage, run the `sdlc` skill (`foundry-sdlc:sdlc` when it came with the plugin). It runs the stage detector, `scripts/sdlc_stage.py`, that ships inside the skill. **Never skip a gate.** If a gate cannot run, say so and stop.
 
 ### Bug reports go through bug-to-story
-- **Every bug report or failed check goes through the `bug-to-story` skill** (`foundry-sdlc:bug-to-story`): "a classmate says X is broken", "a user can't Y", "handle this bug", a verifier or persona FAIL. In order: record the reporter's words as a new R-id in REQUIREMENTS.md, reproduce, add or extend a story criterion in PRD.md, write the failing test first, add a WORKPLAN task, fix, and log it in CHANGELOG.md. Do not fix a reported bug outside that skill.
-- A report you cannot reproduce still gets its R-id (status OPEN) and an open question saying what you tried.
+- **Every bug report or failed check goes through the `bug-to-story` skill** (`foundry-sdlc:bug-to-story`): "a classmate says X is broken", "a user can't Y", "handle this bug", a verifier or persona FAIL. In order: record the reporter's words as a new R-id in REQUIREMENTS.md, reproduce, add or extend a story criterion in PRD.md, write the failing test first, add a WORKPLAN task, fix, commit, rerun the gates, and log it in CHANGELOG.md. Do not fix a reported bug outside that skill, and never leave a fix uncommitted.
+- A report you cannot reproduce still gets its R-id (status `OPEN-FEEDBACK: not reproduced`) and an open question saying what you tried.
 
 ### Root cause first
 - Reproduce the problem before you change code. Never fix a bug you have not seen.
@@ -47,8 +47,9 @@ Building agents run at low or medium effort for normal work, and at high or abov
 ### Artifacts and status words
 - Stories live only in `PRD.md` (`**US-01. Title.**` plus numbered criteria). `stories.json` is compiled from it. From the project root: `python3 tools/gen_stories.py --prd product/PRD.md --out product/stories.json` (drop `product/` when the artifacts are at the root; add `--check` in CI). Never hand-edit a story's title or criteria there.
 - Story status: NOT_BUILT, BUILT (code exists, not verified), PARTIAL (a gate failed or was inconclusive), LIVE (every gate passed on a committed SHA; set it with `tools/gen_stories.py ... --set US-01=LIVE --evidence <report>`, which refuses otherwise), PARKED.
-- Every WORKPLAN task goes to `DONE <date>: commit <sha>` as its commit lands, whether it was built in a lane or in this session.
+- Every WORKPLAN task goes to `DONE <date>: commit <sha>` as its commit lands, whether it was built in a lane or in this session. A ticket written by ship or bug-to-story is `FOLLOW-UP (blocks US-xx)` until someone starts it.
+- Ask status in REQUIREMENTS.md: OPEN, STORIED, LIVE, `DROPPED (D-xx)`, `PARTIAL (D-xx): <what survives>`, and `OPEN-FEEDBACK: <why>` for a bug report with no story yet. After a ship, FOLLOW-UP tasks and OPEN-FEEDBACK asks are stage 8 open work.
 - Requests and human decisions are recorded verbatim, in `REQUIREMENTS.md` and `DECISIONS.md`. Agents propose. Humans decide.
 
 ### Parallel work
-- One task per lane, one git worktree per lane. A lane agent edits only inside its own worktree, and never in the main checkout. See the `foundry-sdlc:parallel-lanes` skill.
+- One lane per set of WORKPLAN task ids, one git worktree per lane (Agent tool lanes use `isolation: "worktree"`). A lane agent edits only inside its own worktree, and never in the main checkout. See the `foundry-sdlc:parallel-lanes` skill.

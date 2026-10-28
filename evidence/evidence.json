@@ -1,0 +1,267 @@
+{
+  "foundry-sdlc/skill/bug-to-story": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "Triggered unnamed in R1a, R1b and 12/12 R4 runs, and in the wave-D re-run (V1) it filed an unreproduced report as OPEN-FEEDBACK without moving the stage back, then wrote a failing-first test, committed the fix and set the task DONE with its sha. It hands the re-gate to ship with a 'Next:' line instead of running the gates itself."
+  },
+  "foundry-sdlc/skill/gather-requirements": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "R1a-S1/S1b and R1b-S1/S1b recorded every ask verbatim as an R-id, raised conflicts as questions instead of deciding them, and recorded decisions as D-rows; the standalone copy also ran (R6)."
+  },
+  "foundry-sdlc/skill/new-project": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "R1a-S0, R1b-S0, V2-S0 and E2 scaffolded from a plain prompt, and in E2 it wrote .foundry/generated.json with matching hashes, so verify-before-done skipped the scaffolded tools/gen_stories.py with no Stop block. Refreshing an older tools copy on re-scaffold is unit-tested only, and the product/ layout was not exercised."
+  },
+  "foundry-sdlc/skill/parallel-lanes": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "In V2 a plain prompt ran two lanes with isolation: worktree and an active lane registry, merged both, set both tasks DONE with shas and an un-isolated subagent's edit to the main checkout was denied live, and the question-form trigger now hits 2/2 on Sonnet but 0/1 on Haiku (E3). Minor gaps: the registry's branch and worktree fields were not filled in and merge messages lack task ids."
+  },
+  "foundry-sdlc/skill/sdlc": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "The router reported the detector faithfully in R1a, R1b, R4 (6/6) and the V1 'Where are we?' run, and on real R1a state the fixed detector no longer drops to stage 2 on open feedback and reports stage 6 again after a code change (V1). Stage 8 was reached only in a detector probe, because no live ship has yet written the new FOLLOW-UP status."
+  },
+  "foundry-sdlc/skill/ship": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "R1b-S6 and the V1 re-run shipped locally end to end, re-ran every stale gate on the new commit and stopped the server by PID, and it now triggers 6/6 on Sonnet and 3/3 on Haiku (E3). The wave-E fixes (refreshing an old tools/gen_stories.py and marking leftover tasks FOLLOW-UP before the exit gate) are unit-tested only, not re-run in a live ship."
+  },
+  "foundry-sdlc/skill/write-prd": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "R1a-S2/S2b and R1b-S2/S2b compiled stories, ran prd-critic, recorded the human approval as a dated D-row and stopped, and the standalone install now brings prd-critic and ran it live (V4-c2, 17 critiques). The PARTIAL-coverage rule added for R1b-D9 is unit-tested only."
+  },
+  "foundry-sdlc/skill/write-workplan": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "R1a-S3 (17 tasks) and R1b-S3 (12 tasks) produced dependency-ordered tasks with review tiers and moved the detector to stage 4, and the standalone copy also ran (R6). The new FOLLOW-UP task status has not been used in a live session yet."
+  },
+  "foundry-sdlc/agent/prd-critic": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "Ran unnamed in R1a-S2 (15 critiques), R1b-S2 (13 findings, 11 applied), L4-prd-a/b and L2, and through the standalone write-prd install in V4-c2 (17 critiques folded into the PRD)."
+  },
+  "foundry-sdlc/agent/story-verifier": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "One agent per story ran unnamed in R1a-S5/S6b, R1b-S5 and V1, and the reworded delegation trigger hit 2/2 on Sonnet with one verifier per story and no extra servers (E3), but 0/1 on Haiku. The new rule that it returns its report as text for the caller to save has not run live, and its probe files still go to /tmp (R3-D8)."
+  },
+  "foundry-sdlc/hook/sdlc-stage": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "The SessionStart hint fired in every R1a, R1b and V1 session and matched the detector, and after wave D it no longer goes stale after a ship or an unreproduced bug. On real R1a state it printed stage 8 with the open work once the tasks carried FOLLOW-UP, but only in a probe (V1)."
+  },
+  "foundry-guardrails/skill/guardrails-help": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "L2 live runs triggered it unnamed, named the hook that fired and read the hook log, and R4 re-triggered it. The Stop-label section and the wave-D rule (never edit the manifest or lane registry to quiet a guard) have not been exercised in a session."
+  },
+  "foundry-guardrails/hook/destructive-guard": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "Live denies of git reset --hard and DELETE with no WHERE (L5), and of DELETE ... WHERE 1=1 with a real WHERE allowed (R2). Force push was not exercised live, and pkill -f is still not flagged."
+  },
+  "foundry-guardrails/hook/secret-guard": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "R2 denied all 9 credential command forms and the V4, E2 and final live sessions leaked 0 canary values; after the last fix a live session's read-back of an archived .env made in an earlier command was denied, and the names-only env | grep -i '^AWS' | cut -d= -f1 was allowed. Still beta: it recognizes secrets by file name and command shape, and a key pasted into an ordinary source file reaches the conversation when the agent reads that file (R2-D7)."
+  },
+  "foundry-guardrails/hook/verify-before-done": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "R2 caught 5/5 shell-edit forms with 0/2 false blocks, refused VERIFY_OK until tests ran and delivered Stop feedback as a non-error message. In E2 a fresh scaffold in a git repo logged skip-generated for tools/gen_stories.py and both Stop hooks passed silently in two sessions."
+  },
+  "foundry-guardrails/hook/worktree-guard": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "It denied out-of-worktree edits for a session inside a worktree (L5), and after wave D it denied an un-isolated subagent's edit to the main checkout live while the lane registry was active and allowed it once the registry was inactive (V2, plus 15 crafted payloads). It does not stop shell writes, or edits from one lane into a sibling lane's worktree."
+  },
+  "foundry-guardrails/hook/stale-write-guard": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "R2-s1 denied a whole-file Write over foreign uncommitted changes by default, s2 allowed the session's own writes and s3 warn mode worked. The corrected warn-mode text (R2-D4) is unit-tested only."
+  },
+  "foundry-guardrails/hook/ship-stop": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "R2-ship1 blocked until the milestone was resolved, R2-ship2-cap stopped at 8 blocks with a 'human needs to look' message before Claude Code's own limit, and L5 confirmed the block."
+  },
+  "foundry-qa/skill/a11y-check": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "L3-d-a11y and R1a-S5 ran axe live, signed in, and R3 direct runs reported the 16 20x20 buttons under WCAG 2.5.8. The rewritten screen-reader and keyboard trigger now hits 2/2 on Sonnet and 1/1 on Haiku (E3)."
+  },
+  "foundry-qa/skill/done-gate": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "L3 covered pass, fail and SHA mismatch, and signed-in journeys exited 0 with .qa/done-gate/last.json in R1a, R1b and the V1 ship re-run. The rewritten 'how do I prove it works' trigger now hits 2/2 on Sonnet and 1/1 on Haiku (E3)."
+  },
+  "foundry-qa/skill/explore": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "It ran inside live web-qa sessions (R1b, V3) and directly on the hash-route fixture, and after wave D it flags the 939 px page at a 390 px phone and finishes every back-check on the hash app (9/9, 13 pages in 45 s, V3). Minor: a browser killed mid-crawl is reported as page errors instead of inconclusive."
+  },
+  "foundry-qa/skill/persona-run": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "It ran on the sdlc stories.json in R1a-S5, R1b and V3, flags phone overflow, marks /groups/:id-style surfaces INCONCLUSIVE and sent 0 writes (V3), and the no-app trigger now hits 2/2 on Sonnet and 1/1 on Haiku (E3). Minor: REPORT.md shows only the first failing check per row, and an expected 404 in the console counts as a failure."
+  },
+  "foundry-qa/skill/regression-check": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "L3-j2 produced a correct consumer table and verdict on a real patch, and R4 triggered it 9/9 on 'is it safe to apply PROPOSED.patch'; only its description changed after the live run."
+  },
+  "foundry-qa/skill/visual-baseline": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "Live create, unchanged (0.0000% diff) and changed (exit 1) runs worked (L3-e1/e2b/e3) and the trigger is fixed (R4 3/3), but in L3-e3 the agent read the red diff marker as the page's colour, and the doc fix for that has not been re-run live (R3 static check only)."
+  },
+  "foundry-qa/agent/explorer": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "R3 recall was 9/14 and 11/14 on fixture 1 but 4/12 on the signed-in fixture, because it never found the documented test sign-in route. The plain 'poke around like a first-time user' prompt now delegates to it (E3, 3/3), but the wave-D recall fixes have not been re-run live."
+  },
+  "foundry-qa/agent/persona-tester": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "A plain prompt now delegates to it instead of the inline skill (E3, 3/3), and in V3 it used the documented test sign-in, sent 0 writes and judged every row. In that single run recall was 7/12 and only 4 of 8 story verdicts matched the truth file, and it dismissed a real 3.2 s slow page as settle time."
+  },
+  "foundry-qa/agent/web-qa": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "Found 14/14 planted defects in 3 named R3 runs, 12/14 and 14/14 in V3 and 13/14 in E2 from a plain prompt, and it returned the findings file as one fenced block as the new contract asks (E2). The main session then printed the list instead of saving it, so .qa/findings.md is still not created after a background run (E2)."
+  },
+  "foundry-design/skill/design-critique": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "L4-critique2, R1a-S5 and R1b-S5r4 ran the critique plus design_gate.py, R3 direct runs flagged phone h_scroll on exactly the right page and exactly the 16 small targets, and R4 routed 12/12 correctly; the verdict-file rule (L4-D9) has not been re-run live."
+  },
+  "foundry-design/skill/design-system": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "The main path passed live in L4-dsys and L2 before its extraction commands were rewritten to use git ls-files (L4-D10), and that rewrite has no live run."
+  },
+  "foundry-design/skill/ui-ux-spec": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "L4-spec wrote a full 13-section spec unnamed, and L2 asked for a surface instead of inventing one."
+  },
+  "foundry-design/agent/ui-reviewer": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "It routed 8/8 correctly (R4) and ran in R1b-S5, but in L4 it inflated the total, bent the band and saved no report, and those fixes (L4-D5/D6/D7) have not been re-run live."
+  },
+  "foundry-devices/skill/android-ui-tree": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "Outline, find and tap (including the --clickable ancestor fix) are green on an API 34 emulator in CI run 40742808375 and it triggers (L2, R4), but no student-agent session has driven a real app with it."
+  },
+  "foundry-devices/skill/device-doctor": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "L7 ran the skill live on this Mac (NOT READY, with the correct TCC fix), CI ran it on Android, iOS, Windows and macOS runners, and the standalone copy ran (R6)."
+  },
+  "foundry-devices/skill/device-matrix": {
+    "label": "new",
+    "date": "2026-10-28",
+    "note": "The planner and report script are unit-tested and the skill triggers (L2, R4), but no multi-device run has been executed."
+  },
+  "foundry-devices/skill/macos-ax-tree": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "Dump, find and press work against Calculator on a macOS 26 CI runner and the reworded 'script that clicks the equals key' prompt now triggers on Sonnet 2/2 and Haiku 1/1 (E3). On a Mac without the Accessibility grant it stops at error -25211 (L2, L7), and no student-agent session has driven an app with it."
+  },
+  "foundry-devices/agent/android-qa": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "Every section's commands are green on an API 34 emulator in CI, but in L7 the live agent skipped the doctor-first contract (fixed in 99363ea, not re-run in a session); gradle build and install, USB phones and two devices at once are untested."
+  },
+  "foundry-devices/agent/ios-qa": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "Commands, including the bounded recordVideo fix, are green on an iOS 26.2 simulator in CI, but R6's plain prompt went to device-doctor instead of this agent, and the xcodebuild and XCUITest paths are untested."
+  },
+  "foundry-devices/agent/macos-qa": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "The doctor, ax_tree, AppleScript and screencapture steps are green on a macOS 26 CI runner, but no student-agent session has run it, and the Electron and cliclick paths are untested."
+  },
+  "foundry-devices/agent/windows-qa": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "The drive loop on Notepad, including the get_value read-back fix, is green on Windows Server 2025 in CI, but no student-agent session has run on Windows, and Store Notepad, WSL and Playwright are untested."
+  },
+  "foundry-iphone-mirror/skill/iphone-mirror": {
+    "label": "new",
+    "date": "2026-10-28",
+    "note": "The doctor and the read-only MCP calls work and the trigger is fixed (R4 10/12 skill first), but it has never driven a phone: the helper app was never built (L8)."
+  },
+  "foundry-iphone-mirror/agent/iphone-driver": {
+    "label": "new",
+    "date": "2026-10-28",
+    "note": "It is registered and receives delegation (R4), but it has never acted on a device, and its purchase/message/delete guard was only read, not exercised (L8)."
+  },
+  "foundry-evals/skill/hillclimb": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "R5-c moved the held-out score from 5/12 to 8/12 with one change per round, and after wave D a live session on a deterministic suite kept a 4-case fix as 'improved (deterministic, paired)' instead of reverting it as noise (V4-e1). A suite made before this release, with 1 rep and no \"deterministic\": true, still reads such a fix as within noise."
+  },
+  "foundry-evals/skill/new-eval": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "R5-a scaffolded 42 slice-tagged cases with sane controls, but no case isolated the emoji mechanism, so the suite scored 66.7% against 41.7% held-out (R5-D2). The mechanism-isolation rule, the deterministic declaration and the refusal of a bare 'run.py' target came after that and are unit-tested or instruction text only, not re-run live."
+  },
+  "foundry-evals/skill/run-eval": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "L6-b and R5-b ran it from three working directories into one results root with correct comparisons, and the exit codes 0, 2, 3, 4 and 5 behave as documented (R5-f). The new deterministic comparison read a 4-case fix as improved from the CLI (V4)."
+  },
+  "foundry-evals/agent/eval-auditor": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "Triggered unnamed in L2, L6-d and R5-g2 and gave a WARN verdict with real findings. It missed that no case tests emoji-only sentiment (R5-D5), and the rule added for that has not been re-run live."
+  },
+  "foundry-builder-kit/skill/add-auth": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "L6-i produced correct-reading Clerk and Next 16 code with ignored env placeholders, and L2 audited correctly, but the generated app was never built or signed into."
+  },
+  "foundry-builder-kit/skill/cheap-llm-routing": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "L6-f and L2 gave correct privacy-first provider routing; there is no offline call-path preview (L6-D11)."
+  },
+  "foundry-builder-kit/skill/scale-10k": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "The L6-j audit found the planted issues with file:line citations, and it triggered in L2 and 5/6 R4 runs."
+  },
+  "foundry-builder-kit/skill/scheduled-agents": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "L6-g generated a valid plist and runner, stub-tested, but the deadman false-success fix (L6-D8) and the deadman schedule template (L6-D13) are unit-tested only, with no live re-run."
+  },
+  "foundry-builder-kit/skill/secrets-hygiene": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "R2-scan-plain triggered unnamed and scan --all found all 3 secrets in untracked files, R4 hit 9/9 and L6-e2 installed the pre-commit hook. The stricter placeholder rule (a key-shaped value that only contains 'fake' is now flagged) and the hook fallback without gitleaks were re-checked by tests, not in a live session."
+  },
+  "foundry-builder-kit/skill/tmux-agents": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "L6-h drove a REPL end to end, but only after working around the zsh failure in the documented helper, and the zsh and per-project socket fixes (L6-D6/D7) are unit-tested only."
+  },
+  "foundry-builder-kit/hook/commit-secret-guard": {
+    "label": "verified",
+    "date": "2026-10-28",
+    "note": "R2 denied 6/6 commit forms (chained add and commit, commit -am, git -C, cd &&, no gitleaks) and allowed 2/2 clean or ignored commits. Since wave D a key-shaped value that only contains 'fake' or 'dummy' is flagged too; that change is unit-tested only."
+  },
+  "recruit/plugin/recruit": {
+    "label": "beta",
+    "date": "2026-10-28",
+    "note": "Installed from its own repository with claude plugin install recruit@ai-foundry, and the plain prompt 'How well does my resume fit this job? Grade it.' ran resume-grader and its 3 grader agents in 2/2 runs with no outward action (R7). The final aggregated grade came out in only 1 of 2 runs, because the model mis-copied the long path to aggregate.py (R7-D2)."
+  }
+}

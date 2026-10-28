@@ -13,6 +13,15 @@ Creates (never overwrites an existing file unless --force):
             stories.schema.json  done-journey.yaml
     <project root>/tools/gen_stories.py            (--no-tools skips it)
     <project root>/.github/workflows/stories.yml   (CI runs --check; --no-ci skips it)
+    <project root>/.foundry/generated.json         (what it wrote, with SHA-256s)
+
+The one exception to "never overwrites": an older tools/gen_stories.py (from an earlier
+scaffold) is refreshed to this skill's copy, and the line says so with a diff summary.
+A newer copy is left alone.
+
+.foundry/generated.json is the manifest foundry-guardrails' verify-before-done hook
+reads: a file listed there whose bytes still match is not "a code edit", so a fresh
+scaffold in a git repo does not trigger a Stop block for tools/gen_stories.py.
 
 The project root is --root, else the git root of <dir>, else the folder above
 product/ (or docs/product/), else the current directory when <dir> is inside it,
@@ -38,6 +47,7 @@ TEMPLATES = HERE.parent / "templates"
 FILES = ["README.md", "REQUIREMENTS.md", "DECISIONS.md", "PRD.md", "WORKPLAN.md",
          "CHANGELOG.md", "stories.schema.json", "done-journey.yaml"]
 CI_PATH = Path(".github") / "workflows" / "stories.yml"
+GENERATOR = "foundry-sdlc/new-project"
 
 sys.path.insert(0, str(HERE))
 import gen_stories  # noqa: E402
@@ -117,7 +127,9 @@ def scaffold(dest: Path, name: str = "", owner: str = "TODO: team or owner",
     if tools:
         target = root / "tools" / "gen_stories.py"
         if target.exists() and not force:
-            results.append((target, "skipped (exists)"))
+            state, detail, _ = gen_stories.refresh_tools(root, GENERATOR)
+            results.append((target, {"refreshed": f"refreshed ({detail})",
+                                     "newer": f"kept (newer, {detail})"}.get(state, f"current ({detail})")))
         else:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(HERE / "gen_stories.py", target)
@@ -128,6 +140,10 @@ def scaffold(dest: Path, name: str = "", owner: str = "TODO: team or owner",
                      "STORIES_PATH": rel(dest / "stories.json", root)}
         write_new(root / CI_PATH, fill((TEMPLATES / "stories-ci.yml").read_text(encoding="utf-8"),
                                        ci_values), force, results)
+    written = [p for p, action in results if action == "created" or action.startswith("refreshed")]
+    had_manifest = (root / gen_stories.MANIFEST).exists()
+    if written and gen_stories.record_generated(root, written, GENERATOR):
+        results.append((root / gen_stories.MANIFEST, "updated" if had_manifest else "created"))
     return results
 
 

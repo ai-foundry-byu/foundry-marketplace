@@ -375,10 +375,12 @@ _SUBST = re.compile(r"\$\(([^()]*)\)|`([^`]*)`|[<>]\(([^()]*)\)")
 
 def strip_grouping(argv: list[str]) -> list[str]:
     """Drop subshell and group syntax around a command: "(rm" -> "rm", ".env)" -> ".env",
-    "{" / "}" / "!" tokens. Without this, (cd /tmp && rm -rf ~), { cat .env; } and
+    "{" / "}" / "!" tokens, and the reserved words that open a stage (do, then, else, elif,
+    if, while, until), so a loop body is checked as a command. Without this, (cd /tmp && rm -rf ~), { cat .env; } and
     (git push) had heads "(cd", "{" and "(git", and every guard let them through."""
     out = list(argv)
-    while out and out[0] in ("(", "{", "!"):
+    # shell reserved words that start a stage: "do cat $f", "then rm -rf ~", "if git push"
+    while out and out[0] in ("(", "{", "!", "if", "then", "else", "elif", "do", "while", "until"):
         out = out[1:]
     if out and out[0].startswith("(") and not out[0].startswith("(("):  # (( )) is arithmetic
         out[0] = out[0].lstrip("(")

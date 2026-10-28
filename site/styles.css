@@ -20,6 +20,7 @@
 
   --proven-bg: #def3e6;  --proven-text: #11502b;  --proven-border: #a6d9b9;
   --new-bg: #fff0d1;     --new-text: #6b4100;     --new-border: #ebc97d;
+  --beta-bg: #e1ecfb;    --beta-text: #123f78;    --beta-border: #a9c4ea;
   --unl-bg: #eceff3;     --unl-text: #3f4b59;     --unl-border: #c6ced8;
   --ext-bg: #e9e6fb;     --ext-text: #3b2f86;     --ext-border: #bdb4ee;
 
@@ -58,6 +59,7 @@
 
     --proven-bg: #10301e;  --proven-text: #9be2b6;  --proven-border: #24583a;
     --new-bg: #33260b;     --new-text: #f6cf7d;     --new-border: #6a5020;
+    --beta-bg: #12253d;    --beta-text: #a9cbff;    --beta-border: #2c4a70;
     --unl-bg: #1e2833;     --unl-text: #c2cdd9;     --unl-border: #3a4859;
     --ext-bg: #231f45;     --ext-text: #c9c1ff;     --ext-border: #463e85;
 
@@ -192,7 +194,8 @@ code, pre, kbd { font-family: var(--mono); font-size: .9em; }
 .badge-type.t-hook { --tc: var(--t-hook); }
 .badge-type.t-template { --tc: var(--t-template); }
 .badge-type.t-plugin { --tc: var(--t-plugin); }
-.m-proven { background: var(--proven-bg); color: var(--proven-text); border-color: var(--proven-border); }
+.m-proven, .m-verified { background: var(--proven-bg); color: var(--proven-text); border-color: var(--proven-border); }
+.m-beta { background: var(--beta-bg); color: var(--beta-text); border-color: var(--beta-border); }
 .m-new { background: var(--new-bg); color: var(--new-text); border-color: var(--new-border); }
 .m-unlabeled { background: var(--unl-bg); color: var(--unl-text); border-color: var(--unl-border); }
 .m-external { background: var(--ext-bg); color: var(--ext-text); border-color: var(--ext-border); }
@@ -302,6 +305,12 @@ legend { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; fo
 .notice-new { background: var(--new-bg); color: var(--new-text); border-color: var(--new-border); }
 .notice-info { background: var(--surface-2); color: var(--text); border-color: var(--border); }
 .notice p:last-child { margin-bottom: 0; }
+.labels { margin: 14px 0 0; display: grid; gap: 8px; font-size: .9rem; }
+.label-row { display: grid; grid-template-columns: 5.5rem 1fr; gap: 10px; align-items: baseline; padding: 6px 8px; border-radius: var(--radius-sm); }
+.label-row dt, .label-row dd { margin: 0; }
+.label-row dd { color: var(--muted); }
+.label-row.is-current { background: var(--surface-2); }
+.label-row.is-current dd { color: var(--text); }
 .notice code { background: rgba(127,127,127,.15); padding: 1px 4px; border-radius: 4px; }
 
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 14px; overflow-x: auto; }

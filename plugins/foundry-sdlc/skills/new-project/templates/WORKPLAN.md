@@ -9,7 +9,7 @@ Progress: 0 of 0 milestones complete. Last ship: none yet.
 **Columns.**
 - *Owner*: who does it, as `agent · <model>/<effort> · <review tier>` or a human role. The review tier comes from the blast radius table below, not from habit.
 - *Deps*: task ids, story ids, or decision ids (D-01) that must be done first. A task with no deps can run in its own parallel lane today.
-- *Status*: DONE · IN REVIEW · PARTIAL · NOT STARTED · WAITING (a dep is not done) · PARKED. Write the evidence after DONE, as each task's commit lands: `DONE 2026-11-03: commit 3f2a9c1` or `DONE 2026-11-03: PR #12`. The stage detector needs a sha, a `#PR` or a URL there.
+- *Status*: DONE · IN REVIEW · PARTIAL · NOT STARTED · WAITING (a dep is not done) · PARKED · FOLLOW-UP (a ticket written by ship or bug-to-story: `FOLLOW-UP (blocks US-05)`; it does not hold stage 4 open, and becomes NOT STARTED when someone picks it up). Write the evidence after DONE, as each task's commit lands: `DONE 2026-11-03: commit 3f2a9c1` or `DONE 2026-11-03: PR #12`. The stage detector needs a sha, a `#PR` or a URL there.
 
 **Review tier by blast radius** (from the project CLAUDE.md):
 

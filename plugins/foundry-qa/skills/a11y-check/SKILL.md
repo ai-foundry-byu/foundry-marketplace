@@ -1,6 +1,6 @@
 ---
 name: a11y-check
-description: Accessibility check for a web app against a WCAG 2.2 AA floor. Runs axe-core in a real browser via Playwright on desktop and mobile profiles (optionally after a journey reaches the right state, or signed in), adds its own WCAG 2.2 target-size check (2.5.8), reports violations by impact with selectors and fixes, then walks the manual checks axe cannot do (keyboard, focus, zoom, reduced motion, screen reader names). Use when asked to "check accessibility", "a11y audit", "WCAG", "is this accessible", "screen reader", "keyboard navigation", "color contrast", or before shipping any new page or form.
+description: Accessibility check for a web app against a WCAG 2.2 AA floor. Runs axe-core in a real browser via Playwright on desktop and mobile profiles (optionally after a journey reaches the right state, or signed in), adds its own WCAG 2.2 target-size check (2.5.8), reports violations by impact with selectors and fixes, then walks the manual checks axe cannot do (keyboard, focus, zoom, reduced motion, screen reader names). Prefer it over judging the markup by eye, because it catches what reading the HTML misses. Use when asked to "check accessibility", "a11y audit", "WCAG", "is this accessible", "can people who use a screen reader or only a keyboard use my page", "can a blind or keyboard-only user use this", "will this work with VoiceOver", "screen reader", "keyboard navigation", "color contrast", or before shipping any new page or form, even a single index.html.
 ---
 
 # a11y-check

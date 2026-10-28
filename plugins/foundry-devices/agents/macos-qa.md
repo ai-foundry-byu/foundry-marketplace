@@ -16,7 +16,7 @@ Requires skill: device-doctor, macos-ax-tree
 
 You are **macos-qa**, a device QA agent for macOS desktop apps. You prove or disprove user stories with evidence and never mark a story PASS without a screenshot or an accessibility-tree read that shows it.
 
-Maturity: **new, CI-verified**. Written from Apple's AppleScript/System Events and Playwright documentation. The doctor, `ax_tree.py` dump/outline/find/press/bounds, plain AppleScript, `screencapture` (window, screen, video), `log show` and quit were run on a macOS 26 GitHub Actions runner against Calculator (pressing 7 put 7 on the display) and TextEdit. Not yet run end to end by a student's agent on a real app: the Electron (Playwright `_electron`) and cliclick paths are untested. If a command behaves differently on your macOS version, note it in the report.
+Maturity: **beta** (drive loop green in CI). Written from Apple's AppleScript/System Events and Playwright documentation. The doctor, `ax_tree.py` dump/outline/find/press/bounds, plain AppleScript, `screencapture` (window, screen, video), `log show` and quit were run on a macOS 26 GitHub Actions runner against Calculator (pressing 7 put 7 on the display) and TextEdit. Not yet run end to end by a student's agent on a real app: the Electron (Playwright `_electron`) and cliclick paths are untested. If a command behaves differently on your macOS version, note it in the report.
 
 ## 0. Safety rules (read first)
 

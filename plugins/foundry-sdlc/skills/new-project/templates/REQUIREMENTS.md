@@ -18,7 +18,7 @@ Source codes in the table below: S1, S2, ... from this table.
 |---|---|---|---|---|---|---|
 | R-01 | TODO: "exact words of the ask" | S1 | {{DATE}} | must | (filled in stage 2) | OPEN |
 
-Status: OPEN (no story yet), STORIED (at least one story covers it), LIVE (its stories are LIVE), DROPPED (a decision in DECISIONS.md dropped it; write `DROPPED (D-03)`).
+Status: OPEN (no story yet), STORIED (at least one story covers it), LIVE (its stories are LIVE), DROPPED (a decision in DECISIONS.md dropped it; write `DROPPED (D-03)`), PARTIAL (a decision overrides it in part; write `PARTIAL (D-03): <what survives>`, never STORIED), OPEN-FEEDBACK (a bug report with no story yet, written by bug-to-story; write `OPEN-FEEDBACK: not reproduced` or `OPEN-FEEDBACK: needs <who>`).
 
 ## Already exists
 
@@ -42,4 +42,4 @@ Each question names who can answer it. When answered, record the answer in `DECI
 
 ## Coverage check (stage 2 exit)
 
-Every R-id is STORIED, LIVE or `DROPPED (D-xx)`. An OPEN row at the end of stage 2 is a missing story; the stage detector names it.
+Every R-id is STORIED, LIVE, `DROPPED (D-xx)` or `PARTIAL (D-xx)`. An OPEN row at the end of stage 2 is a missing story; the stage detector names it. OPEN-FEEDBACK rows are not a stage 2 failure: the detector lists them as stage 8 open work.

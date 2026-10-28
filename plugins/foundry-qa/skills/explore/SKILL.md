@@ -15,7 +15,12 @@ sent), so it is safe to point at production.
 1. Run the crawler; do not read the HTML by hand and call that a crawl.
 2. Quote the `EXPLORE:` headline (pages, errors, warnings, exit code).
 3. Open the screenshot of every `error` and `look` page before reporting it.
-4. Say what the crawl did not reach (pages past `--max-pages`, flows behind forms).
+4. Say what the crawl did not reach (pages past `--max-pages`, flows behind forms). A page the
+   crawler visited is covered: carry each of its `error` and `warn` findings into the report.
+5. Signed-in app: look for a documented test-only sign-in route (`README*`, `docs/`, stories
+   `notes`) before crawling signed-out only.
+6. Stay inside the project: temp files and probes under `.qa/`, never `/tmp`; never search
+   outside the project.
 
 ## Setup (once)
 
@@ -45,7 +50,11 @@ Hash-routed apps: a link like `#/group/1` or `#!/settings` is its own page (a pl
 like `#top` is not), pages are deduplicated on the full URL, and the crawl stops at
 `--max-pages`. Each page is checked after the network goes quiet, so data that arrives after
 the load event is there. Errors logged while the Back-button check opens another page belong
-to that page, not the one being checked.
+to that page, not the one being checked. The Back-button check never clicks a skip link or an
+in-page anchor (`#app`, `#top`), and a click that does not navigate within 3 s is skipped, so a
+hash-routed app finishes in bounded time. Phone and tablet overflow compares the page's
+`scrollWidth` with `document.documentElement.clientWidth` (the layout viewport), which
+mobile emulation does not widen.
 
 Output: `.qa/explore/findings.json` and `.qa/explore/screenshots/`. Each finding is
 `error` (console errors, uncaught exceptions, HTTP 5xx, failed requests, a page that does not

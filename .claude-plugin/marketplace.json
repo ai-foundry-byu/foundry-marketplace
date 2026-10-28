@@ -1,6 +1,6 @@
 {
   "name": "ai-foundry",
-  "description": "The AI Foundry (BYU Marriott) toolbox for building your own Claude Code harness: an 8-stage SDLC framework plus skills, agents and hooks, each labeled proven (runs in production in our harness) or new (written for this marketplace).",
+  "description": "The AI Foundry (BYU Marriott) toolbox for building your own Claude Code harness: an 8-stage SDLC framework plus skills, agents and hooks, each labeled verified, beta or new from our own test runs.",
   "owner": {
     "name": "AI Foundry (BYU Marriott)",
     "url": "https://aifoundry.byu.edu"

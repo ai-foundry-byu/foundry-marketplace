@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""build_catalog.py: generate site/catalog.json from the files in this repo.
+"""build_catalog.py: generate site/catalog.json and site/catalog-index.json from this repo.
 
 The website never holds its own copy of an item. Everything it shows (names,
 descriptions, maturity, SDLC stage, the "how to use" text, install URLs) is read
 here from the plugins on disk, so the site cannot drift from the files.
+
+catalog.json is the full catalog the site renders (it includes every item's body).
+catalog-index.json is the slim version for agents: no bodies, one item per line, with
+each item's id, plugin, type, name, description, stages, maturity, install mode, the
+skills and agents it brings along, its page URL and the raw URL of every file.
 
 Reads:
   .claude-plugin/marketplace.json            the plugin list
@@ -14,16 +19,24 @@ Reads:
   plugins/<p>/hooks/hooks.json               event, matcher, command (+ script docstring)
   plugins/<p>/templates/*                    one item per top-level entry
   SDLC.md                                    which items each stage names
+  evidence/evidence.json                     the tested label for every item:
+                                             {"<plugin>/<type>/<name>": {"label", "note", "date"}}
+
+Maturity comes from evidence/evidence.json only: verified, beta or new. An item with
+no entry is "new" (check_items.py reports it as E2). The README's own label is kept as
+readme_maturity, and the entry itself as evidence.
 
 Each skill and agent also gets an install mode (CONTRIBUTING.md R1-R3):
   install_mode       "standalone" | "needs-skill" | "plugin-only"
   requires_skills    names from a "Requires skill:" line under the H1
   requires_skill_ids catalog ids of those skills
   plugin_only_reason the sentence after "Install: plugin only." under the H1
+  uses_agents        agent names from a skill's "Uses agent:" line under the H1
+  uses_agent_ids     catalog ids of those agents (a single-skill install brings them)
 
 Usage:
-  python3 scripts/build_catalog.py                 # writes site/catalog.json
-  python3 scripts/build_catalog.py --root DIR --out FILE --check
+  python3 scripts/build_catalog.py                 # writes site/catalog.json and site/catalog-index.json
+  python3 scripts/build_catalog.py --root DIR --out FILE --check   # index goes next to FILE
 
 Standard library only. Python 3.8+.
 """
@@ -36,6 +49,7 @@ import os
 import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import check_items  # noqa: E402  (shares the marker and locate-snippet parsing)
@@ -46,6 +60,13 @@ RAW_BASE = "https://raw.githubusercontent.com/%s/%s/" % (REPO_SLUG, BRANCH)
 BLOB_BASE = "https://github.com/%s/blob/%s/" % (REPO_SLUG, BRANCH)
 TREE_BASE = "https://github.com/%s/tree/%s/" % (REPO_SLUG, BRANCH)
 SITE_URL = "https://ai-foundry-byu.github.io/foundry-marketplace/"
+INDEX_NAME = "catalog-index.json"
+
+LABEL_MEANING = {
+    "verified": "Passed a live end-to-end run of its main path in a real Claude Code session.",
+    "beta": "Partly live-tested or unit-tested, with known gaps; the item page lists them under What we tested.",
+    "new": "Little or no live testing yet. Try it on something low stakes first.",
+}
 
 STAGES = [
     (0, "Scaffold"),
@@ -332,8 +353,9 @@ def classify_maturity(text: str) -> Optional[str]:
     t = text.strip().strip("*").lower()
     if not t or t in ("n/a", "-"):
         return None
-    if t.startswith("new"):
-        return "new"
+    for label in ("verified", "beta", "new"):  # the evidence labels, written first in the cell
+        if re.match(label + r"\b", t):
+            return label
     if "proven" in t:
         return "proven"
     if "new" in t:
@@ -553,10 +575,11 @@ HOOK_REASON = ("A hook is an entry in the plugin's hooks.json plus the script it
                "so it installs with its plugin.")
 
 
-def install_info(body: str, plugin: str) -> Dict[str, Any]:
-    """install_mode, requires_skills and plugin_only_reason for a skill or agent body."""
+def install_info(body: str, plugin: str, item_type: str = "skill") -> Dict[str, Any]:
+    """install_mode, requires_skills, uses_agents and plugin_only_reason for a skill or agent body."""
     reason = check_items.plugin_only_reason(body)
     reqs = check_items.requires_skills(body)
+    uses = check_items.uses_agents(body) if item_type == "skill" else []
     if not reason:
         rest = []
         lines = body.split("\n")
@@ -575,7 +598,7 @@ def install_info(body: str, plugin: str) -> Dict[str, Any]:
     else:
         mode = "standalone"
     return {"install_mode": mode, "requires_skills": reqs, "requires_skill_ids": [],
-            "plugin_only_reason": reason}
+            "uses_agents": uses, "uses_agent_ids": [], "plugin_only_reason": reason}
 
 
 def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[int]],
@@ -605,10 +628,11 @@ def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[in
         item = {
             "id": "%s/%s" % (name, name), "plugin": name, "type": "plugin", "name": name,
             "slug": name, "description": entry.get("description", ""), "stages": [],
-            "maturity": "external", "maturity_note": "Maintained in its own repository.",
+            "maturity": "external", "readme_maturity": "external",
             "body": "", "source_url": url, "raw_url": "", "files": [], "external": True,
             "external_repo": repo, "needs_plugin": True, "tags": plugin["tags"],
             "install_mode": "plugin-only", "requires_skills": [], "requires_skill_ids": [],
+            "uses_agents": [], "uses_agent_ids": [],
             "plugin_only_reason": "It is a whole plugin maintained in its own repository.",
         }
         return plugin, [item]
@@ -644,13 +668,13 @@ def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[in
             "id": "%s/%s" % (name, iname), "plugin": name, "type": item_type, "name": iname,
             "slug": iname, "description": desc or (row["what"] if row else ""),
             "stages": assign_stages(iname, fm, row, sdlc_names, category, aliases),
-            "maturity": mat, "maturity_note": note, "body": body,
+            "maturity": mat, "readme_maturity": mat, "body": body,
             "path": r, "source_url": BLOB_BASE + r, "raw_url": RAW_BASE + r if os.path.isfile(path) else "",
             "files": files, "external": False,
             "needs_plugin": "CLAUDE_PLUGIN_ROOT" in body, "tags": plugin["tags"],
         }
         if item_type in ("skill", "agent"):
-            it.update(install_info(body, name))
+            it.update(install_info(body, name, item_type))
             it["needs_plugin"] = it["install_mode"] == "plugin-only"
         if extra:
             it.update(extra)
@@ -670,6 +694,7 @@ def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[in
             extra={"dir": d}, aliases=(d,))
 
     # agents
+    agent_by_stem: Dict[str, Dict[str, Any]] = {}
     aroot = os.path.join(pdir, "agents")
     for fn in sorted(os.listdir(aroot)) if os.path.isdir(aroot) else []:
         if not fn.endswith(".md"):
@@ -682,6 +707,7 @@ def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[in
         add("agent", str(fm.get("name") or fn[:-3]), str(fm.get("description", "")), body, ap,
             [file_entry(root, ap, aroot)], fm,
             extra={"tools": tools, "model": fm.get("model", "")}, aliases=(fn[:-3],))
+        agent_by_stem[fn[:-3]] = items[-1]
 
     # hooks
     hooks_path = os.path.join(pdir, "hooks", "hooks.json")
@@ -738,7 +764,8 @@ def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[in
             aliases=((row["label"],) if row else ()))
         # hooks always need the plugin; the README's text may not mention CLAUDE_PLUGIN_ROOT
         items[-1].update({"needs_plugin": True, "install_mode": "plugin-only", "requires_skills": [],
-                          "requires_skill_ids": [], "plugin_only_reason": HOOK_REASON})
+                          "requires_skill_ids": [], "uses_agents": [], "uses_agent_ids": [],
+                          "plugin_only_reason": HOOK_REASON})
 
     # templates
     troot = os.path.join(pdir, "templates")
@@ -796,12 +823,12 @@ def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[in
             "id": "%s/%s" % (name, tname), "plugin": name, "type": "template", "name": tname,
             "slug": tname, "description": desc,
             "stages": assign_stages(tname, {}, row, sdlc_names, category),
-            "maturity": mat, "maturity_note": note, "body": body, "path": r,
+            "maturity": mat, "readme_maturity": mat, "body": body, "path": r,
             "source_url": (TREE_BASE if os.path.isdir(tp) else BLOB_BASE) + r,
             "raw_url": RAW_BASE + r if os.path.isfile(tp) else "",
             "files": files, "external": False, "needs_plugin": False, "tags": plugin["tags"],
             "install_mode": "standalone", "requires_skills": [], "requires_skill_ids": [],
-            "plugin_only_reason": "",
+            "uses_agents": [], "uses_agent_ids": [], "plugin_only_reason": "",
         })
 
     for it in items:
@@ -823,16 +850,60 @@ def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[in
         if it["type"] == "skill":
             skill_ids[it["dir"]] = it["id"]
             skill_ids.setdefault(it["name"], it["id"])
+    # "Uses agent: x" names an agent file stem (or frontmatter name) in this plugin
+    agent_ids: Dict[str, str] = {stem: it["id"] for stem, it in agent_by_stem.items()}
+    for it in items:
+        if it["type"] == "agent":
+            agent_ids.setdefault(it["name"], it["id"])
     for it in items:
         if it.get("requires_skills"):
             it["requires_skill_ids"] = [skill_ids[r] for r in it["requires_skills"] if r in skill_ids]
+        if it.get("uses_agents"):
+            it["uses_agent_ids"] = [agent_ids[a] for a in it["uses_agents"] if a in agent_ids]
     counts: Dict[str, int] = {}
     for it in items:
         counts[it["type"]] = counts.get(it["type"], 0) + 1
     plugin["counts"] = counts
-    mats = {it["maturity"] for it in items}
-    plugin["maturity"] = "proven" if mats == {"proven"} else ("new" if mats == {"new"} else "mixed")
     return plugin, items
+
+
+# --------------------------------------------------------------------------
+# evidence (the tested label)
+# --------------------------------------------------------------------------
+
+def evidence_key(it: Dict[str, Any]) -> str:
+    return "%s/%s/%s" % (it["plugin"], it["type"], it["name"])
+
+
+def find_evidence(evidence: Dict[str, Any], it: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The entry for an item, by <plugin>/<type>/<name>, then by its slug."""
+    for key in (evidence_key(it), "%s/%s/%s" % (it["plugin"], it["type"], it.get("slug", it["name"]))):
+        ev = evidence.get(key)
+        if isinstance(ev, dict):
+            return ev
+    return None
+
+
+def load_evidence(root: str) -> Dict[str, Any]:
+    data = read_json(os.path.join(root, check_items.EVIDENCE_REL))
+    return data if isinstance(data, dict) else {}
+
+
+def apply_evidence(items: List[Dict[str, Any]], evidence: Dict[str, Any]) -> None:
+    """Set each item's maturity to its evidence label; no valid entry means "new"."""
+    for it in items:
+        ev = find_evidence(evidence, it)
+        if ev and ev.get("label") in check_items.EVIDENCE_LABELS:
+            it["maturity"] = ev["label"]
+            it["evidence"] = {"label": ev["label"], "note": str(ev.get("note", "")), "date": str(ev.get("date", ""))}
+        else:
+            it["maturity"] = "new"
+            it["evidence"] = None
+
+
+def plugin_maturity(labels: List[str]) -> str:
+    found = set(labels)
+    return found.pop() if len(found) == 1 else ("mixed" if found else "new")
 
 
 def build(root: str) -> Dict[str, Any]:
@@ -849,6 +920,10 @@ def build(root: str) -> Dict[str, Any]:
         p, its = build_plugin(root, entry, sdlc_names, marketplace)
         plugins.append(p)
         items.extend(its)
+    apply_evidence(items, load_evidence(root))
+    for p in plugins:
+        if not p.get("external"):
+            p["maturity"] = plugin_maturity([it["maturity"] for it in items if it["plugin"] == p["name"]])
     stages = []
     for sid, sname in STAGES:
         meta = sdlc_info.get(sid, {})
@@ -869,10 +944,73 @@ def build(root: str) -> Dict[str, Any]:
             "contributing_url": BLOB_BASE + "CONTRIBUTING.md",
             "sdlc_url": BLOB_BASE + "SDLC.md",
         },
+        "labels": LABEL_MEANING,
         "stages": stages,
         "plugins": plugins,
         "items": items,
     }
+
+
+# --------------------------------------------------------------------------
+# the slim index for agents
+# --------------------------------------------------------------------------
+
+def page_url(it: Dict[str, Any]) -> str:
+    return SITE_URL + "#/item/" + quote(it["plugin"], safe="") + "/" + quote(it["slug"], safe="")
+
+
+def build_index(data: Dict[str, Any]) -> Dict[str, Any]:
+    """catalog.json without bodies or READMEs: what an agent needs to pick and install items."""
+    mp = data["marketplace"]
+    scope = " --scope project"
+    items = []
+    for it in data["items"]:
+        row: Dict[str, Any] = {
+            "id": it["id"], "plugin": it["plugin"], "type": it["type"], "name": it["name"],
+        }
+        if it.get("dir"):
+            row["dir"] = it["dir"]
+        row.update({
+            "description": it["description"], "stages": it["stages"], "all_stages": bool(it.get("all_stages")),
+            "maturity": it["maturity"], "install_mode": it.get("install_mode", ""),
+            "requires_skills": it.get("requires_skill_ids", []), "uses_agents": it.get("uses_agent_ids", []),
+            "page_url": page_url(it), "raw_url": it.get("raw_url", ""),
+            "files": [{"path": f["path"], "raw_url": f["raw_url"]} for f in it.get("files", [])],
+        })
+        if it.get("external"):
+            row["source_url"] = it.get("source_url", "")
+        items.append(row)
+    return {
+        "schema": 1,
+        "about": ("Slim index of the AI Foundry Marketplace for agents. requires_skills and uses_agents are ids "
+                  "of other items in this file; install them with the item. Full text of every item: catalog_url."),
+        "marketplace": {"name": mp["name"], "repo": mp["repo"], "site_url": mp["site_url"],
+                        "catalog_url": mp["site_url"] + "catalog.json", "index_url": mp["site_url"] + INDEX_NAME},
+        "install": {
+            "plugin": ["claude plugin marketplace add %s%s" % (mp["repo"], scope),
+                       "claude plugin install <plugin>@%s%s" % (mp["name"], scope)],
+            "skill": "download every files[].raw_url to .claude/skills/<dir>/<path>, then chmod +x the files under scripts/",
+            "agent": "download raw_url to .claude/agents/<name>.md",
+            "after": "run /reload-plugins or restart Claude Code",
+        },
+        "labels": data.get("labels", LABEL_MEANING),
+        "stages": [{"id": s["id"], "name": s["name"]} for s in data["stages"]],
+        "plugins": [{"name": p["name"], "description": p["description"], "starter": bool(p.get("starter")),
+                     "external": bool(p.get("external")), "maturity": p.get("maturity", "")} for p in data["plugins"]],
+        "items": items,
+    }
+
+
+def dump_index(index: Dict[str, Any]) -> str:
+    """JSON with one plugin or item per line, so it reads and diffs line by line."""
+    parts = []
+    for k, v in index.items():
+        if k in ("plugins", "items"):
+            rows = ",\n".join(" " + json.dumps(r, ensure_ascii=False) for r in v)
+            parts.append(json.dumps(k) + ": [\n" + rows + "\n]")
+        else:
+            parts.append(json.dumps(k) + ": " + json.dumps(v, ensure_ascii=False))
+    return "{\n" + ",\n".join(parts) + "\n}\n"
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -880,31 +1018,36 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--root", default=os.path.dirname(here), help="repo root (default: parent of scripts/)")
     ap.add_argument("--out", default=None, help="output path (default: <root>/site/catalog.json)")
-    ap.add_argument("--check", action="store_true", help="exit 1 if the output file is stale")
+    ap.add_argument("--check", action="store_true", help="exit 1 if either output file is stale")
     args = ap.parse_args(argv)
     root = os.path.abspath(args.root)
     out = args.out or os.path.join(root, "site", "catalog.json")
+    index_out = os.path.join(os.path.dirname(out), INDEX_NAME)
     data = build(root)
     text = json.dumps(data, indent=1, ensure_ascii=False, sort_keys=False) + "\n"
+    index_text = dump_index(build_index(data))
     if args.check:
-        if read_text(out) != text:
-            print("catalog is stale: run python3 scripts/build_catalog.py", file=sys.stderr)
+        stale = [rel(root, p) for p, t in ((out, text), (index_out, index_text)) if read_text(p) != t]
+        if stale:
+            print("catalog is stale (%s): run python3 scripts/build_catalog.py" % ", ".join(stale), file=sys.stderr)
             return 1
         print("catalog is current")
         return 0
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    with open(out, "w", encoding="utf-8") as fh:
-        fh.write(text)
+    for p, t in ((out, text), (index_out, index_text)):
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(t)
     by_type: Dict[str, int] = {}
     for it in data["items"]:
         by_type[it["type"]] = by_type.get(it["type"], 0) + 1
-    unl = [it["id"] for it in data["items"] if it["maturity"] == "unlabeled"]
+    unl = [it["id"] for it in data["items"] if it.get("evidence") is None]
     nostage = [it["id"] for it in data["items"]
                if not it["stages"] and not it["external"] and not it.get("all_stages")]
-    print("wrote %s: %d plugins, %d items %s" % (rel(root, out), len(data["plugins"]), len(data["items"]),
-                                                json.dumps(by_type, sort_keys=True)))
+    print("wrote %s and %s: %d plugins, %d items %s" % (
+        rel(root, out), rel(root, index_out), len(data["plugins"]), len(data["items"]),
+        json.dumps(by_type, sort_keys=True)))
     if unl:
-        print("unlabeled maturity: " + ", ".join(unl))
+        print("no evidence entry (labeled new): " + ", ".join(unl))
     if nostage:
         print("no SDLC stage: " + ", ".join(nostage))
     return 0

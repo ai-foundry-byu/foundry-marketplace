@@ -69,6 +69,8 @@ JOURNEY = "steps:\n  - goto: /\nassertions:\n  - visible: body\nscreenshot: home
 QA_TEMPLATE = (Path(__file__).resolve().parents[3] / "foundry-qa" / "skills" / "done-gate"
                / "templates" / "done-journey.yaml")
 QA_GATE = QA_TEMPLATE.parents[1] / "scripts" / "done_gate.py"
+GUARD_HOOK = (Path(__file__).resolve().parents[3] / "foundry-guardrails" / "hooks" / "scripts"
+              / "verify_before_done.py")
 
 
 def git(d, *args):
@@ -207,6 +209,73 @@ class ScaffoldTests(unittest.TestCase):
             self.assertEqual(Path(d, ".github", "workflows", "stories.yml").read_text(), "mine")
             self.assertIn("skipped (exists)", res[str(Path(d, ".github", "workflows", "stories.yml").resolve())])
 
+    def test_scaffold_writes_the_guardrails_generated_manifest(self):
+        """Wave D (a): verify_before_done skips files listed in .foundry/generated.json with a
+        matching SHA-256, so a fresh scaffold in a git repo gets no false Stop block."""
+        with tempfile.TemporaryDirectory() as d:
+            git(d, "init", "-q")
+            new_project.scaffold(Path(d, "product"), "X")
+            man = json.loads(Path(d, ".foundry", "generated.json").read_text())
+            self.assertEqual(man["version"], 1)
+            self.assertEqual(man["generator"], "foundry-sdlc/new-project")
+            paths = {f["path"]: f["sha256"] for f in man["files"]}
+            self.assertEqual(paths["tools/gen_stories.py"],
+                             gen_stories.sha256_file(Path(d, "tools", "gen_stories.py")))
+            self.assertIn("product/PRD.md", paths)
+            self.assertIn(".github/workflows/stories.yml", paths)
+            self.assertFalse(any(p.startswith("/") or ".." in p for p in paths))
+
+    @unittest.skipUnless(GUARD_HOOK.is_file(), "foundry-guardrails is not next to this plugin")
+    def test_guardrails_hook_reads_the_manifest(self):
+        sys.path.insert(0, str(GUARD_HOOK.parent))
+        try:
+            import verify_before_done as vbd  # noqa: E402
+        finally:
+            sys.path.remove(str(GUARD_HOOK.parent))
+        with tempfile.TemporaryDirectory() as d:
+            git(d, "init", "-q")
+            new_project.scaffold(Path(d), "X")
+            tool = os.path.realpath(Path(d, "tools", "gen_stories.py"))
+            gen = vbd.generated_files(os.path.realpath(d))
+            self.assertIn(tool, gen)
+            self.assertEqual(vbd._drop_generated([tool], d, d, "test"), [])
+
+    def test_rescaffold_refreshes_an_old_tools_copy(self):
+        """Wave D (b): an earlier scaffold's tools/gen_stories.py is brought up to the skill copy."""
+        with tempfile.TemporaryDirectory() as d:
+            tool = Path(d, "tools", "gen_stories.py")
+            tool.parent.mkdir()
+            tool.write_text("print('old')\n")
+            res = {str(p.resolve()): a for p, a in new_project.scaffold(Path(d), "X")}
+            self.assertEqual(tool.read_bytes(), (Path(new_project.HERE) / "gen_stories.py").read_bytes())
+            self.assertIn("refreshed", res[str(tool.resolve())])
+            self.assertIn("unversioned -> ", res[str(tool.resolve())])
+            man = json.loads(Path(d, ".foundry", "generated.json").read_text())
+            self.assertEqual({f["path"]: f["sha256"] for f in man["files"]}["tools/gen_stories.py"],
+                             gen_stories.sha256_file(tool))
+
+    def test_detector_reports_out_of_date_project_tools(self):
+        with tempfile.TemporaryDirectory() as d:
+            new_project.scaffold(Path(d), "X")
+            self.assertEqual(sdlc_stage.evaluate(Path(d))["notes"], [])
+            Path(d, "tools", "gen_stories.py").write_text("print('old')\n")
+            notes = sdlc_stage.evaluate(Path(d))["notes"]
+            self.assertTrue(any("project tools out of date" in n and "--refresh-tools" in n
+                                for n in notes), notes)
+            self.assertIn("project tools out of date", sdlc_stage.report(sdlc_stage.evaluate(Path(d))))
+            old = os.environ.get("CLAUDE_PROJECT_DIR")
+            os.environ["CLAUDE_PROJECT_DIR"] = d
+            try:
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    sdlc_stage.hook()
+                self.assertIn("project tools out of date", out.getvalue())
+            finally:
+                if old is None:
+                    del os.environ["CLAUDE_PROJECT_DIR"]
+                else:
+                    os.environ["CLAUDE_PROJECT_DIR"] = old
+
 
 class GateDetailTests(unittest.TestCase):
     def setUp(self):
@@ -246,6 +315,15 @@ class GateDetailTests(unittest.TestCase):
         for tool in ("done-gate", "persona-tester", "story-verifier", "design-critique", "a11y-check"):
             self.assertIn(tool, uses)
         self.assertNotIn(str(self.d), res["checks"][2]["detail"])
+
+    def test_stage6_refuses_a_gate_report_that_names_no_commit_id(self):
+        """Review D: a done-gate report saying sha "HEAD" matched whatever HEAD is now."""
+        git(self.d, "init", "-q")
+        git(self.d, "add", "-A")
+        git(self.d, "commit", "-qm", "build")
+        Path(self.d, ".qa", "done-gate").mkdir(parents=True)
+        Path(self.d, ".qa", "done-gate", "last.json").write_text(json.dumps({"sha": "HEAD", "exit": 0}))
+        self.assertIn("not a commit id", detail(self.d, 6))
 
 
 class StageTests(unittest.TestCase):
@@ -296,6 +374,10 @@ class StageTests(unittest.TestCase):
         ver.mkdir(parents=True)
         for sid in ("US-01", "US-02"):
             (ver / f"{sid}.md").write_text("Result: all PASS")
+        self.assertEqual(stage(d), 6)  # a report must name the commit it verified
+        self.assertIn("Commit:", detail(d, 6))
+        for sid in ("US-01", "US-02"):
+            (ver / f"{sid}.md").write_text(f"Commit: {head}\nResult: all PASS")
         self.assertEqual(stage(d), 7)
         for sid in ("US-01", "US-02"):
             err = io.StringIO()
@@ -365,6 +447,165 @@ class StageTests(unittest.TestCase):
                     del os.environ["CLAUDE_PROJECT_DIR"]
                 else:
                     os.environ["CLAUDE_PROJECT_DIR"] = old
+
+
+FEEDBACK_ROW = '| R-04 | "search finds nothing for me" | S2 | 2026-11-06 | must | | OPEN-FEEDBACK: not reproduced |\n'
+
+
+class LifecycleTests(unittest.TestCase):
+    """B2/B3 end to end: approved PRD, build DONE, gates on HEAD, untracked code blocks LIVE,
+    a partial ship with FOLLOW-UP tasks is stage 8, an OPEN-FEEDBACK bug row keeps it at 8,
+    and a code change after the gate is stage 6 again."""
+
+    def set_status(self, art, *args):
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            code = gen_stories.main(["--prd", str(art / "PRD.md"), "--out", str(art / "stories.json"),
+                                     *args])
+        return code, err.getvalue()
+
+    def test_partial_ship_feedback_and_regression(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            git(d, "init", "-q")
+            new_project.scaffold(d, "X")
+            Path(d, "REQUIREMENTS.md").write_text(REQUIREMENTS.format(r2="STORIED", r3="DROPPED (D-01)"))
+            Path(d, "PRD.md").write_text(PRD)
+            compile_stories(d)
+            Path(d, "DECISIONS.md").write_text(DECISIONS.format(approval=APPROVAL))
+            Path(d, "app.py").write_text("print('app')\n")
+            git(d, "add", "-A")
+            git(d, "commit", "-qm", "T-01")
+            sha = git(d, "rev-parse", "--short", "HEAD")
+            Path(d, "WORKPLAN.md").write_text(WORKPLAN.format(status=f"DONE 2026-11-03: commit {sha}"))
+            Path(d, "done-journey.yaml").write_text(JOURNEY)
+            git(d, "add", "-A")
+            git(d, "commit", "-qm", "workplan")
+            head = git(d, "rev-parse", "HEAD")
+            Path(d, ".qa", "done-gate").mkdir(parents=True)
+            Path(d, ".qa", "done-gate", "last.json").write_text(
+                json.dumps({"sha": head, "exit": 0, "journey": "j", "time": "t"}))
+            Path(d, ".qa", "verify").mkdir()
+            for sid in ("US-01", "US-02"):
+                Path(d, ".qa", "verify", f"{sid}.md").write_text(f"Commit: {head}\nResult: see rows")
+            self.assertEqual(stage(d), 7)
+
+            # untracked code: stage 6 is not ok and LIVE is refused
+            Path(d, "server").mkdir()
+            Path(d, "server", "extra.py").write_text("x = 1\n")
+            self.assertEqual(stage(d), 6)
+            self.assertIn("server/extra.py", detail(d, 6))
+            code, err = self.set_status(d, "--set", "US-01=LIVE", "--evidence", ".qa/verify/US-01.md")
+            self.assertEqual(code, 1)
+            self.assertIn("server/extra.py", err)
+            Path(d, "server", "extra.py").unlink()
+
+            # partial ship: US-01 LIVE, US-02 PARTIAL with a FOLLOW-UP task
+            code, err = self.set_status(d, "--set", "US-01=LIVE", "--evidence", str(d / ".qa/verify/US-01.md"))
+            self.assertEqual(code, 0, err)
+            code, err = self.set_status(d, "--set", "US-02=PARTIAL", "--evidence", ".qa/verify/US-02.md")
+            self.assertEqual(code, 0, err)
+            wp = WORKPLAN.format(status=f"DONE 2026-11-03: commit {sha}") + \
+                "| T-03 | Fix the empty search (US-02.1) | agent | T-01 | FOLLOW-UP (blocks US-02) |\n"
+            Path(d, "WORKPLAN.md").write_text(wp)
+            Path(d, "CHANGELOG.md").write_text("# log\n\n## 2026-11-04\n- sign-in live (US-01)\n")
+            git(d, "add", "-A")
+            git(d, "commit", "-qm", "Ship US-01")
+            res = sdlc_stage.evaluate(d)
+            self.assertEqual(res["current_stage"], 8, res["checks"])
+            self.assertTrue(res["checks"][4]["ok"], res["checks"][4])
+            self.assertIn("T-03", detail(d, 8))
+            self.assertIn("US-02", detail(d, 8))
+            self.assertIn("1 of 2", detail(d, 8))
+
+            # an unreproduced bug report: OPEN-FEEDBACK, still stage 8, listed as open work
+            Path(d, "REQUIREMENTS.md").write_text(
+                REQUIREMENTS.format(r2="STORIED", r3="DROPPED (D-01)").replace(
+                    "## Already exists", FEEDBACK_ROW + "## Already exists"))
+            self.assertEqual(stage(d), 8)
+            self.assertTrue(sdlc_stage.evaluate(d)["checks"][2]["ok"])
+            self.assertIn("R-04", detail(d, 8))
+
+            # an uncommitted code change: stage 6 (the gate is not current)
+            Path(d, "app.py").write_text("print('app v2')\n")
+            self.assertEqual(stage(d), 6)
+            self.assertIn("uncommitted", detail(d, 6))
+            # committed: the gate ran on older code, stage 6 again
+            git(d, "commit", "-qam", "T-03 fix")
+            self.assertEqual(stage(d), 6)
+            self.assertIn("app.py", detail(d, 6))
+
+    def test_plain_open_after_approval_is_still_stage_2(self):
+        """Only the feedback status is exempt; a new plain OPEN ask still needs a story."""
+        with tempfile.TemporaryDirectory() as d:
+            new_project.scaffold(Path(d), "X")
+            Path(d, "PRD.md").write_text(PRD)
+            compile_stories(d)
+            Path(d, "DECISIONS.md").write_text(DECISIONS.format(approval=APPROVAL))
+            Path(d, "REQUIREMENTS.md").write_text(REQUIREMENTS.format(r2="STORIED", r3="OPEN"))
+            self.assertEqual(stage(d), 2)
+            Path(d, "REQUIREMENTS.md").write_text(REQUIREMENTS.format(r2="STORIED", r3="OPEN-FEEDBACK: not reproduced"))
+            self.assertEqual(stage(d), 3)
+
+    def test_partial_coverage_needs_a_decision(self):
+        """R1b-D9: an ask a decision overrides in part is PARTIAL (D-xx), not relabelled STORIED."""
+        self.assertTrue(sdlc_stage.covered("PARTIAL (D-01): members-only survives"))
+        self.assertFalse(sdlc_stage.covered("PARTIAL"))
+        self.assertTrue(sdlc_stage.feedback("OPEN-FEEDBACK: not reproduced"))
+        self.assertFalse(sdlc_stage.covered("OPEN-FEEDBACK: not reproduced"))
+
+    def test_follow_up_tasks_do_not_hold_stage_4(self):
+        rows = sdlc_stage.task_statuses(WORKPLAN.format(status="FOLLOW-UP (blocks US-02)"))
+        self.assertTrue(sdlc_stage.follow_up(rows[0][1]))
+        with tempfile.TemporaryDirectory() as d:
+            new_project.scaffold(Path(d), "X")
+            Path(d, "REQUIREMENTS.md").write_text(REQUIREMENTS.format(r2="STORIED", r3="DROPPED (D-01)"))
+            Path(d, "PRD.md").write_text(PRD)
+            compile_stories(d)
+            Path(d, "DECISIONS.md").write_text(DECISIONS.format(approval=APPROVAL))
+            Path(d, "WORKPLAN.md").write_text(WORKPLAN.format(status="DONE 2026-11-03: commit 3f2a9c1") +
+                                              "| T-03 | later | agent | - | FOLLOW-UP (blocks US-02) |\n")
+            self.assertTrue(sdlc_stage.evaluate(Path(d))["checks"][4]["ok"])
+
+    def test_mark_follow_ups_after_a_partial_ship(self):
+        """Wave D (c): after a partial ship, leftover tasks become FOLLOW-UP (blocks US-xx), so
+        the detector leaves stage 4; it refuses before any story is LIVE."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            new_project.scaffold(d, "X")
+            Path(d, "REQUIREMENTS.md").write_text(REQUIREMENTS.format(r2="STORIED", r3="DROPPED (D-01)"))
+            Path(d, "PRD.md").write_text(PRD)
+            compile_stories(d)
+            Path(d, "DECISIONS.md").write_text(DECISIONS.format(approval=APPROVAL))
+            wp = (WORKPLAN.format(status="DONE 2026-11-03: commit 3f2a9c1")
+                  + "| T-03 | Fix the empty search (US-02.1) | agent | T-01 | IN REVIEW |\n"
+                  + "| T-04 | tidy the README | agent | - | NOT STARTED |\n")
+            Path(d, "WORKPLAN.md").write_text(wp)
+            out = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(out):
+                code = sdlc_stage.main([str(d), "--mark-follow-ups"])
+            self.assertEqual(code, 1)
+            self.assertIn("no story is LIVE", out.getvalue())
+            self.assertEqual(Path(d, "WORKPLAN.md").read_text(), wp)
+            doc = json.loads(Path(d, "stories.json").read_text())
+            doc["stories"][0]["status"] = "LIVE"
+            doc["stories"][1]["status"] = "PARTIAL"
+            Path(d, "stories.json").write_text(gen_stories.render(doc["stories"]))
+            self.assertIn("T-03", detail(d, 4))
+            out = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(out):
+                code = sdlc_stage.main([str(d), "--mark-follow-ups"])
+            text = Path(d, "WORKPLAN.md").read_text()
+            self.assertIn("| T-03 | Fix the empty search (US-02.1) | agent | T-01 | FOLLOW-UP (blocks US-02) |", text)
+            self.assertIn("T-03: IN REVIEW -> FOLLOW-UP (blocks US-02)", out.getvalue())
+            # a task that names no open story is left for a human call, and says so
+            self.assertIn("| T-04 | tidy the README | agent | - | NOT STARTED |", text)
+            self.assertIn("T-04", out.getvalue())
+            self.assertEqual(code, 1)
+            Path(d, "WORKPLAN.md").write_text(text.replace("| T-04 | tidy the README | agent | - | NOT STARTED |\n", ""))
+            self.assertTrue(sdlc_stage.evaluate(d)["checks"][4]["ok"], detail(d, 4))
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(sdlc_stage.main([str(d), "--mark-follow-ups"]), 0)
 
 
 if __name__ == "__main__":

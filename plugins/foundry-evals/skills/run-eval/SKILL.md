@@ -36,7 +36,7 @@ Options:
 
 | flag | use |
 |---|---|
-| `--reps N` | tries per case. Use 3 or more for anything model-backed; 1 is fine for deterministic code |
+| `--reps N` | tries per case. Use 3 or more for anything model-backed; 1 is fine for deterministic code if `suite.json` says `"deterministic": true` (otherwise use 2, so evalkit can see the reps agree) |
 | `--split train\|val\|test\|all` | run one split (hill-climbing keeps test for the final check) |
 | `--tag regression` | only cases with that tag (recorded as a subset) |
 | `--no-judge` | skip judge graders. The score becomes an UPPER BOUND and the report says so |
@@ -94,6 +94,11 @@ How to read the comparison:
   cases or reps if you need to see a smaller effect.
 - **improved / regressed.** Bigger than the noise band. Still read `newly_failing`: a run
   that goes up overall while breaking a `regression` case is not a win.
+- **improved / regressed / no change (deterministic, paired ...).** Both runs are
+  deterministic (`"deterministic": true` in `suite.json`, or 2+ reps where every case gave the
+  same output), so there is no sampling noise and evalkit diffs cases exactly: fixes cases and
+  breaks none is `improved`; breaks any case is `regressed`. The `paired` block says which basis
+  applied; a declared suite whose reps disagree falls back to the noise band with a note.
 - `changed_surfaces` lists which files in `suite.json` `surfaces` changed between the runs
   (for example `prompt.md`), so you can say what the delta is attributable to.
 
@@ -120,5 +125,6 @@ Caveats: <judge skipped / errors / small sample / cases changed>.
 
 ## Maturity
 
-Method: proven (the reliability rules, error handling and same-cases-or-no-comparison rule
-come from the AI Foundry team's production eval framework). `evalkit.py`: new standalone port.
+Maturity: **verified**.
+Method: the reliability rules, error handling and same-cases-or-no-comparison rule
+come from the AI Foundry team's production eval framework. `evalkit.py`: a standalone port.

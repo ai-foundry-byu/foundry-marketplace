@@ -5,13 +5,15 @@ description: Stage 2 of the Foundry SDLC. Write PRD.md with user stories inline 
 
 # Stage 2: PRD and user stories
 
+Uses agent: prd-critic
+
 The PRD is the contract every later stage tests against. Stories live **inside** the PRD, so there is one source of truth. `stories.json` is compiled from the PRD, and testers, verifiers and CI read that compiled file.
 
 ## Rules (MUST)
 
 1. Stories live only in PRD.md; `stories.json` is compiled from it.
 2. The `prd-critic` agent critiques the PRD in a fresh context, never you.
-3. Every R-id ends STORIED or `DROPPED (D-xx)`.
+3. Every R-id ends STORIED, `DROPPED (D-xx)`, or `PARTIAL (D-xx): <what survives>` when a decision overrides it in part. Never relabel a partly honored ask STORIED to satisfy the detector.
 4. When the human approves, record the `PRD approved` D-row in their words and **stop** (see "When the human approves"). The workplan waits until they ask.
 
 ## Inputs
@@ -46,7 +48,10 @@ The PRD is the contract every later stage tests against. Stories live **inside**
    - **Include the unhappy states:** empty, loading, error, no permission, slow network.
    - **One behavior per criterion.** The verifier reports per criterion, as `US-04.3`.
    - **No implementation detail** unless it is a binding decision. "Uses React Query" is not a criterion.
-3. **Compile the stories**, from the project root (drop `product/` when the artifacts are at the root):
+3. **Compile the stories**, from the project root (drop `product/` when the artifacts are at the root). First bring the project's own copy of the compiler up to this skill's copy, and show the student the one line it prints (for example `refreshed tools/gen_stories.py: unversioned -> 0.2.0 (+40 -12 lines)`, or `tools/gen_stories.py is current (0.2.0)`):
+   ```bash
+   python3 "${CLAUDE_SKILL_DIR}/scripts/gen_stories.py" --refresh-tools .
+   ```
    ```bash
    python3 tools/gen_stories.py --prd product/PRD.md --out product/stories.json
    ```
@@ -54,8 +59,8 @@ The PRD is the contract every later stage tests against. Stories live **inside**
    python3 tools/gen_stories.py --prd product/PRD.md --out product/stories.json --check
    ```
    The first command writes the file. `--check` writes nothing and exits 1 if the file is stale, a story has no criteria, an id is duplicated, or a status is not one of NOT_BUILT, BUILT, PARTIAL, LIVE, PARKED. Regenerating keeps each story's `status`, `notes`, `evidence` and any `surfaces`/`devices`/`waits_on` the PRD does not set. New stories start as NOT_BUILT. The schema is in `stories.schema.json`. (If the project has no `tools/` copy, run `${CLAUDE_SKILL_DIR}/scripts/gen_stories.py` with the same arguments.)
-4. **Coverage.** In `REQUIREMENTS.md`, fill the Story ids column for every R-id and set its Status to STORIED. Any ask still OPEN is a missing story, or the human drops it: then its Status is `DROPPED (D-03)`, citing the decision. The stage detector fails on any other status.
-5. **Independent critique.** Launch the `prd-critic` agent in a fresh context. Do not critique your own PRD in the same context. Give it only file paths:
+4. **Coverage.** In `REQUIREMENTS.md`, fill the Story ids column for every R-id and set its Status to STORIED. Any ask still OPEN is a missing story, or the human drops it: then its Status is `DROPPED (D-03)`, citing the decision. An ask a decision overrides in part is `PARTIAL (D-01): <what survives>`, never STORIED. A bug report with no story yet is `OPEN-FEEDBACK: <why>` (see `bug-to-story`). The stage detector fails on any other status.
+5. **Independent critique.** Launch the `prd-critic` agent in a fresh context. Do not critique your own PRD in the same context. If the agent is not installed (a standalone copy of this skill), install `foundry-sdlc/prd-critic` from the marketplace into `.claude/agents/` first, or tell the human it is missing; never critique the PRD yourself. Give it only file paths:
    > Critique PRD.md against REQUIREMENTS.md and DECISIONS.md in <dir>. Return numbered critiques with severity and a suggested fix. Do not edit any file.
 
    For each critique, decide whether to accept it, accept it in part, or reject it. Apply the accepted ones to the PRD. Then fill **Appendix A. Addressed critiques**, one row per critique, including the rejected ones with your reason. Rerun `gen_stories.py` if stories changed.
@@ -80,7 +85,7 @@ If they approve with changes, apply the changes and ask again. Approval is never
 
 - `gen_stories.py --check` exits 0.
 - Appendix A has a row for every prd-critic finding. No `TODO:` markers remain.
-- Every R-id is STORIED or `DROPPED (D-xx)`.
+- Every R-id is STORIED, `DROPPED (D-xx)` or `PARTIAL (D-xx)`.
 - DECISIONS.md has the dated `PRD approved` row in the human's words.
 - `python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .` reports stage 3.
 

@@ -20,9 +20,11 @@ is done by the explorer agent by hand, and only on a local or staging target.
 Per page it records:
   error   console errors, uncaught exceptions, HTTP >= 500, failed requests,
           a page that does not load, a broken same-origin link (HTTP 404/410)
-  warn    a back-button that does not return to the previous URL, HTTP 4xx on
-          a sub-request, horizontal overflow on a mobile profile, missing <title>
-          or <h1>, images without alt
+  warn    a back-button that does not return to the previous URL (skip links
+          and other in-page anchors are never used for this check), HTTP 4xx on
+          a sub-request, horizontal overflow on a mobile profile (scrollWidth
+          against documentElement.clientWidth), missing <title> or <h1>, images
+          without alt
   look    near-empty main content (an empty state: is it designed, or blank?)
 
 Exit codes: 0 no errors, 1 at least one error-level finding, 2 config error,
@@ -96,10 +98,32 @@ def should_visit(url: str, origin: str) -> bool:
     return not any(w in low or w in route for w in SKIP_WORDS)
 
 
+def is_same_page_anchor(raw: str) -> bool:
+    """A raw href like '#app' or '#top' (a skip link, an in-page jump), not a '#/' or '#!/' route. Pure."""
+    return raw.startswith("#") and not raw.startswith(("#/", "#!/"))
+
+
+def back_check_target(links: list[dict], url: str, origin: str) -> str | None:
+    """The first link that leaves this page for another crawlable page: never a same-page anchor. Pure.
+
+    links: [{"href": absolute href, "raw": the href attribute as written}]."""
+    for link in links:
+        if is_same_page_anchor(link.get("raw") or ""):
+            continue
+        target = normalize(link["href"])
+        if target != url and should_visit(target, origin):
+            return target
+    return None
+
+
 def verdict(visits: list[PageVisit], start_reached: bool) -> int:
     if not start_reached:
         return EXIT_INCONCLUSIVE
     return EXIT_FAIL if any(f.severity == "error" for v in visits for f in v.findings) else EXIT_PASS
+
+
+class _NoNavigation(Exception):
+    """The back-check click did not navigate; the check is skipped, not reported."""
 
 
 CLICK_LINK_JS = """
@@ -110,7 +134,9 @@ CLICK_LINK_JS = """
     const route = (frag.startsWith('/') || frag.startsWith('!/')) && frag.replace(/[\\/!]/g, '') ? '#' + frag.replace(/\\/+$/, '') : '';
     return u.protocol + '//' + u.host + (u.pathname.replace(/\\/+$/, '') || '/') + u.search + route;
   };
-  const a = as.find(x => norm(x.href) === norm(t));
+  // never a skip link or an in-page anchor (#app): those do not navigate, often by preventDefault
+  const nav = as.filter(x => { const raw = x.getAttribute('href') || ''; return !(raw.startsWith('#') && !/^#!?\\//.test(raw)); });
+  const a = nav.find(x => norm(x.href) === norm(t));
   if (a) { a.removeAttribute('target'); a.click(); }
 }
 """
@@ -123,8 +149,10 @@ PAGE_FACTS_JS = """
     h1: document.querySelectorAll('h1').length,
     imgNoAlt: [...document.images].filter(i => !i.hasAttribute('alt')).length,
     mainText: (main ? main.innerText : '').trim().length,
-    sw: document.documentElement.scrollWidth, iw: window.innerWidth,
-    links: [...document.querySelectorAll('a[href]')].map(a => a.href),
+    // clientWidth is the layout viewport. Under mobile emulation window.innerWidth grows to
+    // the content width, so comparing against it hides a page that scrolls sideways.
+    sw: document.documentElement.scrollWidth, iw: document.documentElement.clientWidth,
+    links: [...document.querySelectorAll('a[href]')].map(a => ({href: a.href, raw: a.getAttribute('href') || ''})),
   };
 }
 """
@@ -214,7 +242,7 @@ def crawl(start: str, max_pages: int, devices: list[str], browser_name: str, out
                         visit.screenshot = str(shot)
                     except Exception:  # noqa: BLE001
                         pass
-                    links = [normalize(h) for h in facts["links"]]
+                    links = [normalize(h["href"]) for h in facts["links"]]
                     visit.links = len(links)
                     for link in links:
                         if link not in seen and should_visit(link, origin):
@@ -223,14 +251,18 @@ def crawl(start: str, max_pages: int, devices: list[str], browser_name: str, out
                     # Events so far belong to this page. The back-check opens another page; what that
                     # page logs is not this page's fault (it is crawled on its own), so it is dropped.
                     own = list(events)
-                    # back-button check: click the first unvisited-in-this-check link, go back, compare.
+                    # back-button check: click a link to another page, go back, compare. A click that
+                    # does not navigate within 3 s is skipped (not a finding), so a hash SPA still finishes.
                     if backs_done < back_checks:
-                        target = next((l for l in links if should_visit(l, origin) and l != url), None)
+                        target = back_check_target(facts["links"], url, origin)
                         if target:
                             backs_done += 1
                             try:
-                                with page.expect_navigation(timeout=10000):
-                                    page.locator("a[href]").evaluate_all(CLICK_LINK_JS, target)
+                                try:
+                                    with page.expect_navigation(timeout=3000):
+                                        page.locator("a[href]").evaluate_all(CLICK_LINK_JS, target)
+                                except PWTimeout:
+                                    raise _NoNavigation() from None
                                 page.wait_for_load_state("networkidle", timeout=10000)
                                 if normalize(page.url) != url:
                                     page.go_back(wait_until="networkidle", timeout=10000)
@@ -238,6 +270,8 @@ def crawl(start: str, max_pages: int, devices: list[str], browser_name: str, out
                                     if normalize(page.url) != url:
                                         visit.findings.append(Finding("warn", "back-button", url,
                                                                       f"after opening {target}, Back landed on {page.url}", device))
+                            except _NoNavigation:
+                                pass   # the link did not navigate: nothing to check Back against
                             except Exception as exc:  # noqa: BLE001
                                 visit.findings.append(Finding("look", "back-button", url,
                                                               f"could not complete the back check: {str(exc).splitlines()[0]}", device))

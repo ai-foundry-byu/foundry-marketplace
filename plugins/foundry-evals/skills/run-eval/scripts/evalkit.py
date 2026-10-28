@@ -14,7 +14,7 @@ comparable run.
 Commands:
   evalkit.py init <dir>                  copy the example suite to <dir>
   evalkit.py run <suite> [options]       run, grade, write report, compare
-  evalkit.py check <suite> [--no-judge]  oracle + empty-output self-test, controls
+  evalkit.py check <suite> [--no-judge]  oracle + empty-output self-test, one target trial, controls
   evalkit.py compare <suite>|<a.json> [<b.json>]
   evalkit.py history <suite>             one line per stored run
 
@@ -65,7 +65,19 @@ def _parse_command(cmd, where: str) -> list[str]:
         raise ConfigError(f"{where}: command must be a string or a list of strings")
     if not parts:
         raise ConfigError(f"{where}: command is empty")
+    _check_script_token(parts[0], where)
     return parts
+
+
+_SCRIPT_RUNNERS = {".py": "python3", ".js": "node", ".mjs": "node", ".cjs": "node",
+                   ".ts": "npx tsx", ".sh": "bash", ".rb": "ruby"}
+
+
+def _check_script_token(tok: str, where: str) -> None:
+    """A bare "run.py" is looked up on PATH, not in the suite folder, so it never starts."""
+    runner = _SCRIPT_RUNNERS.get(Path(tok).suffix.lower())
+    if runner and "/" not in tok and shutil.which(tok) is None:
+        raise ConfigError(f'{where}: "{tok}" is a script file, not a command; write "{runner} {tok}"')
 
 
 def _command_block(value, where: str) -> dict:
@@ -130,6 +142,8 @@ def load_suite(path) -> dict:
     suite.setdefault("controls", [])
     suite.setdefault("surfaces", [])
     suite.setdefault("splits", DEFAULT_SPLITS)
+    if not isinstance(suite.get("deterministic", False), bool):
+        raise ConfigError(f"{f}: deterministic must be true or false")
     for i, g in enumerate(suite["graders"]):
         validate_grader(g, f"{f} graders[{i}]")
     if suite.get("judge"):
@@ -339,6 +353,8 @@ def make_judge(suite: dict, costs: list):
         obj, err, _ = run_command(cfg["command"], payload, suite["_dir"], cfg["timeout_s"])
         if err:
             return None, f"judge error: {err}"
+        if obj.get("error"):
+            return None, f"judge failed: {obj['error']}"[:300]
         meta = obj.get("_meta") or {}
         if isinstance(meta.get("cost_usd"), (int, float)):
             costs.append(float(meta["cost_usd"]))
@@ -475,6 +491,11 @@ def summarize(rows, reps: int, threshold=None, judge_costs=()) -> dict:
     for cid, m in cm.items():
         for t in tag_of.get(cid, []):
             tags.setdefault(t, []).append(m)
+    outs: dict[str, set] = {}
+    for r in rows:
+        if r["status"] == "ok":
+            o = {k: v for k, v in (r.get("output") or {}).items() if k != "_meta"}
+            outs.setdefault(r["case_id"], set()).add(json.dumps(o, sort_keys=True, default=str))
     target_costs = [r["cost_usd"] for r in rows if r.get("cost_usd") is not None]
     n_ok = sum(1 for r in rows if r["status"] == "ok")
     s = {
@@ -482,6 +503,8 @@ def summarize(rows, reps: int, threshold=None, judge_costs=()) -> dict:
         "k": k, "pass_at_k": pak, "pass_hat_k": phk, "pass_k_short": sorted(set(counts) - set(full)),
         "rep_scores": rep_scores,
         "stdev_across_reps": round(statistics.pstdev(rep_scores), 4) if len(rep_scores) > 1 else 0.0,
+        # True: k >= 2 and every case gave the same output on every rep; None: one rep, unknown.
+        "outputs_agree": (all(len(v) == 1 for v in outs.values()) if k >= 2 and outs else None),
         "n_cases": len(vals), "n_trials": len(rows), "n_ok": n_ok,
         "n_errors": len(rows) - n_ok,
         "flipping_cases": sorted(cid for cid, m in cm.items() if 0 < m < 1),
@@ -592,6 +615,22 @@ def previous_comparable(runs, current) -> dict | None:
     return None
 
 
+def deterministic_basis(prev: dict, cur: dict):
+    """Why both runs count as deterministic ("reps agree" or "declared"), else (None, note)."""
+    a, b = prev["summary"], cur["summary"]
+    if a.get("n_errors") or b.get("n_errors"):
+        return None, "errored trials on one side; the case diff is incomplete"
+    agree = (a.get("outputs_agree"), b.get("outputs_agree"))
+    if agree == (True, True):
+        return "reps agree", ""
+    if prev.get("deterministic_declared") and cur.get("deterministic_declared"):
+        if False in agree or a.get("flipping_cases") or b.get("flipping_cases"):
+            return None, ("suite.json is declared deterministic, but outputs differ across reps; "
+                          "using the noise band")
+        return "declared", ""
+    return None, ""
+
+
 def compare(prev: dict, cur: dict) -> dict:
     a, b = prev["summary"], cur["summary"]
     same_cases = prev["fingerprint"]["case_set_sha"] == cur["fingerprint"]["case_set_sha"]
@@ -615,12 +654,25 @@ def compare(prev: dict, cur: dict) -> dict:
         reading = "NOT COMPARABLE: the suite-level graders changed."
     elif delta is None:
         reading = "no score on one side"
+    basis, note = deterministic_basis(prev, cur)
+    paired = {"deterministic": basis is not None, "basis": basis, "note": note,
+              "newly_passing": len(fixed), "newly_failing": len(regressed)}
+    if not (same_cases and same_graders) or delta is None:
+        pass
+    elif basis and regressed:
+        reading = (f"regressed (deterministic, paired: {len(regressed)} newly failing, "
+                   f"{len(fixed)} newly passing)")
+    elif basis and fixed:
+        reading = (f"improved (deterministic, paired: {len(fixed)} newly passing, 0 newly failing; "
+                   "confirm on a held-out split)")
+    elif basis:
+        reading = "no change (deterministic, paired: the same cases pass)"
     elif abs(delta) <= noise:
         reading = f"within noise (|delta| {abs(delta):.3f} <= noise band {noise:.3f})"
     else:
         reading = "improved" if delta > 0 else "regressed"
     return {"previous_run": prev["run_id"], "comparable": same_cases and same_graders,
-            "score_delta": delta, "noise_band": round(noise, 4), "reading": reading,
+            "score_delta": delta, "noise_band": round(noise, 4), "reading": reading, "paired": paired,
             "newly_failing": regressed, "newly_passing": fixed, "moved": moved,
             "cost_delta_usd": cost_delta, "changed_surfaces": changed_surfaces,
             "target_changed": prev["fingerprint"].get("target_sha") != cur["fingerprint"].get("target_sha")}
@@ -673,6 +725,8 @@ def render_markdown(rec: dict) -> str:
             L.append(f"Changed surfaces: {', '.join(cmp_['changed_surfaces'])}")
         if cmp_["target_changed"]:
             L.append("The target command changed.")
+        if (cmp_.get("paired") or {}).get("note"):
+            L.append(f"Note: {cmp_['paired']['note']}.")
         for key, title in (("newly_failing", "Newly failing"), ("newly_passing", "Newly passing"), ("moved", "Moved (partial)")):
             if cmp_[key]:
                 L.append(f"{title}: {', '.join(cmp_[key])}")
@@ -722,6 +776,7 @@ def execute_run(suite, cases, *, reps, split, subset, label=None, use_judge=True
         "started_at": started.isoformat(timespec="microseconds"),
         "label": label, "split": split, "subset": subset, "control": control,
         "reps": reps, "use_judge": use_judge and bool(suite.get("judge")),
+        "deterministic_declared": suite.get("deterministic") is True,
         "command": command or suite["target"]["command"],
         "fingerprint": fingerprint(suite, cases),
         "summary": summarize(rows, reps, thr, judge_costs),
@@ -803,6 +858,14 @@ def cmd_check(args) -> int:
     for p in problems:
         print(f"  PROBLEM {p}")
     failed = bool([p for p in problems if "no oracle" not in p])
+    first = cases[0]
+    _, err, _ = run_command(suite["target"]["command"], {"case_id": first["id"], "rep": 0, "input": first["input"]},
+                            suite["_dir"], suite["target"]["timeout_s"])
+    if err:
+        print(f"  PROBLEM target: case {first['id']} gave no scorable output ({err[-300:]})")
+        failed = True
+    else:
+        print(f"  target: ran case {first['id']} once, output is a JSON object")
     if not suite["controls"]:
         print("  WARNING no controls defined. Add a do-nothing and a pushover control to suite.json.")
     for ctl in suite["controls"]:
@@ -894,7 +957,8 @@ def build_parser():
     r.add_argument("--fail-metric", default="score", choices=["score", "pass_hat_k"])
     r.add_argument("--quiet", action="store_true")
     r.set_defaults(fn=cmd_run)
-    c = sub.add_parser("check", help="self-test graders with oracles and empty output, run controls")
+    c = sub.add_parser("check", help="self-test graders with oracles and empty output, run the target "
+                                     "once, run controls")
     c.add_argument("suite")
     c.add_argument("--no-judge", action="store_true")
     c.set_defaults(fn=cmd_check)

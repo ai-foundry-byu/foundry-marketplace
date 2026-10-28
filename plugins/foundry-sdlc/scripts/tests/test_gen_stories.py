@@ -263,10 +263,12 @@ class SetStatusTests(unittest.TestCase):
                                                    "journey": "done-journey.yaml",
                                                    "time": "2026-11-03T10:00:00Z"}))
 
-    def verify(self, d, sid="US-01"):
+    def verify(self, d, sid="US-01", sha=None):
+        """A story-verifier report. sha=None writes no "Commit:" line (an old-format report)."""
         v = Path(d, ".qa", "verify")
         v.mkdir(parents=True, exist_ok=True)
-        (v / f"{sid}.md").write_text("Result: 3 PASS")
+        head = f"Commit: {sha}\n" if sha else ""
+        (v / f"{sid}.md").write_text(f"{head}Story {sid}: demo\n\nResult: 3 PASS. LIVE-eligible.\n")
         return str(v / f"{sid}.md")
 
     def test_live_refused_without_gate_report(self):
@@ -321,18 +323,103 @@ class SetStatusTests(unittest.TestCase):
             prd, out = self.project(d)
             head = git(d, "rev-parse", "HEAD")
             self.gate(d, head)
-            # an artifact-only commit after the gate still counts as the same build
+            report = self.verify(d, sha=head[:7])
+            # an artifact-only commit after the gate and the verifier still counts as the same build
             Path(d, "CHANGELOG.md").write_text("# log\n")
             git(d, "add", "-A")
             git(d, "commit", "-qm", "docs")
             code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-01=LIVE",
-                                      "--evidence", self.verify(d))
+                                      "--evidence", report)
             self.assertEqual(code, 0, msg)
             row = g.load_stories(out)[0]
             self.assertEqual(row["status"], "LIVE")
             self.assertIn(f"commit:{git(d, 'rev-parse', 'HEAD')}", row["evidence"])
             self.assertTrue(any(e.endswith("US-01.md") for e in row["evidence"]))
             self.assertTrue(g.check(prd, out)[0])
+
+    def test_live_refused_with_untracked_code(self):
+        """R1a-D3 / B2: an untracked app file is not in the commit, so the story is not LIVE."""
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            head = git(d, "rev-parse", "HEAD")
+            self.gate(d, head)
+            Path(d, "app").mkdir()
+            Path(d, "app", "server.py").write_text("print('new')\n")
+            code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-01=LIVE",
+                                      "--evidence", self.verify(d, sha=head))
+            self.assertEqual(code, 1)
+            self.assertIn("app/server.py", msg)
+            self.assertIn("untracked", msg)
+            self.assertEqual(g.load_stories(out)[0]["status"], "NOT_BUILT")
+
+    def test_untracked_qa_files_and_artifacts_do_not_block_live(self):
+        """.qa/ anywhere (product/.qa/run/server.pid) and artifact files are not the build."""
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            head = git(d, "rev-parse", "HEAD")
+            self.gate(d, head)
+            Path(d, "product", ".qa", "run").mkdir(parents=True)
+            Path(d, "product", ".qa", "run", "server.pid").write_text("123\n")
+            Path(d, "DECISIONS.md").write_text("# new, not yet committed\n")
+            code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-01=LIVE",
+                                      "--evidence", self.verify(d, sha=head))
+            self.assertEqual(code, 0, msg)
+
+    def test_dirty_tree_lists_tracked_and_untracked_code(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.project(d)
+            Path(d, "app.py").write_text("print('changed')\n")
+            Path(d, "new file.py").write_text("x = 1\n")
+            dirty = g.dirty_tree(Path(d).resolve(), Path(d).resolve())
+            self.assertIn("app.py", dirty)
+            self.assertIn("new file.py (untracked)", dirty)
+
+    def test_live_refused_when_verifier_report_names_no_commit(self):
+        """B2 / R1a-D4: the verifier report must say which commit it verified."""
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            self.gate(d, git(d, "rev-parse", "HEAD"))
+            code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-01=LIVE",
+                                      "--evidence", self.verify(d))
+            self.assertEqual(code, 1)
+            self.assertIn("Commit:", msg)
+
+    def test_live_refused_when_verified_on_older_code(self):
+        """R1a-D4: verified at commit A, code changed in B, gate rerun on B: still refused."""
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            old = git(d, "rev-parse", "HEAD")
+            report = self.verify(d, sha=old)
+            Path(d, "app.py").write_text("print('v2')\n")
+            git(d, "commit", "-qam", "v2")
+            self.gate(d, git(d, "rev-parse", "HEAD"))
+            code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-01=LIVE",
+                                      "--evidence", report)
+            self.assertEqual(code, 1)
+            self.assertIn(old[:7], msg)
+            self.assertIn("app.py", msg)
+
+    def test_live_refused_without_a_verifier_report_for_that_story(self):
+        """Evidence for another story is not evidence for this one."""
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            head = git(d, "rev-parse", "HEAD")
+            self.gate(d, head)
+            code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-02=LIVE",
+                                      "--evidence", self.verify(d, "US-01", sha=head))
+            self.assertEqual(code, 1)
+            self.assertIn("US-02", msg)
+
+    def test_live_finds_the_default_verifier_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            head = git(d, "rev-parse", "HEAD")
+            self.gate(d, head)
+            self.verify(d, "US-02", sha=head)
+            code, msg = self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-02=LIVE",
+                                      "--evidence", "https://example.com/build/42")
+            self.assertEqual(code, 0, msg)
+            self.assertIn(".qa/verify/US-02.md", g.load_stories(out)[1]["evidence"])
 
     def test_partial_needs_no_gate(self):
         with tempfile.TemporaryDirectory() as d:
@@ -342,6 +429,129 @@ class SetStatusTests(unittest.TestCase):
             self.assertEqual(g.load_stories(out)[1]["status"], "PARTIAL")
             self.assertEqual(self.run_main("--prd", str(prd), "--out", str(out),
                                            "--set", "US-02=DONE")[0], 2)
+
+    # -- review D (2026-10-28): ways a change or a stale report slipped past --set LIVE --------
+
+    def live(self, d, prd, out):
+        return self.run_main("--prd", str(prd), "--out", str(out), "--set", "US-01=LIVE",
+                             "--evidence", str(Path(d, ".qa", "verify", "US-01.md")))
+
+    def test_live_refused_when_gate_report_sha_is_not_a_commit_id(self):
+        """"HEAD" or "main" matched every future HEAD, "a" matched 1 in 16, and "--output=x"
+        was an option git diff obeyed (it wrote x and printed nothing, so the gate passed)."""
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            head = git(d, "rev-parse", "HEAD")
+            self.verify(d, sha=head)
+            for bad in ("HEAD", "master", head[:1], "--output=" + str(Path(d, "pwned")), head + "zz"):
+                self.gate(d, bad)
+                code, msg = self.live(d, prd, out)
+                self.assertEqual(code, 1, bad)
+                self.assertIn("not a commit id", msg, bad)
+            self.assertFalse(Path(d, "pwned").exists())
+            self.gate(d, head.upper()[:12])  # a valid id in capitals is still that commit
+            self.assertEqual(self.live(d, prd, out)[0], 0)
+
+    def test_live_refused_when_code_is_renamed_away(self):
+        """A staged rename lists only its destination; its source left the build unseen."""
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            head = git(d, "rev-parse", "HEAD")
+            self.gate(d, head)
+            self.verify(d, sha=head)
+            git(d, "mv", "app.py", "README.md")
+            code, msg = self.live(d, prd, out)
+            self.assertEqual(code, 1)
+            self.assertIn("app.py", msg)
+
+    def test_live_refused_when_assume_unchanged_hides_an_edit(self):
+        with tempfile.TemporaryDirectory() as d:
+            prd, out = self.project(d)
+            head = git(d, "rev-parse", "HEAD")
+            self.gate(d, head)
+            self.verify(d, sha=head)
+            git(d, "update-index", "--assume-unchanged", "app.py")
+            self.assertEqual(self.live(d, prd, out)[0], 0)  # flagged but unchanged: fine
+            git(d, "checkout", "--", "stories.json")  # back to NOT_BUILT
+            Path(d, "app.py").write_text("print('changed after the gate')\n")
+            code, msg = self.live(d, prd, out)
+            self.assertEqual(code, 1)
+            self.assertIn("app.py (assume-unchanged", msg)
+
+
+class ToolVersionTests(unittest.TestCase):
+    """Wave D (b): a project keeps its own copy at tools/gen_stories.py, so fixes reach it only
+    through a version stamp and --refresh-tools."""
+
+    def run_main(self, *args):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = g.main(list(args))
+        return code, out.getvalue() + err.getvalue()
+
+    def test_version_is_stamped_and_printed(self):
+        self.assertRegex(g.__version__, r"^\d+\.\d+\.\d+$")
+        code, out = self.run_main("--version")  # works without a PRD.md
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip(), f"gen_stories.py {g.__version__}")
+        self.assertEqual(g.version_of(Path(g.__file__).read_text()), g.__version__)
+        self.assertIsNone(g.version_of("print('an old copy')\n"))
+
+    def test_refresh_replaces_an_old_copy_and_summarizes_the_diff(self):
+        with tempfile.TemporaryDirectory() as d:
+            tool = Path(d, "tools", "gen_stories.py")
+            tool.parent.mkdir()
+            tool.write_text("#!/usr/bin/env python3\nprint('old')\n")
+            code, out = self.run_main("--refresh-tools", d)
+            self.assertEqual(code, 0, out)
+            self.assertEqual(tool.read_bytes(), Path(g.__file__).read_bytes())
+            line = out.strip()
+            self.assertEqual(len(line.splitlines()), 1, line)
+            self.assertIn("refreshed tools/gen_stories.py", line)
+            self.assertIn(f"unversioned -> {g.__version__}", line)
+            self.assertRegex(line, r"\+\d+ -1 lines")
+            # the guardrails manifest now vouches for the refreshed bytes
+            man = json.loads(Path(d, ".foundry", "generated.json").read_text())
+            entry = [f for f in man["files"] if f["path"] == "tools/gen_stories.py"]
+            self.assertEqual(entry[0]["sha256"], g.sha256_file(tool))
+            # a second run has nothing to do
+            code, out = self.run_main("--refresh-tools", d)
+            self.assertEqual(code, 0)
+            self.assertIn(f"tools/gen_stories.py is current ({g.__version__})", out)
+
+    def test_refresh_keeps_a_newer_copy_and_creates_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            code, out = self.run_main("--refresh-tools", d)
+            self.assertEqual(code, 0)
+            self.assertIn("no tools/gen_stories.py", out)
+            self.assertFalse(Path(d, "tools").exists())
+            tool = Path(d, "tools", "gen_stories.py")
+            tool.parent.mkdir()
+            tool.write_text('__version__ = "999.0.0"\n')
+            code, out = self.run_main("--refresh-tools", d)
+            self.assertEqual(code, 0)
+            self.assertIn("newer", out)
+            self.assertEqual(tool.read_text(), '__version__ = "999.0.0"\n')
+
+    def test_manifest_merge_keeps_other_entries(self):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, ".foundry").mkdir()
+            Path(d, ".foundry", "generated.json").write_text(json.dumps(
+                {"version": 1, "generator": "other", "files": [{"path": "x.py", "sha256": "0" * 64}]}))
+            Path(d, "a.py").write_text("a = 1\n")
+            g.record_generated(Path(d), [Path(d, "a.py"), Path("/elsewhere/b.py")], "foundry-sdlc/test")
+            man = json.loads(Path(d, ".foundry", "generated.json").read_text())
+            self.assertEqual(man["version"], 1)
+            self.assertEqual(sorted(f["path"] for f in man["files"]), ["a.py", "x.py"])
+
+    def test_scaffold_tool_files_are_not_the_build(self):
+        """Refreshing tools/gen_stories.py after the done gate must not make the build stale."""
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(g.code_files(Path(d), Path(d), ["tools/gen_stories.py",
+                                                             ".foundry/generated.json",
+                                                             ".github/workflows/stories.yml",
+                                                             "tools/other.py"]),
+                             ["tools/other.py"])
 
 
 if __name__ == "__main__":

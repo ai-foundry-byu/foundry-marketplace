@@ -16,8 +16,12 @@ The surface can be a prompt or code (rules, keyword lists, a function): the rule
    touches two behaviors, it is two rounds: run evalkit after each.
 2. **Keep a round table** and print it in the final report, even after one round:
    `| round | change | score before | score after | kept/reverted |`.
-3. **Revert anything that does not beat the noise band** (the comparison reads `within noise`,
-   `regressed`, or lists a `newly_failing` case). Revert means the file goes back, now.
+3. **Revert anything that is not a measured improvement**: the comparison reads `within noise`,
+   `no change`, `regressed`, or lists a `newly_failing` case. Revert means the file goes back, now.
+   On a deterministic target (`"deterministic": true` in `suite.json`, or `--reps 2`+ where every
+   case gave the same output) evalkit drops the noise band and diffs cases exactly: a round that
+   fixes cases and breaks none reads `improved (deterministic, paired ...)`. **Keep it**, and
+   confirm on test. Do not override a reading by hand; if it looks wrong, say why and stop.
 4. **Never write rules copied from case text.** Before keeping a change, check that no word,
    phrase or id in the diff was taken from a failing case's input unless it is a general term
    the rule genuinely needs. Special-casing "money back" because one case says it is cheating.
@@ -66,8 +70,9 @@ evalkit run evals/<suite> --split val --reps 3 --label r1-final-sale-rule
 ```
 
 4. **Decide** from the comparison block in the new report:
-   - `improved` and nothing in `newly_failing` -> **keep**. Commit it with the run id in the message.
-   - `within noise` -> **revert**. A change you cannot measure is not an improvement, it is
+   - `improved` (including `improved (deterministic, paired ...)`) and nothing in
+     `newly_failing` -> **keep**. Commit it with the run id in the message.
+   - `within noise` or `no change` -> **revert**. A change you cannot measure is not an improvement, it is
      extra text you now have to maintain.
    - `regressed`, or anything in `newly_failing` with a `regression` tag -> **revert**.
    - `NOT COMPARABLE` -> you changed cases or graders mid-climb. Undo that, or start a new baseline.
@@ -90,7 +95,7 @@ evalkit run evals/<suite> --split val --reps 3 --label r1-final-sale-rule
 ## Cost climbing: same score, cheaper
 
 When the goal is cost, the objective flips: a change is kept only if val holds at parity
-(the comparison reads `within noise` or `improved`) AND cost drops by a real margin (at least
+(the comparison reads `within noise`, `no change` or `improved`) AND cost drops by a real margin (at least
 5%). Walk configuration before prose:
 
 1. Strongest model at the lowest effort or shortest reasoning budget.
@@ -145,6 +150,7 @@ use `--reps 3` there.
 
 ## Maturity
 
-Method: proven (train/val/test discipline, one change per round, noise-band keep rule and
-the cost staircase are how the AI Foundry team's production framework climbs prompts).
+Maturity: **verified** (live climbs kept real fixes, including on a deterministic suite).
+Method: train/val/test discipline, one change per round, the noise-band keep rule and
+the cost staircase are how the AI Foundry team's production framework climbs prompts.
 This skill runs the loop by hand with `evalkit`; the automated climber is not ported.

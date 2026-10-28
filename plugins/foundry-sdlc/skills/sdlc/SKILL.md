@@ -5,11 +5,13 @@ description: The router for building software 0 to 1 with agents. Maps the 8 sta
 
 # The Foundry SDLC: stage map and router
 
+Uses agent: story-verifier, prd-critic
+
 Eight stages, in order. Each one produces a file and ends at a gate. **Never skip a gate.** A stage is finished only when its exit check passes. Agents are fast, so the slow part is fixing work built on a wrong foundation. The gates are there to stop that.
 
 ## Step 1: find out where the project is
 
-Run the stage detector from the project root. It reads the artifacts and reports the first stage whose exit check fails:
+Run the stage detector from the project root. It reads the artifacts and reports the first stage whose exit check fails. After a ship (a story is LIVE and the gates are current on HEAD) it reports stage 8 and lists the open work: stories not LIVE, FOLLOW-UP tasks, OPEN-FEEDBACK asks. A code change after the gate sends it back to stage 6.
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .
@@ -19,7 +21,7 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .
 python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" . --json
 ```
 
-The detector ships inside this skill (`scripts/sdlc_stage.py`, with its helper `scripts/gen_stories.py`), so it works whether the skill came with the plugin or was copied on its own. A project scaffolded by `new-project` also has `tools/gen_stories.py` at its project root; every skill runs it from there as `python3 tools/gen_stories.py --prd <dir>/PRD.md --out <dir>/stories.json`.
+The detector ships inside this skill (`scripts/sdlc_stage.py`, with its helper `scripts/gen_stories.py`), so it works whether the skill came with the plugin or was copied on its own. A project scaffolded by `new-project` also has `tools/gen_stories.py` at its project root; every skill runs it from there as `python3 tools/gen_stories.py --prd <dir>/PRD.md --out <dir>/stories.json`. That copy does not update itself: when the detector prints `Note: project tools out of date`, run the refresh command the note names (the `new-project`, `write-prd` and `ship` skills also refresh it before they use it) and show the student its one-line summary.
 
 It looks for the artifact set in `.`, then `product/`, then `docs/product/`. With this plugin enabled, a SessionStart hook prints the same verdict in two lines whenever the project has a `PRD.md` or `REQUIREMENTS.md`.
 
@@ -31,17 +33,17 @@ If no artifacts exist, you are in stage 0. Use the `new-project` skill.
 |---|---|---|---|---|
 | 0 | Scaffold | README, REQUIREMENTS, DECISIONS, PRD, WORKPLAN, CHANGELOG, stories.json, done-journey.yaml | `new-project` skill (`scripts/new_project.py`) | All files exist |
 | 1 | Gather requirements | `REQUIREMENTS.md`, `DECISIONS.md` | `gather-requirements` skill | Every ask is verbatim with an R-id and a source. The "Already exists" audit is filled. No `TODO` markers remain |
-| 2 | PRD + user stories | `PRD.md`, `stories.json` | `write-prd` skill, then the `prd-critic` agent | Stories have observable criteria. Critiques addressed in Appendix A. `gen_stories.py --check` exits 0. Every R-id is STORIED or DROPPED (citing a D-id). DECISIONS.md has the human's dated "PRD approved" row |
+| 2 | PRD + user stories | `PRD.md`, `stories.json` | `write-prd` skill, then the `prd-critic` agent | Stories have observable criteria. Critiques addressed in Appendix A. `gen_stories.py --check` exits 0. Every R-id is STORIED, OPEN-FEEDBACK, or DROPPED / PARTIAL citing a D-id. DECISIONS.md has the human's dated "PRD approved" row |
 | 3 | Workplan | `WORKPLAN.md` | `write-workplan` skill | Task table with owner, model, effort and review tier for each task. Milestones. "Blocked on human" list |
-| 4 | Execute | code, commits | `parallel-lanes` skill (lanes, or its single-session path) | Every task is PARKED, or `DONE <date>: commit <sha>` |
+| 4 | Execute | code, commits | `parallel-lanes` skill (lanes, or its single-session path) | Every task is PARKED, FOLLOW-UP, or `DONE <date>: commit <sha>` |
 | 5 | Code QA | tests, CI run | `foundry-qa` plugin: `regression-check`. Your CI | Each change has a test. The blast radius has been checked. CI is green |
-| 6 | Visual QA with example users | `.qa/done-gate/last.json`, `.qa/verify/<id>.md`, screenshots | The stage-6 battery below (the `ship` skill runs it in order) | Done-gate report exit 0 for git HEAD. A verifier report for every story |
+| 6 | Visual QA with example users | `.qa/done-gate/last.json`, `.qa/verify/<id>.md`, screenshots | The stage-6 battery below (the `ship` skill runs it in order) | No uncommitted or untracked code. Done-gate report exit 0 for git HEAD. A verifier report naming HEAD for every story not yet LIVE |
 | 7 | Ship | `CHANGELOG.md`, story status LIVE | `ship` skill | Every story LIVE (set by `gen_stories.py --set`, which records the SHA) or PARTIAL with a ticket, then changelog, then the users are told what to try |
 | 8 | Feedback | new stories + failing regression tests | `bug-to-story` skill. `foundry-evals` for agent features | Each bug has a story and a test that fails before the fix. A human decides when a feature graduates |
 
 ### Stage 4 without lanes (one session builds it all)
 
-That is fine for a small app. Commit each task as it lands, and set its WORKPLAN row to `DONE <date>: commit <sha>` in the same step. Never leave a built task at PARTIAL or NOT STARTED: the detector stays at stage 4 until every task is DONE or PARKED.
+That is fine for a small app. Commit each task as it lands, and set its WORKPLAN row to `DONE <date>: commit <sha>` in the same step. Never leave a built task at PARTIAL or NOT STARTED: the detector stays at stage 4 until every task is DONE, PARKED or FOLLOW-UP.
 
 ### The stage-6 battery
 
@@ -49,11 +51,11 @@ When the user asks whether it really works ("check it end to end", "does it work
 
 1. `foundry-qa:done-gate` on `done-journey.yaml` (writes `.qa/done-gate/last.json`).
 2. `foundry-qa` `persona-tester` agent, once per device in the stories' `devices`.
-3. This plugin's `story-verifier` agent, one per story, fresh context, verdict saved to `.qa/verify/<id>.md`.
+3. This plugin's `story-verifier` agent, one per story, fresh context, given the HEAD sha and the report path `.qa/verify/<id>.md`. It returns its report as text (one fenced block whose first line is `Commit: <sha>`): you write `.qa/verify/<id>.md` yourself with the Write tool, verbatim (the block's content, nothing added, removed or reworded), never by the agent. Claude Code refuses a subagent's Write of a report file, so never ask it to save one.
 4. `foundry-design:design-critique` on the changed screens.
 5. `foundry-qa:a11y-check` on the stories' surfaces.
 
-Wait for all of them in the foreground. A story with any FAIL or INCONCLUSIVE stays PARTIAL. Then continue with the `ship` skill. Native apps add the `foundry-devices` agents.
+Start one server for the whole battery and run at most 3 agents at a time against it, each with `run_in_background: false`; wait for all of them. A story with any FAIL or INCONCLUSIVE stays PARTIAL. Then continue with the `ship` skill. Native apps add the `foundry-devices` agents.
 
 Stage 8 loops back. A bug becomes a story in the PRD (stage 2), a task (stage 3), and a fix (stage 4), and it goes back through every gate.
 
@@ -66,7 +68,7 @@ Stage 8 loops back. A bug becomes a story in the PRD (stage 2), a task (stage 3)
 5. **Reuse before build.** Fill the "Already exists" audit before the PRD. Check it again before each lane starts.
 6. **Independent judges.** The agent that wrote the PRD does not critique it, and the agent that built a story does not verify it. Use `prd-critic` and `story-verifier`. Each runs in a fresh context and never sees the builder's claims.
 7. **Effort and review scale with blast radius**, not habit. See the 4-tier table in `${CLAUDE_SKILL_DIR}/references/CLAUDE-md-snippet.md`, and paste that snippet into the project's CLAUDE.md.
-8. **Status words are exact.** NOT_BUILT, BUILT (code exists, not verified), PARTIAL (a gate failed or was inconclusive), LIVE (every gate passed on a committed SHA), PARKED. "Done" means LIVE.
+8. **Status words are exact.** Stories: NOT_BUILT, BUILT (code exists, not verified), PARTIAL (a gate failed or was inconclusive), LIVE (every gate passed on a committed SHA), PARKED. "Done" means LIVE. Tasks: `DONE <date>: commit <sha>`, PARKED, `FOLLOW-UP (blocks US-xx)` (a ticket from ship or bug-to-story). Asks: STORIED, LIVE, `DROPPED (D-xx)`, `PARTIAL (D-xx)`, OPEN, `OPEN-FEEDBACK: <why>` (a bug report with no story yet).
 
 ## Which companion plugin does what
 

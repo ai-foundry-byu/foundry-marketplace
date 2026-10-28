@@ -1,6 +1,6 @@
 ---
 name: done-gate
-description: Definition-of-done gate for a user-facing web feature. Optionally verifies the deployed build serves the expected commit SHA, then drives the feature's done-journey (YAML or JSON) in a real browser with Playwright on desktop, phone and tablet profiles, signed in when the app needs it, saves screenshots to .qa/, and returns a strict exit code (0 pass, 1 journey fail, 2 config error, 3 SHA mismatch, 6 inconclusive). Use before saying a feature is "done", "shipped", "live", "working" or "fixed", when asked to "check that it really works end to end", "test it end to end", "does it work on a phone", "make sure it works on mobile and desktop", "verify the deploy", "prove it works", "run the done gate", "check prod", or to write a done-journey for a feature.
+description: Definition-of-done gate for a user-facing web feature. Optionally verifies the deployed build serves the expected commit SHA, then drives the feature's done-journey (YAML or JSON) in a real browser with Playwright on desktop, phone and tablet profiles, signed in when needed, saves screenshots to .qa/, and returns a strict exit code (0 pass, 1 journey fail, 2 config error, 3 SHA mismatch, 6 inconclusive). Load it for how-to questions about proving a feature works too, since it is the answer. Use when asked "how do I prove my feature really works", "how do I know my feature is really done", "how do I show it works on the deployed site before I tell my professor or client", before saying a feature is "done", "shipped", "live", "working" or "fixed", or to "check that it really works end to end", "test it end to end", "does it work on a phone", "make sure it works on mobile and desktop", "verify the deploy", "prove it works", "run the done gate", "check prod", or write a done-journey.
 ---
 
 # done-gate
@@ -30,10 +30,16 @@ the result is 1 (a failure is evidence; inconclusive is not).
 2. Run it on every device in the journey, phone included (`phone-390x844`). "Works on a phone"
    means the gate passed on the phone profile.
 3. No hosting (a class or local project)? Start the app from a committed SHA on a local port and
-   run the gate against it (`--port N`). Say that it ran on a local build.
-4. Signed-in app? Give the gate a session (`auth`, section 4). A page you could not reach is
-   never a pass.
+   run the gate against it (`--port N`). Say that it ran on a local build. Pick a free port
+   (`python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1])"`),
+   keep pid and log files in `.qa/run/`, never `nohup`, and stop the server by its saved PID
+   (`kill $PID`), never `pkill -f` or `killall`.
+4. Signed-in app? Give the gate a session (`auth`, section 4). Look for a documented test-only
+   sign-in route (`README*`, `docs/`, stories `notes`) before giving up. A page you could not
+   reach is never a pass.
 5. Never delete an assertion to get a 0, and never re-label a 6 as a pass.
+6. Keep journeys in `qa/`, temp files in `.qa/tmp/`; never `/tmp`, never search outside the
+   project.
 
 ## Setup (once per machine)
 

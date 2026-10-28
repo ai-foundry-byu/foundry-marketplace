@@ -22,11 +22,14 @@ form works. `evalkit init` copies `${CLAUDE_SKILL_DIR}/templates/example-suite/`
    and list the input kinds it is likely to mishandle. Those failure modes drive the cases.
 2. **Write at least 2 cases per failure mode**, plus normal cases and hold cases. A suite
    built only from easy, typical inputs scores high and tells you nothing.
-3. **Tag every case with its slice** (`negation`, `sarcasm`, `emoji`, `malformed-input`, ...),
+3. **At least one case per failure mode must ISOLATE the mechanism**: that mechanism alone
+   decides the label, and no other word gives the right answer. If the tokenizer drops emoji,
+   write an emoji-only message (`"😡😡"`), not `"😡 waste of time"`, which passes on the keyword.
+4. **Tag every case with its slice** (`negation`, `sarcasm`, `emoji`, `malformed-input`, ...),
    so the report's "By tag" table shows a score per slice. A single mixed `edge` tag hides
    which weakness is failing.
-4. **Pass `evalkit check`** (oracles pass, empty output fails, controls score low) before the
-   first real run.
+5. **Pass `evalkit check`** (oracles pass, empty output fails, the target runs once, controls
+   score low) before the first real run.
 
 ## Step 0: decide what "good" means, in one paragraph
 
@@ -38,7 +41,8 @@ out repetitive and test what the model already does well.
 
 Then read the target itself and think about its MECHANISM: how does it decide, and what input
 would fool that? For example, a keyword-based sentiment classifier will likely miss negation
-("not good"), sarcasm or irony ("great, it broke again"), emoji and non-ASCII text, mixed
+("not good"), sarcasm or irony ("great, it broke again"), emoji that carry the sentiment with
+no keyword (an emoji-only message), non-ASCII or non-English text (a separate slice), mixed
 sentiment, words outside its list, and malformed input (empty, wrong type, huge). A prompt-based
 agent has its own list: instructions it was never given, conflicting instructions, inputs that
 ask it to ignore its rules. Write each failure mode down as a slice name; Step 3 uses them.
@@ -95,6 +99,13 @@ Rules for the target:
   or the score describes something you do not ship.
 
 Examples: `["python3", "target.py"]`, `"node run-agent.js"`, `["bash", "-c", "my-cli --json"]`.
+A bare `"target.py"` is not a command (it is looked up on PATH, not in the suite folder);
+evalkit refuses it with the fix. `evalkit check` also runs the target once on the first case,
+so a target that cannot start fails `check` (for a model-backed target that is one paid call).
+
+If the target is deterministic (plain code, no model, no clock or randomness), add
+`"deterministic": true` to `suite.json`. Comparisons then use the exact case diff instead of
+the noise band, so a fix of 4 cases with none broken reads `improved`.
 
 ## Step 3: write cases
 
@@ -122,7 +133,10 @@ One JSON object per line in `cases.jsonl` (lines starting with `#` are comments)
 
 Cover the failure modes from Step 0: at least 2 cases per slice, each tagged with the slice
 name (`"tags": ["sarcasm"]`), so `evalkit run` reports a score per slice and a fix that helps
-one slice and breaks another shows up. To test an error contract ("bad input must exit 2 with
+one slice and breaks another shows up. Each slice needs at least one case decided by that
+mechanism alone: remove any other word that already gives the right answer (an emoji-only
+message like `"😡😡"` for emoji, not `"😡 waste of time"`). Otherwise the slice passes for an
+unrelated reason and hides the weakness. To test an error contract ("bad input must exit 2 with
 a JSON error"), note that evalkit records a crashing target as an error, not a graded result.
 Wrap it: have the target runner catch the failure and return
 `{"exit_code": 2, "stderr": "..."}` for those cases, then grade those fields with `json_field`.
@@ -217,7 +231,8 @@ unattended: an agent that passes 75% of single tries passes all 3 of 3 only abou
 ## Acceptance checks before you call the suite done
 
 - [ ] `evalkit check` prints `check: ok` (oracles pass, empty output fails, both controls low)
-- [ ] every failure mode you found in the target has at least 2 cases, tagged with its slice
+- [ ] every failure mode you found in the target has at least 2 cases, tagged with its slice,
+      and at least one of them is decided by that mechanism alone (no other keyword gives the answer)
 - [ ] at least a third of cases are hold cases (refuse, ask, escalate)
 - [ ] every judge grader has one criterion, a binary rubric, and a hand-labeled agreement number
 - [ ] the target cannot send, post, pay or write anything real
@@ -226,8 +241,10 @@ unattended: an agent that passes 75% of single tries passes all 3 of 3 only abou
 
 ## Maturity
 
-Method: proven (it is how the AI Foundry team's production eval framework builds suites).
-`evalkit.py` and these templates: new, a standalone port written for this marketplace.
+Maturity: **beta**. The scaffold ran live; the mechanism-isolation rule, the `deterministic`
+declaration and the bare `run.py` refusal are unit-tested or instruction text only.
+Method: it is how the AI Foundry team's production eval framework builds suites.
+`evalkit.py` and these templates: a standalone port written for this marketplace.
 Credit: the control-agent idea and grader ordering follow
 [agent-evals-starter](https://github.com/jddavenportOpen/agent-evals-starter) (MIT), which is
 the fuller teaching kit with a mock store, tool-call graders and judge validation.

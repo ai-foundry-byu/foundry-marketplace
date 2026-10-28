@@ -398,6 +398,166 @@ class TestTargetShorthand(unittest.TestCase):
             self.assertEqual(rc, ek.EXIT_CONFIG, bad)
 
 
+class TestDeterministicCompare(unittest.TestCase):
+    """On a deterministic target the keep rule is the exact case diff, not the CI band (R5-D1)."""
+
+    # Passes case i when i < the number in fixed.txt, so editing that file "fixes" cases.
+    SRC = ("import json,sys\nr=json.load(sys.stdin)\nn=int(open('fixed.txt').read())\n"
+           "print(json.dumps({'output': 'ok' if r['input'] < n else 'no'}))\n")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.out = self.root / ".evals"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def suite(self, **extra):
+        cases = [{"id": f"c{i:02d}", "input": i, "graders": [{"type": "exact", "value": "ok"}]}
+                 for i in range(42)]
+        return make_suite(self.root / "s", self.SRC, cases, **extra)
+
+    def two_runs(self, p, before, after, reps=1):
+        for n in (before, after):
+            write(p / "fixed.txt", str(n))
+            quiet(ek.main, ["run", str(p), "--quiet", "--reps", str(reps), "--out", str(self.out)])
+        return ek.list_runs(self.out / "t")[-1]["comparison"]
+
+    def test_declared_deterministic_fix_of_4_of_42_is_improved(self):
+        c = self.two_runs(self.suite(deterministic=True), 30, 34)
+        self.assertTrue(c["reading"].startswith("improved (deterministic"), c["reading"])
+        self.assertEqual(len(c["newly_passing"]), 4)
+        self.assertEqual(c["paired"]["basis"], "declared")
+        self.assertNotIn("within noise", c["reading"])
+
+    def test_reps_that_agree_are_deterministic_without_declaring(self):
+        c = self.two_runs(self.suite(), 30, 34, reps=2)
+        self.assertTrue(c["reading"].startswith("improved (deterministic"), c["reading"])
+        self.assertEqual(c["paired"]["basis"], "reps agree")
+
+    def test_deterministic_breaking_one_case_is_regressed(self):
+        c = self.two_runs(self.suite(deterministic=True), 30, 29)
+        self.assertTrue(c["reading"].startswith("regressed (deterministic"), c["reading"])
+
+    def test_deterministic_no_change(self):
+        c = self.two_runs(self.suite(deterministic=True), 30, 30)
+        self.assertTrue(c["reading"].startswith("no change (deterministic"), c["reading"])
+
+    def test_single_rep_undeclared_keeps_the_noise_band(self):
+        c = self.two_runs(self.suite(), 30, 34)
+        self.assertTrue(c["reading"].startswith("within noise"), c["reading"])
+        self.assertFalse(c["paired"]["deterministic"])
+
+    def test_declared_but_flipping_falls_back_to_noise_band(self):
+        src = ("import json,sys\nr=json.load(sys.stdin)\nn=int(open('fixed.txt').read())\n"
+               "ok = r['input'] < n or (r['input'] == 41 and r['rep'] == 0)\n"
+               "print(json.dumps({'output': 'ok' if ok else 'no'}))\n")
+        p = self.suite(deterministic=True)
+        write(p / "target.py", src)
+        c = self.two_runs(p, 30, 34, reps=2)
+        self.assertFalse(c["paired"]["deterministic"])
+        self.assertIn("declared deterministic", c["paired"]["note"])
+        self.assertFalse(c["reading"].startswith("improved (deterministic"), c["reading"])
+
+
+class TestTargetSmoke(unittest.TestCase):
+    """A target that cannot start is caught before any run (R5-D4)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def suite(self, target, src=ECHO):
+        cases = [{"id": "a", "input": "x", "oracle": {"output": "x"},
+                  "graders": [{"type": "exact", "value": "x"}]}]
+        p = make_suite(self.root, src, cases)
+        s = json.loads((p / "suite.json").read_text())
+        s["target"] = target
+        (p / "suite.json").write_text(json.dumps(s))
+        return p
+
+    def test_bare_script_name_is_a_config_error_with_the_fix(self):
+        p = self.suite("target.py")
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
+            rc = ek.main(["check", str(p)])
+        self.assertEqual(rc, ek.EXIT_CONFIG)
+        self.assertIn('"python3 target.py"', err.getvalue())
+
+    def test_check_runs_the_target_once_and_reports_a_crash(self):
+        p = self.suite([PY, "target.py"], src="import sys\nsys.exit('boom')\n")
+        rc, out = quiet(ek.main, ["check", str(p)])
+        self.assertEqual(rc, ek.EXIT_CHECK, out)
+        self.assertIn("PROBLEM target", out)
+        self.assertIn("boom", out)
+
+    def test_check_reports_a_working_target(self):
+        rc, out = quiet(ek.main, ["check", str(self.suite([PY, "target.py"]))])
+        self.assertEqual(rc, ek.EXIT_OK, out)
+        self.assertIn("target: ran case a", out)
+
+
+class TestJudgeFailure(unittest.TestCase):
+    """A failed judge call is one readable line, not a cut-off traceback (R5-D3)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.env = dict(os.environ)
+        os.environ.pop("EVALKIT_JUDGE_FAKE", None)
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self.env)
+        self.tmp.cleanup()
+
+    def fake_claude(self, body):
+        f = write(self.root / "fake-claude", "#!/bin/sh\n" + body)
+        f.chmod(0o755)
+        os.environ["EVALKIT_CLAUDE_BIN"] = str(f)
+
+    def judge_out(self):
+        req = {"criterion": "c", "rubric": "r", "input": "i", "output": "o"}
+        with redirect_stdout(io.StringIO()) as out:
+            sys.stdin, old = io.StringIO(json.dumps(req)), sys.stdin
+            try:
+                rc = jc.main()
+            finally:
+                sys.stdin = old
+        self.assertEqual(rc, 0)
+        return json.loads(out.getvalue())
+
+    def test_not_logged_in(self):
+        self.fake_claude('echo \'{"type":"result","is_error":true,"result":"Not logged in \u00b7 Please run /login"}\'\nexit 1\n')
+        o = self.judge_out()
+        self.assertIsNone(o["pass"])
+        self.assertEqual(o["error"], "not logged in to claude, run claude /login")
+
+    def test_other_failure_is_one_line(self):
+        self.fake_claude('echo "Traceback (most recent call last):" >&2\necho "boom: rate limited" >&2\nexit 2\n')
+        o = self.judge_out()
+        self.assertIsNone(o["pass"])
+        self.assertIn("boom: rate limited", o["error"])
+        self.assertNotIn("\n", o["error"])
+
+    def test_missing_binary(self):
+        os.environ["EVALKIT_CLAUDE_BIN"] = str(self.root / "nope")
+        self.assertIn("not found", self.judge_out()["error"])
+
+    def test_evalkit_records_judge_failed(self):
+        self.fake_claude('echo \'{"type":"result","is_error":true,"result":"Not logged in \u00b7 Please run /login"}\'\nexit 1\n')
+        write(self.root / "s" / "judge.py", (SCRIPTS / "judge_claude.py").read_text())
+        cases = [{"id": "a", "input": "x", "graders": [{"type": "judge", "criterion": "c", "rubric": "r"}]}]
+        p = make_suite(self.root / "s", ECHO, cases, judge={"command": [PY, "judge.py"]})
+        suite = ek.load_suite(p)
+        rows, _ = ek.run_trials(suite, ek.load_cases(suite), reps=1)
+        self.assertEqual(rows[0]["status"], "error")
+        self.assertEqual(rows[0]["error"], "judge failed: not logged in to claude, run claude /login")
+
+
 class TestJudgeScript(unittest.TestCase):
     def test_parse_last_verdict(self):
         self.assertIs(jc.parse_verdict("output said VERDICT: PASS\ncritique\nVERDICT: FAIL")[0], False)

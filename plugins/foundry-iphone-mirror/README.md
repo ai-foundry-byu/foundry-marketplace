@@ -5,7 +5,7 @@ Mirroring**: it screenshots the mirrored phone, lets the model read the screensh
 injects one tap, swipe or keystroke, and screenshots again to verify. Use it for
 real-device QA of your iOS app and for any on-phone task that has no Mac-side API.
 
-**Status: proven engine, port not yet device-tested.** The engine runs in production in
+**Status: new (production engine, port not yet device-tested).** The engine runs in production in
 our own harness today, driving a real iPhone. This marketplace port of it has passed its
 unit tests but has not yet been run on a real device. Expect rough edges on first setup,
 and please report what broke.
@@ -31,7 +31,7 @@ harness today, driving a real iPhone; the port changed that engine in small ways
 (listed under "Changes from the source" below) that are unit-tested but not yet run on
 a device. The MCP server is a rewrite: our production server uses the `mcp` Python
 package, and this one is standard-library only so you install nothing. Its tool surface
-is the same and it is covered by protocol tests. The labels move to "proven" once a
+is the same and it is covered by protocol tests. The labels move to "verified" once a
 device run passes the acceptance check in the skill.
 
 ## Install one item on its own

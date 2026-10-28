@@ -199,6 +199,30 @@ screenshot: save
         self.assertTrue((self.d / "out/tickets/S-2-phone-390x844.md").exists(), out)
         self.assertFalse((self.d / "out/tickets/S-1-phone-390x844.md").exists())
 
+    def test_persona_run_expect_console_and_every_failure(self):
+        persona = self.d / "p.md"
+        persona.write_text("---\nname: Mobile newcomer\ndevices: [phone-390x844]\npatience_seconds: 20\n---\nNew.\n")
+        stories = self.d / "s.json"
+        stories.write_text(json.dumps({"stories": [
+            {"id": "S-1", "title": "broken, console expected", "surfaces": ["/broken.html"],
+             "acceptance": ["shows an error page"], "qa": {"assertions": [{"visible": "h1"}],
+                                                          "expect_console": ["boom from fixture"]}},
+            {"id": "S-2", "title": "broken", "surfaces": ["/broken.html"], "qa": {"assertions": [{"visible": "h1"}]}},
+        ]}))
+        code, out = self.run_script("persona_run.py", "--persona", str(persona), "--stories", str(stories),
+                                    "--base-url", self.base, "--out", "out")
+        self.assertEqual(code, 1, out)
+        res = {r["story"]: r for r in json.loads((self.d / "out/results.json").read_text())["results"]}
+        console = {r: next(c for c in res[r]["checks"] if c["check"] == "console") for r in res}
+        self.assertTrue(console["S-1"]["passed"], console["S-1"])
+        self.assertEqual(len(res["S-1"]["expected_console"]), 1)
+        self.assertFalse(console["S-2"]["passed"])
+        self.assertIn("no-overflow", res["S-2"]["reason"])
+        self.assertIn("console", res["S-2"]["reason"])
+        report = (self.d / "out/REPORT.md").read_text()
+        self.assertIn("## Every failing check", report)
+        self.assertIn("qa.expect_console", report)
+
     def test_visual_baseline(self):
         args = ["--url", f"{self.base}/about.html", "--name", "about", "--devices", "desktop-1440x900,phone-390x844"]
         code, out = self.run_script("visual_baseline.py", "check", *args)
@@ -346,6 +370,75 @@ screenshot: save
         self.assertTrue(any("Join" in x["target"] for x in ts["failing"]), ts)
         code, out = self.run_script("a11y_check.py", "--url", f"{self.base}/broken.html")
         self.assertIn("small-targets", out)          # a lone 10x10 button: spaced, so manual review
+
+
+    # ── regressions from the 2026-10-28 retest (R3, R1a, R1b) ──────────────
+
+    def test_phone_overflow_uses_the_layout_viewport(self):
+        """B5 (R3-D1, R3-D2): a page 939 px wide at a 390 px phone must be caught. Mobile
+        emulation widens window.innerWidth to the content, so only clientWidth sees it."""
+        persona = self.d / "p.md"
+        persona.write_text("---\nname: Phone user\ndevices: [phone-390x844]\npatience_seconds: 20\n"
+                           "min_tap_target_px: 0\n---\nOn a phone.\n")
+        stories = self.d / "s.json"
+        stories.write_text(json.dumps([{"id": "US-08", "title": "profile", "acceptance": ["profile is readable"],
+                                        "surfaces": ["/wide.html"], "status": "BUILT"}]))
+        code, out = self.run_script("persona_run.py", "--persona", str(persona), "--stories", str(stories),
+                                    "--base-url", self.base, "--out", "out")
+        self.assertEqual(code, 1, out)
+        r = json.loads((self.d / "out/results.json").read_text())["results"][0]
+        ov = [c for c in r["checks"] if c["check"] == "no-overflow"][0]
+        self.assertFalse(ov["passed"], ov)
+        self.assertIn("in a 390px viewport", ov["detail"])
+        code, out = self.run_script("explore.py", "--url", f"{self.base}/wide.html", "--max-pages", "1",
+                                    "--devices", "phone-390x844", "--back-checks", "0")
+        self.assertIn("overflow", out)
+        self.assertIn("in a 390px viewport", out)
+
+    def test_persona_run_opens_every_surface_and_route_patterns_are_inconclusive(self):
+        """R3-D4: every surface of a story is opened. R1a-D5/R1b-D5: /groups/:id is not opened literally."""
+        persona = self.d / "p.md"
+        persona.write_text("---\nname: Phone user\ndevices: [phone-390x844]\npatience_seconds: 20\n"
+                           "min_tap_target_px: 0\n---\nOn a phone.\n")
+        stories = self.d / "s.json"
+        stories.write_text(json.dumps([
+            {"id": "US-02", "title": "browse then profile", "acceptance": ["both pages read well"],
+             "surfaces": ["/about.html", "/wide.html"], "status": "BUILT"},
+            {"id": "US-05", "title": "group detail", "acceptance": ["shows the group"],
+             "surfaces": ["/groups/:id"], "status": "BUILT"},
+            {"id": "US-06", "title": "filled pattern", "acceptance": ["about reads well"],
+             "surfaces": ["/:page"], "status": "BUILT", "qa": {"params": {"page": "about.html"}}},
+        ]))
+        code, out = self.run_script("persona_run.py", "--persona", str(persona), "--stories", str(stories),
+                                    "--base-url", self.base, "--out", "out")
+        res = {r["story"]: r for r in json.loads((self.d / "out/results.json").read_text())["results"]}
+        us2 = res["US-02"]
+        self.assertEqual(len(us2["screenshots"]), 2, us2)
+        self.assertTrue(all((self.d / x["path"]).exists() for x in us2["screenshots"]), us2["screenshots"])
+        self.assertEqual(us2["status"], "failed", us2)           # the second surface overflows
+        self.assertTrue(any(c["check"] == "no-overflow" and not c["passed"] and c.get("surface") == "/wide.html"
+                            for c in us2["checks"]), us2["checks"])
+        us5 = res["US-05"]
+        self.assertEqual(us5["status"], "inconclusive", us5)
+        self.assertIn("needs a concrete URL (add qa.start)", us5["reason"])
+        self.assertFalse(us5["console_errors"])
+        self.assertEqual(res["US-06"]["status"], "needs-judgment", res["US-06"])
+        self.assertTrue(res["US-06"]["final_url"].endswith("/about.html"), res["US-06"])
+        report = (self.d / "out/REPORT.md").read_text()
+        self.assertIn("US-02-phone-390x844-2.png", report)
+        self.assertEqual(code, 1, out)
+
+    def test_explore_back_check_on_a_hash_spa_skips_skip_links_and_finishes(self):
+        """R3-D3: the skip link (#app) is never the back-check target, and the crawl ends in bounded time."""
+        t0 = time.monotonic()
+        code, out = self.run_script("explore.py", "--url", f"{self.base}/hashnav.html", "--max-pages", "3")
+        took = time.monotonic() - t0
+        data = json.loads((self.d / ".qa/explore/findings.json").read_text())
+        back = [f for p in data["pages"] for f in p["findings"] if f["kind"] == "back-button"]
+        self.assertFalse(back, back)
+        self.assertEqual(len([p for p in data["pages"] if not p["url"].startswith("(")]), 3, out)
+        self.assertLess(took, 40, f"crawl took {took:.0f}s")
+        self.assertEqual(code, 0, out)
 
 
 if __name__ == "__main__":

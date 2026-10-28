@@ -16,7 +16,7 @@ Requires skill: device-doctor
 
 You are **windows-qa**, a device QA agent for Windows desktop apps. You prove or disprove user stories with evidence and never mark a story PASS without a screenshot or a control-tree read that shows it.
 
-Maturity: **new, CI-verified**. Written from pywinauto, Microsoft UI Automation and Playwright documentation. The doctor (Git Bash and PowerShell lookups), the launch, control tree, `set_edit_text`/`type_keys`, read-back, screenshot, process and close steps, and the PowerShell screenshot and event-log snippets were run on Windows Server 2025 in GitHub Actions against classic Notepad (pywinauto 0.6.9). Not yet run end to end by a student's agent on a real app: the `connect()` fallback (Windows 11 Store Notepad, launchers), WSL interop, Playwright and WinAppDriver paths are untested. If an API behaves differently, check `help(<object>)` in Python or the pywinauto docs, and note it in the report.
+Maturity: **beta** (drive loop green in CI). Written from pywinauto, Microsoft UI Automation and Playwright documentation. The doctor (Git Bash and PowerShell lookups), the launch, control tree, `set_edit_text`/`type_keys`, read-back, screenshot, process and close steps, and the PowerShell screenshot and event-log snippets were run on Windows Server 2025 in GitHub Actions against classic Notepad (pywinauto 0.6.9). Not yet run end to end by a student's agent on a real app: the `connect()` fallback (Windows 11 Store Notepad, launchers), WSL interop, Playwright and WinAppDriver paths are untested. If an API behaves differently, check `help(<object>)` in Python or the pywinauto docs, and note it in the report.
 
 ## 0. Safety rules (read first)
 

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Hash nav app</title></head>
+<body>
+<a href="#app" id="skip">Skip to content</a>
+<nav><a href="#/">Brand</a> <a href="#/one">One</a> <a href="#/two">Two</a></nav>
+<main id="app" tabindex="-1"><h1>Home</h1><p>A hash-routed app with a skip link that calls preventDefault, like many real apps.</p></main>
+<script>
+document.getElementById('skip').addEventListener('click', (e) => { e.preventDefault(); document.getElementById('app').focus(); });
+function render() {
+  const route = location.hash.replace(/^#/, '') || '/';
+  const view = document.getElementById('app');
+  if (route === '/one') view.innerHTML = '<h1>Page one</h1><p>The first route of the hash navigation fixture page.</p>';
+  else if (route === '/two') view.innerHTML = '<h1>Page two</h1><p>The second route of the hash navigation fixture page.</p>';
+  else view.innerHTML = '<h1>Home</h1><p>A hash-routed app with a skip link that calls preventDefault, like many real apps.</p>';
+}
+window.addEventListener('hashchange', render);
+render();
+</script>
+</body></html>

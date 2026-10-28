@@ -207,5 +207,116 @@ class TestSiteWideChecks(unittest.TestCase):
         self.assertIn("- w1", report)
 
 
+class TestSurfacesAndRoutePatterns(unittest.TestCase):
+    """R3-D4: every surface is opened. R1a-D5/R1b-D5: route patterns are never opened literally."""
+
+    def parse(self, **story):
+        base = {"id": "US-1", "title": "t", "acceptance": ["x"], "status": "BUILT"}
+        base.update(story)
+        return pr.parse_stories([base])[0]
+
+    def test_route_patterns(self):
+        for p in ("/groups/:id", "/groups/{id}", "/groups/<id>", "/groups/[id]", "/#/group/:gid/edit"):
+            self.assertTrue(pr.is_route_pattern(p), p)
+        for p in ("/groups/1", "/", "/#/group/1", "/search?q=a"):
+            self.assertFalse(pr.is_route_pattern(p), p)
+        self.assertEqual(pr.fill_params("/groups/:id/{tab}", {"id": 1, "tab": "members"}), "/groups/1/members")
+
+    def test_every_path_surface_is_opened(self):
+        s = self.parse(surfaces=["/", "Group page", "/#/group/1", "/#/profile"])
+        self.assertEqual(s.pages, ["/", "/#/group/1", "/#/profile"])
+        self.assertEqual(s.start, "/")
+        self.assertFalse(s.inconclusive)
+
+    def test_pattern_only_story_is_inconclusive_not_a_404(self):
+        s = self.parse(surfaces=["/groups/:id"])
+        self.assertIn("needs a concrete URL (add qa.start)", s.inconclusive)
+        self.assertFalse(s.skip_reason)
+        run, skipped = pr.select_stories([s], None)
+        self.assertEqual(run, [s])                       # reported as an inconclusive row, not hidden as "not run"
+
+    def test_mixed_surfaces_open_the_concrete_ones_and_flag_the_pattern(self):
+        s = self.parse(surfaces=["/groups", "/groups/:id"])
+        self.assertEqual(s.pages, ["/groups"])
+        self.assertEqual(s.unresolved, ["/groups/:id"])
+
+    def test_qa_params_and_qa_start_resolve_patterns(self):
+        s = self.parse(surfaces=["/groups", "/groups/:id"], qa={"params": {"id": "7"}})
+        self.assertEqual((s.pages, s.unresolved, s.inconclusive), (["/groups", "/groups/7"], [], ""))
+        s = self.parse(surfaces=["/groups/:id"], qa={"start": "/groups/1"})
+        self.assertEqual((s.start, s.pages, s.inconclusive), ("/groups/1", ["/groups/1"], ""))
+        s = self.parse(surfaces=["/groups/:id"], qa={"start": "/groups/:id"})
+        self.assertIn("needs a concrete URL", s.inconclusive)
+
+    def test_scripted_story_runs_from_one_start(self):
+        s = self.parse(surfaces=["/groups/:id", "/groups"], qa={"assertions": [{"visible": "h1"}]})
+        self.assertIn("needs a concrete URL (add qa.start)", s.inconclusive)   # its steps belong to surfaces[0]
+        s = self.parse(surfaces=["/groups", "/about"], qa={"assertions": [{"visible": "h1"}]})
+        self.assertEqual((s.start, s.pages), ("/groups", ["/groups"]))
+
+    def test_bad_params_rejected(self):
+        with self.assertRaises(ConfigError):
+            self.parse(surfaces=["/groups/:id"], qa={"params": ["id", 1]})
+
+    def test_plan_lists_the_pattern_story(self):
+        import io
+        import tempfile
+        from contextlib import redirect_stdout
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "p.md"
+            p.write_text(PERSONA)
+            f = Path(td) / "stories.json"
+            f.write_text(json.dumps([{"id": "US-5", "title": "detail", "acceptance": ["x"], "surfaces": ["/g/:id"]}]))
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = pr.main(["--persona", str(p), "--stories", str(f), "--base-url", "http://localhost:3000", "--plan"])
+            self.assertEqual(code, 0)
+            self.assertIn("INCONCLUSIVE", buf.getvalue())
+
+
+
+class TestEveryFailureAndExpectedConsole(unittest.TestCase):
+    def test_classify_names_every_failing_check(self):
+        bad = [{"passed": False, "detail": "h1 not visible"}]
+        cbad = [{"check": "no-overflow", "passed": False, "detail": "page is 900px wide"},
+                {"check": "console", "passed": False, "detail": "1 error(s): boom"},
+                {"check": "tap-targets", "scope": "site", "passed": False, "detail": "site-wide, not this story"}]
+        status, reason = pr.classify(bad, cbad, True)
+        self.assertEqual(status, "failed")
+        self.assertIn("h1 not visible", reason)
+        self.assertIn("no-overflow: page is 900px wide", reason)
+        self.assertIn("console: 1 error(s): boom", reason)
+        self.assertNotIn("site-wide", reason)
+        self.assertTrue(reason.startswith("3 checks failed: "), reason)
+
+    def test_report_lists_every_failing_check_per_row(self):
+        persona = pr.parse_persona("---\nname: P\ndevices: [phone-390x844]\npatience_seconds: 5\n---\nx\n")
+        r = pr.StoryResult("S-1", "t", "phone-390x844", "failed", reason="2 checks failed: a; b",
+                           checks=[{"check": "no-overflow", "passed": False, "detail": "wide"},
+                                   {"check": "console", "passed": False, "detail": "1 error(s): boom"},
+                                   {"check": "patience", "passed": True, "detail": "ok"}])
+        report = pr.render_report(persona, [r], "http://x", True)
+        self.assertIn("## Every failing check", report)
+        self.assertIn("- no-overflow: wide", report)
+        self.assertIn("- console: 1 error(s): boom", report)
+        self.assertNotIn("- patience: ok", report)
+
+    def test_expect_console_parses_and_filters_by_substring(self):
+        s, = pr.parse_stories({"stories": [{"id": "S-1", "title": "bad route", "surfaces": ["/nope"],
+                                            "acceptance": ["shows a 404 page"],
+                                            "qa": {"expect_console": ["404 (Not Found)"]}}]})
+        self.assertEqual(s.expect_console, ["404 (Not Found)"])
+        errs = ["Failed to load resource: the server responded with a status of 404 (Not Found)", "uncaught: boom"]
+        self.assertEqual(pr.unexpected_console(errs, s.expect_console), ["uncaught: boom"])
+        self.assertEqual(pr.unexpected_console(errs, []), errs)
+
+    def test_expect_console_rejects_bad_values(self):
+        for bad in ("404", [""], [1]):
+            with self.assertRaises(ConfigError):
+                pr.parse_stories([{"id": "S-1", "title": "t", "surfaces": ["/"], "acceptance": ["a"],
+                                   "qa": {"expect_console": bad}}])
+
+
 if __name__ == "__main__":
     unittest.main()

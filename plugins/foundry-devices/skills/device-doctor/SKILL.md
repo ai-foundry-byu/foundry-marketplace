@@ -7,7 +7,7 @@ description: Preflight a device QA lane before testing anything. Checks that the
 
 One command per platform. It never installs or changes anything; it only checks and tells you the fix.
 
-Maturity: **new** (unit-tested; run on real Android API 34, iOS 26.2 simulator, Windows Server 2025 and macOS 26 CI runners).
+Maturity: **verified** (run live by an agent on a Mac; unit-tested; run on real Android API 34, iOS 26.2 simulator, Windows Server 2025 and macOS 26 CI runners).
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/doctor.py" --platform ios --out .qa       # or android, windows, macos

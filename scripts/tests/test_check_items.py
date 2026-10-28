@@ -343,6 +343,119 @@ class ViolationTests(unittest.TestCase):
         self.assertEqual(len(run_checks(self.root, "second")), 1)
 
 
+class UsesAgentTests(unittest.TestCase):
+    """R5: a skill's "Uses agent:" line names agents of the same plugin that a copy can bring along."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        good_plugin(self.root)
+        self.p = os.path.join(self.root, "plugins/good")
+
+    def tearDown(self):
+        shutil.rmtree(self.root)
+
+    def skill(self, marker_block, extra=""):
+        write(self.p, "skills/drafter/SKILL.md", "---\nname: drafter\ndescription: x\n---\n# Drafter\n\n" +
+              marker_block + "\n\nWrite it, then launch the `checker` agent.\n" + extra)
+
+    def found(self):
+        return [(v.line, v.rule, v.message) for v in run_checks(self.root)]
+
+    def test_known_agents_are_clean_and_parsed(self):
+        self.skill("Uses agent: checker, `plain`")
+        self.assertEqual(self.found(), [])
+        text = slurp(os.path.join(self.p, "skills/drafter/SKILL.md"))
+        self.assertEqual(ci.uses_agents(text), ["checker", "plain"])
+        self.assertEqual(ci.uses_agents("# A\n\nUses agents: a, b.\n"), ["a", "b"])
+        self.assertEqual(ci.uses_agents("# A\n\nRequires skill: x\nUses agent: a\n"), ["a"])
+        self.assertEqual(ci.uses_agents("# A\n\nNo marker.\n"), [])
+
+    def test_frontmatter_name_counts(self):
+        write(self.p, "agents/plain.md", "---\nname: reader\ndescription: x\n---\nYou read.\n")
+        self.skill("Uses agent: reader")
+        self.assertEqual(self.found(), [])
+
+    def test_r5a_unknown_agent(self):
+        self.skill("Uses agent: checker, ghost")
+        got = self.found()
+        self.assertEqual([(ln, r) for ln, r, _ in got], [(7, "R5a")])
+        self.assertIn('"ghost"', got[0][2])
+
+    def test_r5b_standalone_skill_names_plugin_only_agent(self):
+        self.skill("Uses agent: mcp-agent")
+        self.assertEqual([r for _, r, _ in self.found()], ["R5b"])
+        # a plugin-only skill may hand work to a plugin-only agent
+        self.skill("Install: plugin only. It needs the server.\nUses agent: mcp-agent", "${CLAUDE_PLUGIN_ROOT}/bin/x\n")
+        self.assertEqual(self.found(), [])
+
+    def test_r1m_uses_agent_not_under_title(self):
+        write(self.p, "skills/drafter/SKILL.md", "# Drafter\n\nIntro first.\n\nUses agent: checker\n")
+        self.assertEqual([r for _, r, _ in self.found()], ["R1m"])
+
+
+class EvidenceTests(unittest.TestCase):
+    """E1-E4: once a repo has a marketplace.json, every catalog item needs a tested label."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        good_plugin(self.root)
+        write(self.root, ".claude-plugin/marketplace.json", json.dumps({
+            "name": "fixture", "plugins": [{"name": "good", "source": "./plugins/good"}]}))
+        import build_catalog
+        self.keys = [build_catalog.evidence_key(it) for it in build_catalog.build(self.root)["items"]]
+        self.evidence = {k: {"label": "beta", "date": "2026-10-28", "note": "Ran once."} for k in self.keys}
+
+    def tearDown(self):
+        shutil.rmtree(self.root)
+
+    def save(self, data=None, raw=None):
+        write(self.root, "evidence/evidence.json", raw if raw is not None else json.dumps(data, indent=1))
+
+    def found(self):
+        return [(v.path, v.rule, v.message) for v in run_checks(self.root)]
+
+    def test_complete_evidence_is_clean(self):
+        self.assertIn("good/skill/runner", self.keys)
+        self.assertIn("good/hook/h", self.keys)
+        self.save(self.evidence)
+        self.assertEqual(self.found(), [])
+
+    def test_e1_missing_or_bad_file(self):
+        got = self.found()
+        self.assertEqual([(p, r) for p, r, _ in got], [("evidence/evidence.json", "E1")])
+        self.save(raw="{not json")
+        self.assertEqual([r for _, r, _ in self.found()], ["E1"])
+        self.save(raw="[]")
+        self.assertEqual([r for _, r, _ in self.found()], ["E1"])
+
+    def test_e2_item_without_entry(self):
+        del self.evidence["good/agent/plain"]
+        self.save(self.evidence)
+        got = self.found()
+        self.assertEqual([r for _, r, _ in got], ["E2"])
+        self.assertIn("good/agent/plain", got[0][2])
+
+    def test_e3_bad_entry(self):
+        self.evidence["good/skill/runner"] = {"label": "proven", "note": "", "date": "Oct 28"}
+        self.evidence["good/skill/other"] = "verified"
+        self.save(self.evidence)
+        msgs = [m for _, r, m in self.found() if r == "E3"]
+        self.assertEqual(len(msgs), 4, msgs)
+        self.assertTrue(any("verified, beta, new" in m for m in msgs))
+
+    def test_e4_stale_entry_and_plugin_filter(self):
+        self.evidence["good/skill/renamed"] = {"label": "new", "date": "2026-10-28", "note": "Old name."}
+        self.evidence["other/skill/x"] = {"label": "new", "date": "2026-10-28", "note": "Another plugin."}
+        self.save(self.evidence)
+        self.assertEqual(sorted(r for _, r, _ in self.found()), ["E4", "E4"])
+        self.assertEqual([r for _, r, _ in [(v.path, v.rule, v.message) for v in ci.Checker(self.root).run(["good"])]],
+                         ["E4"])
+
+    def test_no_marketplace_means_no_evidence_check(self):
+        os.remove(os.path.join(self.root, ".claude-plugin/marketplace.json"))
+        self.assertEqual(self.found(), [])
+
+
 class SyncVendorTests(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()

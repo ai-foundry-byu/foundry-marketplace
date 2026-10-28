@@ -161,7 +161,7 @@ class ScaffoldContracts(unittest.TestCase):
         self.assertNotIn("done gate", detail)
         verify = self.proj / ".qa" / "verify" / "US-01.md"
         verify.parent.mkdir(parents=True)
-        verify.write_text("verified\n")
+        verify.write_text(f"Commit: {head}\n\nverified\n")  # the report names the commit it verified
         check = self.stage_check(6)
         self.assertTrue(check["ok"], check["detail"])
         self.assertIn("done gate exit 0 on HEAD", check["detail"])
@@ -174,7 +174,8 @@ class ScaffoldContracts(unittest.TestCase):
         (self.proj / "app.py").write_text("print('changed')\n")
         new_head = self.commit_all("code change after the gate")
         self.assertNotEqual(new_head, head)
-        self.assertIn("code changed since: app.py", self.stage_check(6)["detail"])
+        detail = self.stage_check(6)["detail"]
+        self.assertRegex(detail, r"code changed since[^:]*: app\.py")
 
     def test_sdlc_stage_reads_report_written_by_done_gate_itself(self):
         """A real done_gate.py run that stops at a config error writes last.json; sdlc reads it."""
@@ -191,7 +192,7 @@ class ScaffoldContracts(unittest.TestCase):
         self.write_last(self.gate_record(0, head))
         ev = self.proj / ".qa" / "verify" / "US-01.md"
         ev.parent.mkdir(parents=True)
-        ev.write_text("verified\n")
+        ev.write_text(f"Commit: {head}\n\nverified\n")
         r = py("tools/gen_stories.py", "--set", "US-01=LIVE", "--evidence", ".qa/verify/US-01.md", cwd=self.proj)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         story = json.loads((self.proj / "stories.json").read_text())["stories"][0]
