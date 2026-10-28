@@ -7,7 +7,8 @@ tags:
   - ios
 ---
 - launchApp:
-    clearState: true
+    # clearState: true removed for this run: on iOS it uninstalls the app, and a system app
+    # (com.apple.Preferences) cannot be uninstalled (IXErrorDomain code=22). Keep it for your own app.
     clearKeychain: true       # iOS keeps keychain items across reinstalls; clear them for a clean start
 - extendedWaitUntil:
     visible: "General"

@@ -22,21 +22,16 @@ step "agent s3: list visible processes" "osascript -e 'tell application \"System
 # section 4 / skill: dump, outline, find, press
 step "skill: ax_tree.py dump Calculator --depth 8 --out" 'python3 "$AX_DIR/scripts/ax_tree.py" dump "$APPNAME" --depth 8 --out .qa/macos/S1-03-ax.json'
 step "skill: ax_tree.py outline" 'python3 "$AX_DIR/scripts/ax_tree.py" outline .qa/macos/S1-03-ax.json | tee .qa/macos/S1-03-outline.txt | head -60'
-find7() {
-  python3 "$AX_DIR/scripts/ax_tree.py" find .qa/macos/S1-03-ax.json --role AXButton --name 7 \
-    || python3 "$AX_DIR/scripts/ax_tree.py" find .qa/macos/S1-03-ax.json --role AXButton --desc 7
-}
-step "skill: ax_tree.py find --role AXButton --name 7 (or --desc 7)" find7
+EXPECT=1 step "DEFECT CHECK skill docstring: find --role AXButton --name 7 (Calculator buttons have no name on this macOS)" 'python3 "$AX_DIR/scripts/ax_tree.py" find .qa/macos/S1-03-ax.json --role AXButton --name 7'
+step "skill: ax_tree.py find --role AXButton --id Seven" 'python3 "$AX_DIR/scripts/ax_tree.py" find .qa/macos/S1-03-ax.json --role AXButton --id Seven | tee .qa/macos/find-seven.txt | grep -q "path="'
 press7() {
-  P7=$(python3 -c 'import json,sys
-t=json.load(open(sys.argv[1]))
-h=[e for e in t if e.get("role")=="AXButton" and "7" in [str(e.get("name")),str(e.get("description"))]]
-print(h[0]["path"] if h else "")' .qa/macos/S1-03-ax.json)
-  echo "path of 7: $P7"; [ -n "$P7" ] && python3 "$AX_DIR/scripts/ax_tree.py" press "$APPNAME" "$P7"
+  P7=$(sed -E 's/.*path=([0-9/]+).*/\1/' .qa/macos/find-seven.txt | head -1)
+  echo "path of Seven: $P7"; [ -n "$P7" ] && python3 "$AX_DIR/scripts/ax_tree.py" press "$APPNAME" "$P7"
 }
-step "skill: ax_tree.py press Calculator <path of 7>" press7
+step "skill: ax_tree.py press Calculator <path of Seven>" press7
 sleep 1
 step "skill: dump again, find --value 7 (display shows 7)" 'python3 "$AX_DIR/scripts/ax_tree.py" dump "$APPNAME" --depth 8 --out .qa/macos/S1-04-ax.json && python3 "$AX_DIR/scripts/ax_tree.py" find .qa/macos/S1-04-ax.json --value 7'
+step "agent s5: window screenshot after pressing 7" 'B=$(python3 "$AX_DIR/scripts/ax_tree.py" bounds "$APPNAME") && /usr/sbin/screencapture -x -R"$B" .qa/macos/S1-04-after-7.png'
 
 # section 5: screenshots
 step "skill/agent s5: B=\$(ax_tree.py bounds Calculator)" 'B=$(python3 "$AX_DIR/scripts/ax_tree.py" bounds "$APPNAME"); echo "B=$B"; [ -n "$B" ]'
@@ -46,7 +41,7 @@ vid() { /usr/sbin/screencapture -v -V 3 .qa/macos/S1-run.mov & local P=$!; sleep
 step "agent s5: screencapture -v -V 3 video" vid
 
 # section 4 plain AppleScript snippet, against TextEdit
-step "agent s3: open -a TextEdit (new document)" 'open -a TextEdit && sleep 4 && osascript -e "tell application \"TextEdit\" to make new document" '
+step "agent s3: open -a TextEdit" 'open -a TextEdit && sleep 5'
 textedit_snippet() {
 osascript <<'EOF'
 tell application "System Events" to tell process "TextEdit"

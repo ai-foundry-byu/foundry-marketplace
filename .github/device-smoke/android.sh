@@ -21,6 +21,8 @@ step "doctor.json written" 'test -s .qa/android/doctor.json && python3 -c "impor
 step "agent s2: adb devices -l" 'adb devices -l | tee .qa/android/adb-devices.txt'
 
 # section 3: device set-up
+# The runner does not put $ANDROID_HOME/emulator on PATH (the agent's install note says to); do it here. [ENV]
+export PATH="$PATH:$ANDROID_HOME/emulator"
 step "agent s3: emulator -list-avds" 'emulator -list-avds'
 step "agent s3: avdmanager list device has pixel_7" 'avdmanager list device -c | tee .qa/android/avd-device-types.txt | grep -x pixel_7'
 step "agent s3: avdmanager create avd -n qa_api34 ... -d pixel_7 (x86_64 image)" 'echo no | avdmanager create avd -n qa_api34 -k "system-images;android-34;google_apis;x86_64" -d pixel_7 --force && emulator -list-avds | grep -x qa_api34'
@@ -47,9 +49,9 @@ step "skill: uitree.py outline (real dump)" 'python3 "$UITREE_DIR/scripts/uitree
 step "skill: uitree.py find --text \"Network & internet\"" 'python3 "$UITREE_DIR/scripts/uitree.py" find "$XML" --text "Network & internet"'
 first_rid() { RID=$(grep -o 'resource-id="[^"]*:id/[a-z_]*"' "$XML" | head -1 | sed -e 's/.*:id\///' -e 's/"$//'); echo "RID=$RID"; [ -n "$RID" ] && python3 "$UITREE_DIR/scripts/uitree.py" find "$XML" --id "$RID" --json | head -30; }
 step "skill: uitree.py find --id (short form after :id/) --json" first_rid
-step "skill: uitree.py find --desc (content-desc)" 'python3 "$UITREE_DIR/scripts/uitree.py" find "$XML" --desc "search" || python3 "$UITREE_DIR/scripts/uitree.py" find "$XML" --desc "settings"'
+step "skill: uitree.py find --desc \"Profile picture\" (content-desc)" 'python3 "$UITREE_DIR/scripts/uitree.py" find "$XML" --desc "profile picture"'
 EXPECT=2 step "skill: tap ambiguity guard exits 2 on many matches (--text e)" 'python3 "$UITREE_DIR/scripts/uitree.py" tap "$XML" --text "e"'
-step "skill: uitree.py tap --text \"Network & internet\" --exact (clickable ancestor?)" 'python3 "$UITREE_DIR/scripts/uitree.py" tap "$XML" --text "Network & internet" --exact --clickable'
+EXPECT=2 step "DEFECT CHECK skill: tap --text X --exact --clickable finds 0 when the clickable node is the row ancestor" 'python3 "$UITREE_DIR/scripts/uitree.py" tap "$XML" --text "Network & internet" --exact --clickable'
 step "skill: uitree.py tap --text \"Network & internet\" --exact" 'TAP=$(python3 "$UITREE_DIR/scripts/uitree.py" tap "$XML" --text "Network & internet" --exact); echo "$TAP"; [ -n "$TAP" ]'
 step "agent s6: adb exec-out screencap -p (before tap)" 'adb -s "$SERIAL" exec-out screencap -p > .qa/android/S1-01-settings-home.png && file .qa/android/S1-01-settings-home.png | grep -q PNG'
 step "run the printed tap command with -s SERIAL" 'adb -s "$SERIAL" ${TAP#adb }'
@@ -67,7 +69,7 @@ step "agent s10: dumpsys package versionName" 'adb -s "$SERIAL" shell dumpsys pa
 
 # Maestro, installed exactly the way android-qa / ios-qa say
 step "install Maestro: curl -fsSL get.maestro.mobile.dev | bash" 'curl -fsSL "https://get.maestro.mobile.dev" | bash'
-step "maestro on PATH after install, same shell (no PATH edit)" 'command -v maestro'
+EXPECT=1 step "DEFECT CHECK: maestro not on PATH in the same shell after the agent's install line" 'command -v maestro'
 export PATH="$PATH:$HOME/.maestro/bin"
 step "[CORRECTED] maestro --version after export PATH=\$PATH:\$HOME/.maestro/bin" 'maestro --version'
 step "doctor after Maestro install (maestro row OK)" 'python3 "$DOCTOR_DIR/scripts/doctor.py" --platform android --out .qa --json > .qa/android/doctor-after-maestro.json; python3 -c "import json;d=json.load(open(\".qa/android/doctor-after-maestro.json\"));[print(c[\"ok\"],c[\"name\"],c[\"detail\"]) for c in d[\"checks\"]];assert d[\"ready\"]"'
@@ -76,6 +78,6 @@ mkdir -p .qa/android/flows
 cp .github/device-smoke/flows/android-settings.yaml .qa/android/flows/S1.yaml
 step "template: android-sign-in.yaml parses as maestro flow (check-syntax)" 'maestro check-syntax "$MATRIX_DIR/templates/maestro/android-sign-in.yaml" || echo "check-syntax not available in this Maestro"'
 step "agent s6: maestro --device SERIAL test --test-output-dir --format junit --output ... -e" 'maestro --device "$SERIAL" test --test-output-dir=.qa/android/maestro --format junit --output .qa/android/junit-S1.xml .qa/android/flows/S1.yaml -e QA_EMAIL=qa-user@example.test -e QA_PASSWORD=not-a-secret'
-step "maestro screenshots written under test-output-dir" 'find .qa/android/maestro -name "*.png" | tee /dev/stderr | grep -q png'
+step "maestro screenshots written under test-output-dir" 'find .qa/android/maestro -name "*.png" | grep png'
 
 summary

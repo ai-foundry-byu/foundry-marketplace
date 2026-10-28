@@ -18,9 +18,11 @@ results = []
 shots = []
 
 
-def rec(name, ok, detail=""):
-    results.append({"instruction": name, "ok": bool(ok), "detail": str(detail)[:800]})
-    print(("PASS " if ok else "FAIL ") + name + " :: " + str(detail)[:300], flush=True)
+def rec(name, ok, detail="", known_defect=False):
+    """known_defect=True: the plugin instruction is wrong (recorded as a defect), not counted as a CI failure."""
+    results.append({"instruction": name, "ok": bool(ok), "known_defect": known_defect, "detail": str(detail)[:800]})
+    tag = "PASS " if ok else ("DEFECT " if known_defect else "FAIL ")
+    print(tag + name + " :: " + str(detail)[:300], flush=True)
 
 
 def attempt(name, fn):
@@ -85,12 +87,14 @@ text1 = "hello from foundry-devices CI"
 if edit is not None:
     attempt("s5 edit.wait('enabled', timeout=10)", lambda: (edit.wait("enabled", timeout=10), "enabled")[1])
     attempt("s5 edit.set_edit_text(...)", lambda: (edit.set_edit_text(text1), "set")[1])
-    got = attempt("s5 read back edit.window_text()", lambda: edit.window_text())
-    attempt("s5 read back edit.get_value()", lambda: edit.get_value())
-    rec("s5 assert typed text read back", bool(got) and text1 in str(got), got)
+    wt = attempt("s5 read back edit.window_text()", lambda: edit.window_text())
+    rec("DEFECT CHECK agent s5: window_text() on an Edit returns its contents", bool(wt) and text1 in str(wt),
+        f"window_text() returned {wt!r} (the UIA Name), not the text", known_defect=True)
+    got = attempt("s5 read back edit.get_value()", lambda: edit.get_value())
+    rec("[CORRECTED] s5 assert typed text read back via get_value()", bool(got) and text1 in str(got), got)
     attempt("s5 edit.type_keys('typed by keys{ENTER}', with_spaces=True)",
             lambda: (edit.type_keys(" typed by keys{ENTER}", with_spaces=True), "typed")[1])
-    got2 = attempt("s5 read back after type_keys", lambda: edit.window_text())
+    got2 = attempt("s5 read back after type_keys via get_value()", lambda: edit.get_value())
     rec("s5 assert type_keys text present", bool(got2) and "typed by keys" in str(got2), got2)
 attempt("s5 shot(win, 'S1-02-after-typing')", lambda: shot(win, "S1-02-after-typing"))
 attempt("s5 PIL ImageGrab.grab().save(full screen)",
@@ -131,6 +135,6 @@ time.sleep(2)
 rec("Notepad process gone", not app.is_process_running(), "")
 
 json.dump({"results": results, "evidence": shots}, open(os.path.join(OUT, "drive-results.json"), "w"), indent=2)
-fails = [r for r in results if not r["ok"]]
+fails = [r for r in results if not r["ok"] and not r.get("known_defect")]
 print(f"{len(results) - len(fails)} pass, {len(fails)} fail")
 sys.exit(1 if fails else 0)

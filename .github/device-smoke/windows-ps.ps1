@@ -51,6 +51,20 @@ Step "agent s6: Get-WinEvent snippet (verbatim)" {
     Format-List TimeCreated, ProviderName, Message | Out-File .qa\windows\S1-events.txt
 }
 
+Step "DEFECT CHECK agent s6: verbatim Get-WinEvent raises 'No events were found' when the log is clean" {
+  $before = $Error.Count
+  Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error','Application Hang','.NET Runtime'; StartTime=(Get-Date).AddMinutes(-30)} 2>$null | Out-Null
+  Write-Host "new errors: $($Error.Count - $before) :: $($Error[0])"
+}
+
+Step "[CORRECTED] Get-WinEvent ... -ErrorAction SilentlyContinue writes an empty file, no error" {
+  $before = $Error.Count
+  Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error','Application Hang','.NET Runtime'; StartTime=(Get-Date).AddMinutes(-30)} -ErrorAction SilentlyContinue |
+    Format-List TimeCreated, ProviderName, Message | Out-File .qa\windows\S1-events.txt
+  if (-not (Test-Path .qa\windows\S1-events.txt)) { throw "no events file" }
+  Write-Host "events file bytes: $((Get-Item .qa\windows\S1-events.txt).Length)"
+}
+
 Step "agent s3: Get-StartApps lists AppUserModelIDs" { Get-StartApps | Select-Object -First 5 | Format-Table | Out-String | Write-Host }
 
 Get-Content $log

@@ -34,7 +34,7 @@ pick() {
   read -r RUNTIME DEVTYPE < <(xcrun simctl list runtimes -j | python3 -c 'import json,sys
 r=[x for x in json.load(sys.stdin)["runtimes"] if x.get("platform")=="iOS" and x.get("isAvailable")]
 rt=r[-1]; names=[d["name"] for d in rt.get("supportedDeviceTypes",[]) if d["name"].startswith("iPhone")]
-plain=[n for n in names if n.replace("iPhone ","").isdigit()]
+plain=sorted([n for n in names if n.replace("iPhone ","").isdigit()], key=lambda n: int(n.split()[1]))
 print(rt["identifier"], (plain or names)[-1].replace(" ","_"))')
   DEVTYPE=${DEVTYPE//_/ }
   echo "RUNTIME=$RUNTIME DEVTYPE=$DEVTYPE"; [ -n "$RUNTIME" ] && [ -n "$DEVTYPE" ]
@@ -50,12 +50,16 @@ step "agent s3: simctl ui appearance light" 'xcrun simctl ui "$UDID" appearance 
 step "agent s4: simctl launch UDID BUNDLE" 'xcrun simctl launch "$UDID" "$BUNDLE"'
 sleep 5
 step "agent s6: simctl io screenshot --type=png" 'xcrun simctl io "$UDID" screenshot --type=png .qa/ios/S1-01-settings.png && file .qa/ios/S1-01-settings.png | grep -q PNG'
-step "agent s4: simctl openurl https://example.com (Safari)" 'xcrun simctl openurl "$UDID" "https://example.com"'
-sleep 6
+openurl_retry() {
+  # First boot of a fresh simulator runs data migration; openurl can time out (code=60) until it settles. [ENV]
+  for i in 1 2 3; do xcrun simctl openurl "$UDID" "https://example.com" && return 0; echo "openurl attempt $i failed, waiting 30 s"; sleep 30; done; return 1
+}
+step "agent s4: simctl openurl https://example.com (Safari), up to 3 tries" openurl_retry
+sleep 8
 step "agent s6: screenshot after openurl" 'xcrun simctl io "$UDID" screenshot --type=png .qa/ios/S1-02-openurl.png'
 step "agent s4: simctl help privacy lists services" 'xcrun simctl help privacy 2>&1 | tee .qa/ios/privacy-help.txt | grep -qi photos'
 step "agent s4: simctl privacy grant photos BUNDLE" 'xcrun simctl privacy "$UDID" grant photos "$BUNDLE"'
-step "agent s4: simctl terminate UDID BUNDLE" 'xcrun simctl terminate "$UDID" "$BUNDLE"'
+step "agent s4: simctl terminate UDID BUNDLE (after a fresh launch)" 'xcrun simctl launch "$UDID" "$BUNDLE" && sleep 3 && xcrun simctl terminate "$UDID" "$BUNDLE"'
 step "agent s4: simctl addmedia (a png)" 'xcrun simctl addmedia "$UDID" .qa/ios/S1-01-settings.png'
 step "agent s4: simctl get_app_container data (system app)" 'xcrun simctl get_app_container "$UDID" "$BUNDLE" data'
 rec_video() {
@@ -72,7 +76,7 @@ step "agent s7: simctl spawn log stream --level debug --predicate" log_stream
 
 # Maestro exactly as ios-qa section 2 says
 step "install Maestro: curl -fsSL get.maestro.mobile.dev | bash" 'curl -fsSL "https://get.maestro.mobile.dev" | bash'
-step "maestro on PATH after install, same shell (no PATH edit)" 'command -v maestro'
+EXPECT=1 step "DEFECT CHECK: maestro not on PATH in the same shell after the agent's install line" 'command -v maestro'
 export PATH="$PATH:$HOME/.maestro/bin"
 step "[CORRECTED] maestro --version after export PATH=\$PATH:\$HOME/.maestro/bin" 'maestro --version'
 step "agent s2: doctor.py --platform ios after Maestro install (READY)" 'python3 "$DOCTOR_DIR/scripts/doctor.py" --platform ios --out .qa'
@@ -80,7 +84,7 @@ step "agent s5: maestro --device UDID hierarchy > json" 'maestro --device "$UDID
 mkdir -p .qa/ios/flows
 cp .github/device-smoke/flows/ios-settings.yaml .qa/ios/flows/S1.yaml
 step "agent s6: maestro --device UDID test --test-output-dir --format junit --output ... -e" 'maestro --device "$UDID" test --test-output-dir=.qa/ios/maestro --format junit --output .qa/ios/junit-S1.xml .qa/ios/flows/S1.yaml -e QA_EMAIL=qa-user@example.test -e QA_PASSWORD=not-a-secret'
-step "maestro screenshots written under test-output-dir" 'find .qa/ios/maestro -name "*.png" | tee /dev/stderr | grep -q png'
+step "maestro screenshots written under test-output-dir" 'find .qa/ios/maestro -name "*.png" | grep png'
 
 # section 10 clean-up
 step "agent s10: status_bar clear" 'xcrun simctl status_bar "$UDID" clear'
