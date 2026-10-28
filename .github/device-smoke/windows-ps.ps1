@@ -16,7 +16,7 @@ function Step($name, [scriptblock]$body) {
 
 Write-Host "env:CLAUDE_PLUGIN_ROOT = $env:CLAUDE_PLUGIN_ROOT"
 
-Step "agent s2 (PowerShell, verbatim): SKILL_DIR lookup + py -3 doctor.py" {
+Step "agent s2 PowerShell block with CLAUDE_PLUGIN_ROOT only as an ENV var (hook-style/copied snippet)" {
   $SKILL_DIR = "${CLAUDE_PLUGIN_ROOT}/skills/device-doctor"
   if (-not (Test-Path $SKILL_DIR)) { $SKILL_DIR = @(".claude/skills/device-doctor", "$env:CLAUDE_CONFIG_DIR/skills/device-doctor", "$HOME/.claude/skills/device-doctor") | Where-Object { Test-Path $_ } | Select-Object -First 1 }
   Write-Host "SKILL_DIR=[$SKILL_DIR]"
@@ -24,11 +24,39 @@ Step "agent s2 (PowerShell, verbatim): SKILL_DIR lookup + py -3 doctor.py" {
   py -3 "$SKILL_DIR/scripts/doctor.py" --platform windows --out .qa
 }
 
-Step "[CORRECTED] PowerShell lookup with `$env:CLAUDE_PLUGIN_ROOT + py -3 doctor.py" {
-  $SKILL_DIR = "$env:CLAUDE_PLUGIN_ROOT/skills/device-doctor"
-  if (-not (Test-Path $SKILL_DIR)) { $SKILL_DIR = @(".claude/skills/device-doctor", "$env:CLAUDE_CONFIG_DIR/skills/device-doctor", "$HOME/.claude/skills/device-doctor") | Where-Object { Test-Path $_ } | Select-Object -First 1 }
-  Write-Host "SKILL_DIR=[$SKILL_DIR]"
-  py -3 "$SKILL_DIR/scripts/doctor.py" --platform windows --out .qa
+# Proposed replacement for the windows-qa.md PowerShell block (works as text-substituted plugin,
+# as an env var, and standalone):
+$fixed = @'
+$SKILL_DIR = @("${CLAUDE_PLUGIN_ROOT}/skills/device-doctor", "$env:CLAUDE_PLUGIN_ROOT/skills/device-doctor", ".claude/skills/device-doctor", "$env:CLAUDE_CONFIG_DIR/skills/device-doctor", "$HOME/.claude/skills/device-doctor") | Where-Object { Test-Path $_ } | Select-Object -First 1
+py -3 "$SKILL_DIR/scripts/doctor.py" --platform windows --out .qa
+'@
+Step "[CORRECTED] proposed block, env-var mode" {
+  Invoke-Expression $fixed; Write-Host "SKILL_DIR=[$SKILL_DIR]"; if (-not $SKILL_DIR) { throw "empty" }
+}
+
+# The block above sets an environment variable. Claude Code instead substitutes ${CLAUDE_PLUGIN_ROOT}
+# as TEXT in a plugin agent's body (seen in a headless session: the subagent's command held the literal path).
+# So run the agent's PowerShell block extracted from agents/windows-qa.md in the two real modes.
+$md = Get-Content -Raw "$env:GITHUB_WORKSPACE/plugins/foundry-devices/agents/windows-qa.md"
+$block = [regex]::Match($md, '(?s)```powershell\r?\n(\$SKILL_DIR = .*?)```').Groups[1].Value
+Write-Host "extracted block:`n$block"
+$pluginRoot = "$env:GITHUB_WORKSPACE\plugins\foundry-devices"
+
+Step "agent s2 PowerShell block, plugin mode (text-substituted root, env var unset)" {
+  if (-not $block) { throw "block not found in windows-qa.md" }
+  $saved = $env:CLAUDE_PLUGIN_ROOT; $env:CLAUDE_PLUGIN_ROOT = $null
+  try { Invoke-Expression ($block.Replace('${CLAUDE_PLUGIN_ROOT}', $pluginRoot)) } finally { $env:CLAUDE_PLUGIN_ROOT = $saved }
+  Write-Host "SKILL_DIR=[$SKILL_DIR] exit=$LASTEXITCODE"
+  if (-not $SKILL_DIR) { throw "empty SKILL_DIR" }
+}
+
+Step "agent s2 PowerShell block, standalone mode (literal root, skill copied to .claude/skills)" {
+  $saved = $env:CLAUDE_PLUGIN_ROOT; $env:CLAUDE_PLUGIN_ROOT = $null
+  New-Item -ItemType Directory -Force .claude\skills | Out-Null
+  Copy-Item -Recurse -Force "$pluginRoot\skills\device-doctor" .claude\skills\
+  try { Invoke-Expression $block } finally { $env:CLAUDE_PLUGIN_ROOT = $saved; Remove-Item -Recurse -Force .claude }
+  Write-Host "SKILL_DIR=[$SKILL_DIR] exit=$LASTEXITCODE"
+  if ($SKILL_DIR -ne ".claude/skills/device-doctor") { throw "fallback did not resolve" }
 }
 
 Step "agent s5: PowerShell full-screen screenshot snippet (verbatim)" {
