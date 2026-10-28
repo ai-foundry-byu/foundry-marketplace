@@ -5,7 +5,7 @@ import unittest
 from contextlib import redirect_stdout, redirect_stderr
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
+sys.path.insert(0, os.path.join(HERE, "..", "skills", "android-ui-tree", "scripts"))
 import uitree  # noqa: E402
 
 FIX = os.path.join(HERE, "fixtures", "android_login.xml")

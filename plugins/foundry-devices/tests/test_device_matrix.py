@@ -7,7 +7,7 @@ import unittest
 from contextlib import redirect_stdout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(HERE, "..", "scripts"))
+sys.path.insert(0, os.path.join(HERE, "..", "skills", "device-matrix", "scripts"))
 import device_matrix as dm  # noqa: E402
 
 FIX = os.path.join(HERE, "fixtures", "stories.json")

@@ -1,5 +1,5 @@
 # Maestro flow template: iOS Simulator sign-in story.
-# Run:   maestro test --test-output-dir=.qa/ios/maestro templates/maestro/ios-sign-in.yaml \
+# Run:   maestro test --test-output-dir=.qa/ios/maestro .qa/ios/flows/S1.yaml \
 #          -e QA_EMAIL=qa-user@example.test -e QA_PASSWORD=<test-account-password>
 # Use a TEST account only. Never put a real user's credentials in a flow file.
 #

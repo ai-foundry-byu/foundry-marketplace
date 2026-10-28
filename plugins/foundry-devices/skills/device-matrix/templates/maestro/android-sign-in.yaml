@@ -1,10 +1,10 @@
 # Maestro flow template: Android sign-in story.
-# Run:   maestro test --test-output-dir=.qa/android/maestro templates/maestro/android-sign-in.yaml \
+# Run:   maestro test --test-output-dir=.qa/android/maestro .qa/android/flows/S1.yaml \
 #          -e QA_EMAIL=qa-user@example.test -e QA_PASSWORD=<test-account-password>
 # Use a TEST account only. Never put a real user's credentials in a flow file.
 #
 # Replace com.example.app and the ids below with your app's values.
-# Find ids with: maestro hierarchy   (or adb shell uiautomator dump, then scripts/uitree.py outline)
+# Find ids with: maestro hierarchy   (or adb shell uiautomator dump, then uitree.py outline from the android-ui-tree skill)
 appId: com.example.app
 name: "S1 user signs in (android)"
 tags:

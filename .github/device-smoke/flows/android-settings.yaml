@@ -1,0 +1,25 @@
+# Adapted from plugins/foundry-devices/skills/device-matrix/templates/maestro/android-sign-in.yaml
+# Same structure (fresh state, wait, screenshot, tap, assert, back), pointed at the Settings app.
+appId: com.android.settings
+name: "S1 open Network & internet (android settings)"
+tags:
+  - smoke
+  - android
+---
+- launchApp:
+    clearState: true          # start from a fresh install state
+    permissions:
+      all: deny               # the story should still work with permissions denied
+- extendedWaitUntil:
+    visible: "Network & internet"
+    timeout: 15000
+- takeScreenshot: S1-01-launch
+- tapOn: "Network & internet"            # visible text; prefer an id when one exists
+- extendedWaitUntil:
+    visible: "Airplane mode"
+    timeout: 20000
+- assertNotVisible: "Something went wrong"
+- takeScreenshot: S1-02-network
+# Android-only: hardware back returns to the previous screen
+- back
+- assertVisible: "Network & internet"
