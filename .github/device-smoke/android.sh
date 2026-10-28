@@ -99,7 +99,7 @@ step "maestro screenshots written under test-output-dir" 'find .qa/android/maest
 # -no-window for headless; CI also needs a software GPU. [ENV]
 MAIN_SERIAL=$SERIAL
 BOOT_BLOCK=$(python3 -I "$MD" "$AGENT_MD" bash 'SERIAL=emulator-5580' --from 'SERIAL=emulator-5580' --to 'until [')
-BOOT_BLOCK=${BOOT_BLOCK/-no-boot-anim &/-no-boot-anim -no-window -gpu swiftshader_indirect &}
+BOOT_BLOCK=${BOOT_BLOCK/-no-boot-anim &/-no-boot-anim -no-window -gpu swiftshader_indirect \&}
 boot_block() {
   echo "$BOOT_BLOCK"
   [ -n "$BOOT_BLOCK" ] || return 1
@@ -107,10 +107,11 @@ boot_block() {
   timeout 420 bash -c "$BOOT_BLOCK" > .qa/android/d11-boot.log 2>&1; local rc=$?
   echo "block rc=$rc after $((SECONDS-t0)) s"; grep -E "did not finish|ERROR|FATAL" .qa/android/d11-boot.log | head -5
   adb devices -l | tee .qa/android/d11-adb-devices.txt
-  [ $rc -eq 0 ] && [ "$(adb -s emulator-5580 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]
+  # the block ends in an until loop, so its exit code says nothing; judge the outcome
+  [ $rc -ne 124 ] && ! grep -q "did not finish booting" .qa/android/d11-boot.log && [ "$(adb -s emulator-5580 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]
 }
 step "FIXED D11 agent s3: boot block verbatim (SERIAL=emulator-5580, -port 5580, adb -s wait + bounded boot loop) boots a 2nd emulator" boot_block
-EXPECT=1 step "D11 why: with two devices, a bare 'adb shell' fails (more than one device/emulator)" 'adb shell getprop sys.boot_completed'
+EXPECT=1 step "D11 why: with two devices and no ANDROID_SERIAL, a bare 'adb shell' fails (more than one device/emulator)" 'echo "runner ANDROID_SERIAL=${ANDROID_SERIAL-unset}"; env -u ANDROID_SERIAL adb shell getprop sys.boot_completed'
 tap_two_devices() {
   env -u ANDROID_SERIAL python3 "$UITREE_DIR/scripts/uitree.py" tap "$XML" --text "Network & internet" --exact --clickable > .qa/android/d10-two-devices.txt 2>&1; local rc=$?
   cat .qa/android/d10-two-devices.txt

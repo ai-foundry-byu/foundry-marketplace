@@ -70,26 +70,37 @@ AGENT_MD="$CLAUDE_PLUGIN_ROOT/agents/ios-qa.md"
 REC_BLOCK=$(python3 -I "$MD" "$AGENT_MD" bash recordVideo)
 REC_BLOCK=${REC_BLOCK/'# ... drive the story ...'/'xcrun simctl launch "$UDID" "$BUNDLE"; sleep 3'}
 rec_block() {
-  echo "$REC_BLOCK"; [ -n "$REC_BLOCK" ] || return 1
-  rm -f .qa/ios/S1-run.mov .qa/ios/S1-rec.log
-  local t0=$SECONDS out rc k=0
-  # watchdog (macOS has no timeout(1)): the block bounds itself at 30 s start + 3 s drive + 15 s stop,
-  # so anything past 90 s is a hang
-  UDID="$UDID" BUNDLE="$BUNDLE" bash -c "$REC_BLOCK" > .qa/ios/rec-block.out 2>&1 & local B=$!
-  while kill -0 $B 2>/dev/null; do sleep 1; k=$((k+1)); [ $k -ge 90 ] && { echo "WATCHDOG: block hung"; kill -9 $B; pkill -9 -f "recordVideo.*S1-run.mov"; break; }; done
-  wait $B; rc=$?
-  out=$(cat .qa/ios/rec-block.out)
+  # $1 = file tag. Runs the block the way an agent's Bash tool does: one foreground bash -c.
+  # The block's own last line is a while loop, so its exit code says nothing; judge the outcome.
+  local tag=$1 blk="${2:-$REC_BLOCK}"
+  [ -n "$blk" ] || return 1
+  [ "$tag" = run ] || blk=${blk//S1-run.mov/S1-$tag.mov}; [ "$tag" = run ] || blk=${blk//S1-rec.log/S1-rec-$tag.log}
+  echo "$blk"
+  local log=".qa/ios/S1-rec-$tag.log"; [ "$tag" = run ] && log=.qa/ios/S1-rec.log
+  rm -f ".qa/ios/S1-$tag.mov" "$log"
+  local t0=$SECONDS out
+  # watchdog (macOS has no timeout(1)): the block bounds itself at 30 s start + 3 s drive + 15 s stop
+  ( sleep 90; echo "WATCHDOG: block hung, killing"; pkill -9 -f "recordVideo.*S1-$tag.mov"; pkill -9 -f "REC_BLOCK_MARK_$tag" ) & local W=$!
+  UDID="$UDID" BUNDLE="$BUNDLE" PS4='+ $(date +%H:%M:%S) ' bash -xc "# REC_BLOCK_MARK_$tag
+$blk" > ".qa/ios/rec-block-$tag.out" 2>&1
+  kill $W 2>/dev/null; wait $W 2>/dev/null
   local dt=$((SECONDS-t0))
-  echo "$out"; echo "--- recorder log:"; cat .qa/ios/S1-rec.log; echo "--- block rc=$rc, took ${dt}s"
-  ls -l .qa/ios/S1-run.mov; file .qa/ios/S1-run.mov
-  pgrep -fl "recordVideo.*S1-run.mov" && { echo "recorder still running"; return 1; }
-  [ $rc -eq 0 ] || return 1
-  grep -q "Recording started" .qa/ios/S1-rec.log || { echo "never saw Recording started"; return 1; }
-  echo "$out" | grep -qE "never started|did not stop" && return 1
+  out=$(cat ".qa/ios/rec-block-$tag.out")
+  echo "$out" | grep -vE "^\+ [0-9:]+ (sleep 1|kill -0|n=|grep -q|\[ [0-9]+ -ge)" ; echo "--- recorder log:"; cat "$log"; echo "--- took ${dt}s"
+  ls -l ".qa/ios/S1-$tag.mov"; file ".qa/ios/S1-$tag.mov"
+  pgrep -fl "recordVideo.*S1-$tag.mov" && { echo "recorder still running"; pkill -9 -f "recordVideo.*S1-$tag.mov"; return 1; }
+  grep -q "Recording started" "$log" || { echo "never saw Recording started"; return 1; }
+  echo "$out" | grep -qE "never started|did not stop|WATCHDOG" && return 1
+  grep -q "Wrote video to" "$log" || { echo "recorder never finalized the file"; return 1; }
   [ $dt -le 48 ] || { echo "took longer than the block's own bound"; return 1; }
-  test -s .qa/ios/S1-run.mov && file .qa/ios/S1-run.mov | grep -qiE "quicktime|ISO Media"
+  test -s ".qa/ios/S1-$tag.mov" && file ".qa/ios/S1-$tag.mov" | grep -qiE "quicktime|ISO Media"
 }
-step "FIXED D4 agent s6: recordVideo block verbatim starts, stops within its bound, writes a non-empty .mov" rec_block
+step "FIXED D4 agent s6: recordVideo block verbatim starts, stops within its bound, writes a finalized .mov" "rec_block run"
+step "FIXED D4 agent s6: same block again (repeatability)" "rec_block run2"
+# diagnostic only (never fails the job): same block with no app launch while recording
+REC_BLOCK_IDLE=$(python3 -I "$MD" "$AGENT_MD" bash recordVideo); REC_BLOCK_IDLE=${REC_BLOCK_IDLE/'# ... drive the story ...'/'sleep 3'}
+diag_idle() { if rec_block idle "$REC_BLOCK_IDLE"; then echo "DIAG: idle recording stopped cleanly"; else echo "DIAG: idle recording did NOT stop cleanly"; fi; return 0; }
+step "diagnostic: recordVideo block with no launch during recording (informational)" diag_idle
 log_stream() {
   xcrun simctl spawn "$UDID" log stream --level debug --predicate 'process == "Preferences"' > .qa/ios/S1-log.txt & LOG=$!
   xcrun simctl launch "$UDID" "$BUNDLE"; sleep 5; kill $LOG; wait $LOG 2>/dev/null; wc -l .qa/ios/S1-log.txt
