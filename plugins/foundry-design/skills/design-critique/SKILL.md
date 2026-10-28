@@ -16,7 +16,7 @@ generate; they do not edit. This skill is the missing editor.
 
 **The critic may only SUBTRACT.** Allowed verbs: `remove`, `merge`, `relabel`, `inline`,
 `escalate`. A finding that proposes ADDING a screen, button, step or control is invalid and is
-rejected at parse time: the `proposal.type` enum in `findings.schema.json` has no `add`.
+rejected at parse time: the `proposal.type` enum in `${CLAUDE_SKILL_DIR}/findings.schema.json` has no `add`.
 Generation is the builder's job. This is the editor.
 
 ## The 8 questions (ask every one, of every prompt, button and graphic)
@@ -33,7 +33,7 @@ Generation is the builder's job. This is the editor.
 | C8 | Two surfaces where one would do? | one component per job; a new surface names what it `replaces:` |
 
 Full text, grounding (Nielsen, Krug, Fitts, Hick) and the blocking rules: `CONSTITUTION.md` in
-this skill's directory. Read it the first time you run the gate in a session.
+this skill's directory (`${CLAUDE_SKILL_DIR}/CONSTITUTION.md`). Read it the first time you run the gate in a session.
 
 ## Set up a project for the gate (once, about 10 minutes)
 
@@ -44,7 +44,7 @@ design/
   vocabulary.md          # approved words: "Save" not "Submit", "Project" not "Workspace"
   core-flows.md          # the 1-3 jobs that matter most, as numbered steps
   references/            # pinned right/wrong screenshots: good-*.png, bad-*.png
-  decisions/             # one YAML file per ruling (template: templates/decision.yaml)
+  decisions/             # one YAML file per ruling (template: ${CLAUDE_SKILL_DIR}/templates/decision.yaml)
   findings/              # one JSON array per critique run
 ```
 
@@ -56,8 +56,10 @@ Goal: a new task is visible in the list.
 Today: open app -> tap "+" -> type -> tap "Save"  (3 taps after first paint)
 ```
 
-Optional but strongly recommended: the deterministic half (`scripts/design_gate.py` in this
-plugin, see "Post-build, part 1").
+Optional but strongly recommended: the deterministic half (`${CLAUDE_SKILL_DIR}/scripts/design_gate.py`,
+see "Post-build, part 1"). Start its config from the template:
+`cp "${CLAUDE_SKILL_DIR}/templates/design-gate.config.json" design/design-gate.json`.
+An example findings run is `${CLAUDE_SKILL_DIR}/templates/findings.example.json`.
 
 ## Pre-build run (cheapest: kill a surface for the price of a paragraph)
 
@@ -80,12 +82,12 @@ flows, dead controls, entry-point count, primary-button count, tap-target size, 
 horizontal scroll, and FAILS on any regression against a committed baseline:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/design_gate.py" run --config design/design-gate.json
+python3 "${CLAUDE_SKILL_DIR}/scripts/design_gate.py" run --config design/design-gate.json
 ```
 
-If `${CLAUDE_PLUGIN_ROOT}` is empty in your shell, locate the script with
-`find "$HOME/.claude/plugins" -path '*foundry-design/scripts/design_gate.py'`.
-Setup and config format: the plugin README, section "design_gate.py". A regression may only be
+Setup and config format: the script's `--help` and docstring, the template
+`${CLAUDE_SKILL_DIR}/templates/design-gate.config.json`, and (when installed as a plugin) the
+plugin README, section "design_gate.py". A regression may only be
 accepted with `--bless` plus a decision-log entry that says why. If you cannot run Playwright,
 say so and skip to part 2; never report a gate number you did not measure.
 
@@ -99,7 +101,7 @@ say so and skip to part 2; never report a gate number you did not measure.
 3. For EACH of C1..C8, examine every surface and write a verdict line, even when it is clean:
    `C3 route:/settings - clean` or `C3 route:/settings - finding df-007`. A per-question verdict
    makes silent rubber-stamping impossible.
-4. Emit findings as a JSON array that validates against `findings.schema.json`. Rules:
+4. Emit findings as a JSON array that validates against `${CLAUDE_SKILL_DIR}/findings.schema.json`. Rules:
    - Propose a subtraction or `escalate`. Never an addition.
    - Questions 1, 5, 6 and 8 (flow shape) require a `delta` with before/after counts.
    - Every finding cites a question plus a grounding (`constitution_refs`, `log_refs`, or a gate
@@ -111,7 +113,7 @@ say so and skip to part 2; never report a gate number you did not measure.
 5. Validate the array:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_findings.py" design/findings/2026-01-15-settings.json
+python3 "${CLAUDE_SKILL_DIR}/scripts/validate_findings.py" design/findings/2026-01-15-settings.json
 ```
 
 Exit 0 = valid. Exit 1 prints each violation (an `add` verb, a missing delta, a third nit).
@@ -129,7 +131,7 @@ Exit 0 = valid. Exit 1 prints each violation (an `add` verb, a missing delta, a 
    User behavior is the final arbiter.
 
 Every resolution appends a file to `design/decisions/` (template:
-`templates/decision.yaml` in this skill's directory): the finding, the ruling, the reason, the
+`${CLAUDE_SKILL_DIR}/templates/decision.yaml`): the finding, the ruling, the reason, the
 tier. Human input is batch calibration: a periodic digest of what changed and why, and a
 thumbs-down that adds a reference image. A human tunes the model of their taste; they do not
 approve pixels one at a time.

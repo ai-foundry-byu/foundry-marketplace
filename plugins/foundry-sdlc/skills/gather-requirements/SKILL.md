@@ -45,7 +45,7 @@ Gather every place the asks came from: meeting notes, a voice memo transcript, a
 - Every source has a row. Every ask has an R-id, a verbatim text, a source code and a date.
 - "## Already exists" has at least one row per major area of the product.
 - No `TODO:` markers remain in REQUIREMENTS.md.
-- `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdlc_stage.py" .` reports stage 2.
+- `python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .` reports stage 2.
 
 Then show the human the asks table and the Pending decisions, and ask: "Is anything missing or misquoted?" Their answer goes into DECISIONS.md.
 

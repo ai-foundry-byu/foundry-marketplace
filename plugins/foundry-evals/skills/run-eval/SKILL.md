@@ -5,8 +5,8 @@ description: Run an evalkit suite, read the report, and compare it with the last
 
 # run-eval: run it, read it, report only what you ran
 
-The tool is `evalkit` (on PATH while this plugin is enabled) or
-`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/evalkit.py"`. A suite is a directory with
+The tool is `evalkit` (on PATH while the foundry-evals plugin is enabled) or
+`python3 "${CLAUDE_SKILL_DIR}/scripts/evalkit.py"`, which works with this skill on its own. A suite is a directory with
 `suite.json` and `cases.jsonl` (see the `new-eval` skill).
 
 ## The one rule

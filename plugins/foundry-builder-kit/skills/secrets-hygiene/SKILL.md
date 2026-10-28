@@ -9,10 +9,10 @@ Two jobs. **Prevent** (set up once per repo, 10 minutes) and **respond** (when a
 
 Bundled tools (all Python 3 stdlib):
 
-- `${CLAUDE_PLUGIN_ROOT}/scripts/scan_secrets.py`: fallback secret scanner (`--staged`, `--worktree`, `--all`, or paths). Redacted output.
-- `${CLAUDE_PLUGIN_ROOT}/scripts/probe_key.py`: asks a provider whether a key still authenticates (`LIVE`, `DEAD`, `ERR`).
-- Plugin hook `commit_secret_guard.py`: blocks a `git commit` the agent runs when the staged change contains a secret.
-- Templates in `${CLAUDE_PLUGIN_ROOT}/skills/secrets-hygiene/templates/`.
+- `${CLAUDE_SKILL_DIR}/scripts/scan_secrets.py`: fallback secret scanner (`--staged`, `--worktree`, `--all`, or paths). Redacted output.
+- `${CLAUDE_SKILL_DIR}/scripts/probe_key.py`: asks a provider whether a key still authenticates (`LIVE`, `DEAD`, `ERR`).
+- `${CLAUDE_SKILL_DIR}/scripts/commit_secret_guard.py`: the plugin hook (runs automatically only when this skill is installed as part of the foundry-builder-kit plugin). It blocks a `git commit` the agent runs when the staged change contains a secret.
+- Templates in `${CLAUDE_SKILL_DIR}/templates/`.
 
 ## Part 1: prevent
 
@@ -32,8 +32,8 @@ Code reads secrets by name (`process.env.OPENAI_API_KEY`, `os.environ["OPENAI_AP
 
 ```bash
 # from the repo root
-cat "${CLAUDE_PLUGIN_ROOT}/skills/secrets-hygiene/templates/gitignore-secrets.txt" >> .gitignore
-cp "${CLAUDE_PLUGIN_ROOT}/skills/secrets-hygiene/templates/env.example" .env.example   # then edit the names
+cat "${CLAUDE_SKILL_DIR}/templates/gitignore-secrets.txt" >> .gitignore
+cp "${CLAUDE_SKILL_DIR}/templates/env.example" .env.example   # then edit the names
 git rm --cached .env .env.local 2>/dev/null   # stop tracking if they were committed (they stay on disk)
 git check-ignore -v .env.local                 # must print the matching .gitignore rule
 ```
@@ -44,18 +44,18 @@ If `git rm --cached` removed a tracked env file, its contents are still in histo
 
 Install gitleaks: `brew install gitleaks` (macOS), `winget install gitleaks` or `scoop install gitleaks` (Windows), or a release binary from github.com/gitleaks/gitleaks. Then pick one:
 
-- **pre-commit framework:** copy `templates/pre-commit-config.yaml` to `.pre-commit-config.yaml`, then `pre-commit install`.
-- **plain git hook:** `cp templates/pre-commit.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit`.
+- **pre-commit framework:** copy `${CLAUDE_SKILL_DIR}/templates/pre-commit-config.yaml` to `.pre-commit-config.yaml`, then `pre-commit install`.
+- **plain git hook:** `cp "${CLAUDE_SKILL_DIR}/templates/pre-commit.sh" .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit`.
 
 Scan what is already there, once:
 
 ```bash
 gitleaks git --redact -v .            # full git history
 gitleaks dir --redact -v .            # the files on disk, including untracked
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/scan_secrets.py" --all   # no gitleaks available
+python3 "${CLAUDE_SKILL_DIR}/scripts/scan_secrets.py" --all   # no gitleaks available
 ```
 
-Add the CI scan so a teammate without the hook is still caught: copy `templates/secret-scan.yml` to `.github/workflows/secret-scan.yml`. Also turn on GitHub's own secret scanning and push protection (repo Settings, Code security).
+Add the CI scan so a teammate without the hook is still caught: copy `${CLAUDE_SKILL_DIR}/templates/secret-scan.yml` to `.github/workflows/secret-scan.yml`. Also turn on GitHub's own secret scanning and push protection (repo Settings, Code security).
 
 ### 4. False positives
 
@@ -83,8 +83,8 @@ A leaked key is any key that was ever committed (even if deleted in a later comm
 
 ```bash
 export LEAKED_KEY='...'                     # paste into your own shell, not into a file
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/probe_key.py" openai:LEAKED_KEY
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/probe_key.py" --list   # supported providers
+python3 "${CLAUDE_SKILL_DIR}/scripts/probe_key.py" openai:LEAKED_KEY
+python3 "${CLAUDE_SKILL_DIR}/scripts/probe_key.py" --list   # supported providers
 ```
 
 - `LIVE`: incident. Continue with Step 2 now.
@@ -126,7 +126,7 @@ Smoke test each consumer with one real call.
 Revoke it in the dashboard, then re-run the probe with the OLD value. Done means `DEAD`, not "I clicked revoke":
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/probe_key.py" openai:LEAKED_KEY ; echo "exit=$?"   # expect DEAD and exit=0
+python3 "${CLAUDE_SKILL_DIR}/scripts/probe_key.py" openai:LEAKED_KEY ; echo "exit=$?"   # expect DEAD and exit=0
 ```
 
 If you cannot finish today, schedule the probe daily until it reports `DEAD` (see the `scheduled-agents` skill). The off condition is the probe result, never a note that says "rotated".

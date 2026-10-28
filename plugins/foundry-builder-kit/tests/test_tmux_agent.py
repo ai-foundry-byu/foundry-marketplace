@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPT = os.path.join(os.path.dirname(HERE), "scripts", "tmux_agent.py")
+SCRIPT = os.path.join(os.path.dirname(HERE), "skills", "tmux-agents", "scripts", "tmux_agent.py")
 sys.path.insert(0, os.path.dirname(SCRIPT))
 
 import tmux_agent  # noqa: E402

@@ -63,7 +63,7 @@ class TestValidation(unittest.TestCase):
                 dg.load_journey(str(Path(td) / "missing.yaml"))
 
     def test_template_journey_is_valid(self):
-        j = dg.load_journey(str(_paths.TEMPLATES / "done-journey.yaml"))
+        j = dg.load_journey(str(_paths.DONE_GATE_TEMPLATES / "done-journey.yaml"))
         self.assertTrue(j.steps and j.assertions)
 
     def test_resolve_url(self):

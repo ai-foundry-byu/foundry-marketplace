@@ -15,6 +15,12 @@ Reads:
   plugins/<p>/templates/*                    one item per top-level entry
   SDLC.md                                    which items each stage names
 
+Each skill and agent also gets an install mode (CONTRIBUTING.md R1-R3):
+  install_mode       "standalone" | "needs-skill" | "plugin-only"
+  requires_skills    names from a "Requires skill:" line under the H1
+  requires_skill_ids catalog ids of those skills
+  plugin_only_reason the sentence after "Install: plugin only." under the H1
+
 Usage:
   python3 scripts/build_catalog.py                 # writes site/catalog.json
   python3 scripts/build_catalog.py --root DIR --out FILE --check
@@ -30,6 +36,9 @@ import os
 import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import check_items  # noqa: E402  (shares the marker and locate-snippet parsing)
 
 REPO_SLUG = "ai-foundry-byu/foundry-marketplace"
 BRANCH = "main"
@@ -540,6 +549,35 @@ def assign_stages(name: str, frontmatter: Dict[str, Any], row: Optional[Dict[str
     return list(CATEGORY_DEFAULT_STAGE.get(category, []))
 
 
+HOOK_REASON = ("A hook is an entry in the plugin's hooks.json plus the script it runs, "
+               "so it installs with its plugin.")
+
+
+def install_info(body: str, plugin: str) -> Dict[str, Any]:
+    """install_mode, requires_skills and plugin_only_reason for a skill or agent body."""
+    reason = check_items.plugin_only_reason(body)
+    reqs = check_items.requires_skills(body)
+    if not reason:
+        rest = []
+        lines = body.split("\n")
+        for i, ln in enumerate(lines):
+            ln = check_items.SNIPPET_RE.sub("", ln)
+            if check_items.PS_SNIPPET_RE.match(ln):
+                continue
+            rest.append(ln)
+        if check_items.PLUGIN_ROOT_RE.search("\n".join(rest)):
+            reason = ("It runs files from the %s plugin through ${CLAUDE_PLUGIN_ROOT}, "
+                      "which only the plugin sets." % plugin)
+    if reason:
+        mode = "plugin-only"
+    elif reqs:
+        mode = "needs-skill"
+    else:
+        mode = "standalone"
+    return {"install_mode": mode, "requires_skills": reqs, "requires_skill_ids": [],
+            "plugin_only_reason": reason}
+
+
 def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[int]],
                  marketplace: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     name = entry.get("name", "")
@@ -570,6 +608,8 @@ def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[in
             "maturity": "external", "maturity_note": "Maintained in its own repository.",
             "body": "", "source_url": url, "raw_url": "", "files": [], "external": True,
             "external_repo": repo, "needs_plugin": True, "tags": plugin["tags"],
+            "install_mode": "plugin-only", "requires_skills": [], "requires_skill_ids": [],
+            "plugin_only_reason": "It is a whole plugin maintained in its own repository.",
         }
         return plugin, [item]
 
@@ -609,6 +649,9 @@ def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[in
             "files": files, "external": False,
             "needs_plugin": "CLAUDE_PLUGIN_ROOT" in body, "tags": plugin["tags"],
         }
+        if item_type in ("skill", "agent"):
+            it.update(install_info(body, name))
+            it["needs_plugin"] = it["install_mode"] == "plugin-only"
         if extra:
             it.update(extra)
         items.append(it)
@@ -624,7 +667,7 @@ def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[in
         files = [file_entry(root, f, sdir) for f in list_files(root, sdir)]
         files.sort(key=lambda f: (f["path"] != "SKILL.md", f["path"]))
         add("skill", str(fm.get("name") or d), str(fm.get("description", "")), body, sk, files, fm,
-            aliases=(d,))
+            extra={"dir": d}, aliases=(d,))
 
     # agents
     aroot = os.path.join(pdir, "agents")
@@ -694,7 +737,8 @@ def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[in
                               "script_doc": doc},
             aliases=((row["label"],) if row else ()))
         # hooks always need the plugin; the README's text may not mention CLAUDE_PLUGIN_ROOT
-        items[-1]["needs_plugin"] = True
+        items[-1].update({"needs_plugin": True, "install_mode": "plugin-only", "requires_skills": [],
+                          "requires_skill_ids": [], "plugin_only_reason": HOOK_REASON})
 
     # templates
     troot = os.path.join(pdir, "templates")
@@ -756,6 +800,8 @@ def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[in
             "source_url": (TREE_BASE if os.path.isdir(tp) else BLOB_BASE) + r,
             "raw_url": RAW_BASE + r if os.path.isfile(tp) else "",
             "files": files, "external": False, "needs_plugin": False, "tags": plugin["tags"],
+            "install_mode": "standalone", "requires_skills": [], "requires_skill_ids": [],
+            "plugin_only_reason": "",
         })
 
     for it in items:
@@ -771,6 +817,15 @@ def build_plugin(root: str, entry: Dict[str, Any], sdlc_names: Dict[str, List[in
         if seen[it["slug"]] > 1:
             it["slug"] = "%s-%s" % (it["slug"], it["type"])
         it["id"] = "%s/%s" % (name, it["slug"])
+    # "Requires skill: x" names a skill folder (or frontmatter name) in this plugin
+    skill_ids: Dict[str, str] = {}
+    for it in items:
+        if it["type"] == "skill":
+            skill_ids[it["dir"]] = it["id"]
+            skill_ids.setdefault(it["name"], it["id"])
+    for it in items:
+        if it.get("requires_skills"):
+            it["requires_skill_ids"] = [skill_ids[r] for r in it["requires_skills"] if r in skill_ids]
     counts: Dict[str, int] = {}
     for it in items:
         counts[it["type"]] = counts.get(it["type"], 0) + 1

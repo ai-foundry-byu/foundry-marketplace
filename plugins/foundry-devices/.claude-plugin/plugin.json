@@ -1,7 +1,7 @@
 {
   "name": "foundry-devices",
   "version": "0.1.0",
-  "description": "Native and device QA agents, one per platform: iOS Simulator (simctl + Maestro), Android (emulator + adb + Maestro), Windows desktop (pywinauto UIA), macOS desktop (System Events accessibility + Playwright for Electron), plus a device-matrix skill that runs them as parallel lanes and merges one PASS/FAIL/INCONCLUSIVE matrix.",
+  "description": "Native and device QA agents, one per platform: iOS Simulator (simctl + Maestro), Android (emulator + adb + Maestro), Windows desktop (pywinauto UIA), macOS desktop (System Events accessibility + Playwright for Electron), plus a device-matrix skill that runs them as parallel lanes and merges one PASS/FAIL/INCONCLUSIVE matrix, and helper skills (device-doctor, android-ui-tree, macos-ax-tree) that work on their own.",
   "author": {
     "name": "AI Foundry (BYU Marriott)"
   },

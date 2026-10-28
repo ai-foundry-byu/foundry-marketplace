@@ -1,6 +1,6 @@
 ---
 name: new-project
-description: Stage 0 of the Foundry SDLC. Scaffold the standard artifact set (README, REQUIREMENTS, DECISIONS, PRD, WORKPLAN, CHANGELOG, stories.json, done-journey.yaml, tools/gen_stories.py) into a new or existing project from the plugin's templates. Use when someone says "start a new project", "scaffold this", "set up the project docs", "new app idea", "kick off <name>", or when sdlc_stage.py reports stage 0.
+description: Stage 0 of the Foundry SDLC. Scaffold the standard artifact set (README, REQUIREMENTS, DECISIONS, PRD, WORKPLAN, CHANGELOG, stories.json, done-journey.yaml, tools/gen_stories.py) into a new or existing project from the skill's templates. Use when someone says "start a new project", "scaffold this", "set up the project docs", "new app idea", "kick off <name>", or when sdlc_stage.py reports stage 0.
 ---
 
 # Stage 0: scaffold the artifact set
@@ -15,7 +15,7 @@ One scaffolder and one layout for every project, so any agent (or classmate) can
 ## Run the scaffolder
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/new_project.py" product --name "Study Buddy" --owner "Team 4"
+python3 "${CLAUDE_SKILL_DIR}/scripts/new_project.py" product --name "Study Buddy" --owner "Team 4"
 ```
 
 What it does:
@@ -27,7 +27,7 @@ What it does:
 ## Then do these four things
 
 1. Fill the README's one sentence ("who is this for, and what can they do that they cannot do today"). If you cannot write it yet, that is fine: stage 1 will tell you.
-2. Paste `${CLAUDE_PLUGIN_ROOT}/docs/CLAUDE-md-snippet.md` into the project's `CLAUDE.md`, creating the file if needed. These are the norms every agent in the project follows.
+2. Paste `${CLAUDE_SKILL_DIR}/references/CLAUDE-md-snippet.md` into the project's `CLAUDE.md`, creating the file if needed. These are the norms every agent in the project follows.
 3. Add a CI step that fails when stories drift from the PRD:
    ```bash
    python3 tools/gen_stories.py --prd product/PRD.md --out product/stories.json --check
@@ -37,7 +37,7 @@ What it does:
 ## Acceptance check
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdlc_stage.py" .
+python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .
 ```
 
 This must report `Current stage: 1 Gather requirements`. If it says 0, a file is missing, and the report names it.

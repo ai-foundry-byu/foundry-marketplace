@@ -11,9 +11,9 @@ plugin adds the missing editor, a spec step before the build, and a scored revie
 | `ui-ux-spec` | skill | Turns a user story into a buildable UI spec: layout per breakpoint, full state matrix, keyboard and touch, copy, tokens, machine-checkable acceptance checks | design / pre-build | proven |
 | `design-system` | skill | Fill-in template for your design system (tokens, contrast table, type scale, spacing, components, vocabulary) that the other items grade against | design | new |
 | `ui-reviewer` | agent | Read-only REVIEW: scores screenshots plus code on a 10-dimension 0-4 rubric, returns token-level must-fixes with file:line. Never edits source | visual QA / ship | proven |
-| `design_gate.py` | script | Deterministic gate: clicks-to-goal, dead controls, entry points, primary buttons, tap targets, contrast, horizontal scroll, context present; fails on regression vs a baseline | visual QA / CI | new (generalized from a proven per-project gate) |
-| `validate_findings.py` | script | Validates a critique findings file: no "add" verb, deltas on flow findings, nit cap, grounding | visual QA | new |
-| `design-gate.config.json`, `findings.example.json`, `decision.yaml` | templates | Starting files for the gate config, a findings run, and a decision-log entry | setup | new |
+| `design_gate.py` | script (in `design-critique`, vendored into `design-system`) | Deterministic gate: clicks-to-goal, dead controls, entry points, primary buttons, tap targets, contrast, horizontal scroll, context present; fails on regression vs a baseline | visual QA / CI | new (generalized from a proven per-project gate) |
+| `validate_findings.py` | script (in `design-critique`) | Validates a critique findings file: no "add" verb, deltas on flow findings, nit cap, grounding | visual QA | new |
+| `design-gate.config.json`, `findings.example.json`, `decision.yaml` | templates (in `design-critique/templates/`) | Starting files for the gate config, a findings run, and a decision-log entry | setup | new |
 
 Maturity: **proven** means generalized from a tool that runs in production in our harness today.
 **new** means written for this marketplace from docs and best practice, not yet battle-tested.
@@ -65,7 +65,7 @@ design/
   design-system.md        # from the design-system skill
   vocabulary.md           # one name per act
   core-flows.md           # the 1-3 jobs that matter, as steps
-  design-gate.json        # gate config (copy templates/design-gate.config.json)
+  design-gate.json        # gate config (copy skills/design-critique/templates/design-gate.config.json)
   design-baseline.json    # written by the gate's bless command, committed
   specs/<surface>.md      # from ui-ux-spec
   reviews/                # ui-reviewer reports and captures
@@ -73,6 +73,22 @@ design/
   decisions/              # one YAML per ruling
   references/             # pinned good-*.png / bad-*.png examples
 ```
+
+## Install one item on its own
+
+Every skill works when its folder is copied on its own into `.claude/skills/<name>/` or
+`~/.claude/skills/<name>/`: each skill carries every file it runs or reads, referenced as
+`${CLAUDE_SKILL_DIR}/...`.
+
+| Item | Standalone? | Needs |
+|---|---|---|
+| `design-critique` skill | yes | nothing (holds `design_gate.py`, `validate_findings.py`, the schema and templates) |
+| `ui-ux-spec` skill | yes | nothing |
+| `design-system` skill | yes | nothing (carries a vendored copy of `design_gate.py` for the contrast math) |
+| `ui-reviewer` agent | yes, with skills | the `ui-ux-spec` skill (rubric, floor) and the `design-critique` skill (gate); it tells you if either is missing |
+
+This plugin has no hooks and no plugin-only items. Vendored copies are listed in `vendor.json`
+and must stay byte-identical to their canonical file.
 
 ## Using each item
 
@@ -84,17 +100,20 @@ against C1-C8 and writes a findings file. The critic may only propose `remove`, 
 `relabel`, `inline` or `escalate`. Validate the findings:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate_findings.py" design/findings/2026-01-15-settings.json
+python3 skills/design-critique/scripts/validate_findings.py design/findings/2026-01-15-settings.json
 ```
 
-`${CLAUDE_PLUGIN_ROOT}` is set for hooks and expanded in plugin content, but not in your own
-terminal. From a terminal, locate the script:
+Inside a session the skill uses `${CLAUDE_SKILL_DIR}/scripts/...`, which Claude Code expands to
+the skill's own folder. From a terminal, locate the scripts:
 
 ```bash
-find "$HOME/.claude/plugins" -path '*foundry-design/scripts/*' -name '*.py' 2>/dev/null
+find "$HOME/.claude/plugins" "$HOME/.claude/skills" .claude/skills -path '*design-critique/scripts/*' -name '*.py' 2>/dev/null
 ```
 
-For CI, copy `scripts/design_gate.py` and `scripts/validate_findings.py` into your repo (MIT).
+For CI, copy `skills/design-critique/scripts/design_gate.py` and
+`skills/design-critique/scripts/validate_findings.py` into your repo (MIT). Each is a single
+stdlib file; `validate_findings.py` reads `../findings.schema.json` by default (pass `--schema`
+to point elsewhere).
 
 ### ui-ux-spec (skill, proven)
 
@@ -128,7 +147,7 @@ evidence, problem, a token-level fix and a verification step. It writes only und
    python3 -m playwright install chromium
    ```
 
-2. Copy `templates/design-gate.config.json` to `design/design-gate.json` and edit `base_url`,
+2. Copy `skills/design-critique/templates/design-gate.config.json` to `design/design-gate.json` and edit `base_url`,
    `pages`, `flows` (click steps to a goal selector), `context_checks` and
    `selectors.primary_button`.
 3. Start your app locally, then establish the baseline and commit it:
@@ -168,7 +187,7 @@ primary) and confirm the gate exits 1. The unit tests do exactly this.
 
 ```bash
 cd plugins/foundry-design
-python3 -m unittest discover -s scripts/tests -v
+python3 -m unittest discover -s skills/design-critique/scripts/tests -v
 ```
 
 44 tests: color math and WCAG contrast, page evaluation, hard limits, planted regressions,

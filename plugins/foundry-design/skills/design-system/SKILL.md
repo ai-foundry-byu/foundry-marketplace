@@ -9,7 +9,7 @@ description: Create or update the project's design system reference file (design
 
 `ui-ux-spec`, the `ui-reviewer` agent and `design-critique` all say "use the design system".
 They need one file to point at. This skill produces `design/design-system.md` from the template
-in `references/design-system.md` (in this skill's directory), filled with YOUR project's values.
+in `${CLAUDE_SKILL_DIR}/references/design-system.md`, filled with YOUR project's values.
 It is a pluggable reference: swap the file and every other tool in this plugin follows it.
 
 The CSS (or theme file) stays the source of truth. This document is the reading guide that names
@@ -43,13 +43,10 @@ each token, says when to use it, and records the rules a reviewer can check.
    5-7 sizes, 3-4 weights, a spacing ladder of 8-10 steps, 2-3 radii. Every value you drop gets a
    "replace with" note in the migration section.
 4. **Check every text/background pair you list** for contrast (4.5:1 body, 3:1 large text and UI
-   boundaries). Use the plugin's color math:
+   boundaries). Use the gate's color math (`${CLAUDE_SKILL_DIR}/scripts/design_gate.py`, stdlib only):
 
    ```bash
-   python3 - <<'EOF'
-   import sys, glob, os
-   gate = glob.glob(os.path.expanduser("~/.claude/plugins/**/foundry-design/scripts/design_gate.py"), recursive=True)
-   sys.path.insert(0, os.path.dirname(gate[0]))   # or the plugin's scripts/ dir if installed elsewhere
+   PYTHONPATH="${CLAUDE_SKILL_DIR}/scripts" python3 - <<'EOF'
    from design_gate import parse_color, contrast_ratio
    pairs = {"text-1 on canvas": ("#1a1a1a", "#ffffff"), "text-3 on surface-2": ("#6b6b6b", "#f4f4f5")}
    for name, (fg, bg) in pairs.items():
@@ -59,7 +56,7 @@ each token, says when to use it, and records the rules a reviewer can check.
 
    Record the ratio next to each pair in the template's contrast table. A pair under the
    threshold is either fixed or marked "large text only" or "disabled only".
-5. **Fill `references/design-system.md`** into `design/design-system.md`. Delete the guidance
+5. **Fill `${CLAUDE_SKILL_DIR}/references/design-system.md`** into `design/design-system.md`. Delete the guidance
    comments as you fill each section.
 
 ### If the project is greenfield

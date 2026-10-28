@@ -9,9 +9,11 @@ An eval is a set of cases, a way to run the thing under test on each case, and g
 decide pass or fail. The hard part is not the runner. It is making sure a broken agent scores
 low. This skill builds the suite in the order that guarantees that.
 
-The tool is `evalkit.py` in this plugin's `scripts/` folder (Python 3.9+, standard library only).
-While the plugin is enabled it is on PATH as `evalkit`; otherwise run
-`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/evalkit.py"`. For CI, copy `evalkit.py` into the repo
+The tool is `evalkit.py` in this skill's `scripts/` folder (Python 3.9+, standard library only).
+While the foundry-evals plugin is enabled it is on PATH as `evalkit`; otherwise run
+`python3 "${CLAUDE_SKILL_DIR}/scripts/evalkit.py"`. Where this page says `evalkit`, either
+form works. `evalkit init` copies `${CLAUDE_SKILL_DIR}/templates/example-suite/` and
+`${CLAUDE_SKILL_DIR}/scripts/judge_claude.py` (as `judge.py`). For CI, copy `evalkit.py` into the repo
 (one file, no dependencies) so the gate does not depend on the plugin being installed.
 
 ## Step 0: decide what "good" means, in one paragraph

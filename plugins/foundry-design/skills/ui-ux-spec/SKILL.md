@@ -11,16 +11,16 @@ A screen that passes every functional test can still be terrible to use. The che
 fix that is before the build, in a document a builder can implement without guessing and a
 reviewer can grade without vibes. This skill produces that document.
 
-The output is a markdown file that follows `references/spec-template.md` (in this skill's
-directory) section by section. Its acceptance checks (section 11) are what the build is graded
-on by the `ui-reviewer` agent and by `scripts/design_gate.py`.
+The output is a markdown file that follows `${CLAUDE_SKILL_DIR}/references/spec-template.md`
+section by section. Its acceptance checks (section 11) are what the build is graded
+on by the `ui-reviewer` agent and by the design gate (`design_gate.py` in the `design-critique` skill).
 
 ## The ordering when sources disagree (higher wins)
 
 1. **Your project's explicit rules and the user's own words.**
 2. **Your design system**: `design/design-system.md` (create it with this plugin's
    `design-system` skill). Tokens, type scale, spacing ladder, component rules, vocabulary.
-3. **The accessibility and craft floor**: WCAG 2.2 AA, then `references/floor-checklist.md`.
+3. **The accessibility and craft floor**: WCAG 2.2 AA, then `${CLAUDE_SKILL_DIR}/references/floor-checklist.md`.
 4. **Proven patterns from tools your users already know** (Jakob's law): if the job is a task
    list, behave like the task apps your users use; if it is checkout, behave like the stores they
    buy from. Invent only where no pattern fits, and say that you did.
@@ -63,7 +63,7 @@ fast unless someone asks for boldness.
      durations, all by token name from the design system, never raw values.
 6. **Write acceptance checks a machine can decide** (section 11). Each check has a selector or a
    measurable number. "Feels fast" is not a check; "new row visible within 100 ms of Enter" is.
-7. **Self-check against `references/floor-checklist.md`.** A spec that specifies an inaccessible
+7. **Self-check against `${CLAUDE_SKILL_DIR}/references/floor-checklist.md`.** A spec that specifies an inaccessible
    interaction is a defect you shipped. Fix it in the spec.
 8. **Hand it over.** Save to `design/specs/<surface>.md` (or the path you were given), never into
    product source. Tell the builder which acceptance checks map to `design_gate.py` metrics.

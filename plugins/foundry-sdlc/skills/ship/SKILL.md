@@ -38,4 +38,4 @@ Never: "Done! Should be working now."
 
 - Every story in this release is LIVE with evidence, or PARTIAL/BUILT with the failing criterion named and ticketed.
 - CHANGELOG.md has today's dated entry, and the users have been told what to try.
-- `sdlc_stage.py .` reports stage 8, or names exactly what is still open.
+- `python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .` reports stage 8, or names exactly what is still open.

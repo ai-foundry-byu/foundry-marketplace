@@ -5,6 +5,8 @@ description: What to do when a foundry-guardrails hook blocks a tool call or a s
 
 # Working with foundry-guardrails
 
+Install: plugin only. The guardrails are hooks, which only a plugin can install.
+
 The foundry-guardrails plugin runs six hooks. A blocked call is a decision a human configured, not an error to work around. Here is what to do for each one.
 
 ## The response rule

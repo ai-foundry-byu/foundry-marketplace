@@ -113,6 +113,51 @@ def make_fixture(root):
         ---
         You check.
         """)
+    write(root, "plugins/demo/skills/runner-dir/SKILL.md", """
+        ---
+        name: runner
+        description: Runs its own script.
+        ---
+        # Runner
+
+        Run `python3 "${CLAUDE_SKILL_DIR}/scripts/run.py"`.
+        """)
+    write(root, "plugins/demo/skills/runner-dir/scripts/run.py", "print(1)\n")
+    write(root, "plugins/demo/skills/runner-dir/scripts/lib/util.py", "X = 1\n")
+    write(root, "plugins/demo/skills/served/SKILL.md", """
+        ---
+        name: served
+        description: Talks to the MCP server.
+        ---
+        # Served
+
+        Install: plugin only. It needs the plugin's MCP server.
+
+        Call `${CLAUDE_PLUGIN_ROOT}/bin/helper`.
+        """)
+    write(root, "plugins/demo/agents/runner-agent.md", """
+        ---
+        name: runner-agent
+        description: Uses the runner skill.
+        ---
+        # Runner agent
+
+        Requires skill: runner-dir
+
+        ```bash
+        SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/runner-dir"; [ -d "$SKILL_DIR" ] || SKILL_DIR="$(ls -d .claude/skills/runner-dir "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/runner-dir" 2>/dev/null | head -1)"
+        python3 "$SKILL_DIR/scripts/run.py"
+        ```
+        """)
+    write(root, "plugins/demo/agents/mcp-agent.md", """
+        ---
+        name: mcp-agent
+        description: Drives the server.
+        ---
+        # MCP agent
+
+        Install: plugin only. It drives the plugin's MCP server.
+        """)
     write(root, "plugins/demo/hooks/hooks.json", json.dumps({
         "description": "demo hooks",
         "hooks": {
@@ -291,6 +336,37 @@ class CatalogTests(unittest.TestCase):
         self.assertIn("keep commands tidy", h["script_doc"])
         self.assertTrue(h["needs_plugin"])
         self.assertEqual(h["stages"], [5])
+
+    def test_install_modes(self):
+        s = self.items["demo/runner"]
+        self.assertEqual(s["install_mode"], "standalone")
+        self.assertEqual(s["dir"], "runner-dir")
+        self.assertFalse(s["needs_plugin"])
+        self.assertEqual([f["path"] for f in s["files"]],
+                         ["SKILL.md", "scripts/lib/util.py", "scripts/run.py"])
+        served = self.items["demo/served"]
+        self.assertEqual(served["install_mode"], "plugin-only")
+        self.assertEqual(served["plugin_only_reason"], "It needs the plugin's MCP server.")
+        self.assertTrue(served["needs_plugin"])
+        # unmarked ${CLAUDE_PLUGIN_ROOT}: still plugin only, with a generic reason
+        chk = self.items["demo/check-it"]
+        self.assertEqual(chk["install_mode"], "plugin-only")
+        self.assertIn("CLAUDE_PLUGIN_ROOT", chk["plugin_only_reason"])
+        ra = self.items["demo/runner-agent"]
+        self.assertEqual(ra["install_mode"], "needs-skill")
+        self.assertEqual(ra["requires_skills"], ["runner-dir"])
+        self.assertEqual(ra["requires_skill_ids"], ["demo/runner"])
+        self.assertFalse(ra["needs_plugin"])
+        self.assertEqual(self.items["demo/mcp-agent"]["install_mode"], "plugin-only")
+        self.assertEqual(self.items["demo/checker"]["install_mode"], "standalone")
+        self.assertEqual(self.items["demo/tidy-guard"]["install_mode"], "plugin-only")
+        self.assertTrue(self.items["demo/tidy-guard"]["plugin_only_reason"])
+        self.assertEqual(self.items["demo/thing.md"]["install_mode"], "standalone")
+        self.assertEqual(self.items["outside/outside"]["install_mode"], "plugin-only")
+        for it in self.data["items"]:
+            self.assertIn(it["install_mode"], ("standalone", "needs-skill", "plugin-only"), it["id"])
+            self.assertIn("requires_skills", it)
+            self.assertIn("plugin_only_reason", it)
 
     def test_hook_from_command_string_and_section_switch(self):
         h = self.items["demo/word-hook"]

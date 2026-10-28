@@ -46,7 +46,7 @@ The PRD is the contract every later stage tests against. Stories live **inside**
    ```bash
    python3 tools/gen_stories.py --prd PRD.md --out stories.json --check
    ```
-   The first command writes the file. `--check` writes nothing and exits 1 if the file is stale, a story has no criteria, an id is duplicated, or a status is not one of NOT_BUILT, BUILT, PARTIAL, LIVE, PARKED. Regenerating keeps each story's `status`, `notes`, `evidence` and any `surfaces`/`devices`/`waits_on` the PRD does not set. New stories start as NOT_BUILT. The schema is in `stories.schema.json`. (If the project has no `tools/` copy, use `${CLAUDE_PLUGIN_ROOT}/scripts/gen_stories.py`.)
+   The first command writes the file. `--check` writes nothing and exits 1 if the file is stale, a story has no criteria, an id is duplicated, or a status is not one of NOT_BUILT, BUILT, PARTIAL, LIVE, PARKED. Regenerating keeps each story's `status`, `notes`, `evidence` and any `surfaces`/`devices`/`waits_on` the PRD does not set. New stories start as NOT_BUILT. The schema is in `stories.schema.json`. (If the project has no `tools/` copy, use `${CLAUDE_SKILL_DIR}/scripts/gen_stories.py`.)
 4. **Coverage.** In `REQUIREMENTS.md`, fill the Story ids column for every R-id and set its status to STORIED. Any ask still OPEN is a missing story or needs a DROPPED decision.
 5. **Independent critique.** Launch the `prd-critic` agent in a fresh context. Do not critique your own PRD in the same context. Give it only file paths:
    > Critique PRD.md against REQUIREMENTS.md and DECISIONS.md in <dir>. Return numbered critiques with severity and a suggested fix. Do not edit any file.
@@ -60,6 +60,6 @@ The PRD is the contract every later stage tests against. Stories live **inside**
 - Appendix A has a row for every prd-critic finding. No `TODO:` markers remain.
 - Every R-id is STORIED or DROPPED.
 - A human has read section 0 and the story list, and said yes. Record that yes in DECISIONS.md.
-- `sdlc_stage.py .` reports stage 3.
+- `python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .` reports stage 3.
 
 Next: the `write-workplan` skill. For UI-heavy stories, consider a pre-build pass with `foundry-design:design-critique` on the plan (it is cheaper to remove a screen before it is built).

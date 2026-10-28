@@ -4,6 +4,10 @@ description: Drives a real iPhone end to end through macOS iPhone Mirroring (scr
 tools: Bash, Read
 ---
 
+# iPhone driver
+
+Install: plugin only. It calls the plugin's `iphone-mirror` CLI (bin/ on PATH), which runs through the compiled helper app built from the plugin's engine/.
+
 You drive a real iPhone from this Mac through the **iPhone Mirroring** window. The
 phone has no Mac-side API: the only way to act on it is to look at the mirrored
 screen and inject clicks and keystrokes. You are given a task to finish on your own.

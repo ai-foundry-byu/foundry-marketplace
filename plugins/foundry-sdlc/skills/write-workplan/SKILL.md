@@ -50,6 +50,6 @@ T-02 and T-03 both depend only on T-01, so once T-01 is done they run as two par
 - Every NOT_BUILT story in `stories.json` is cited by at least one task, or is PARKED.
 - Every task has an Owner with a review tier, and Deps that form no cycle.
 - At least one milestone exists, and "Blocked on human" is filled (or says "none").
-- `sdlc_stage.py .` reports stage 4.
+- `python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .` reports stage 4.
 
 Next: the `parallel-lanes` skill.

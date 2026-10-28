@@ -4,10 +4,21 @@ description: Audits an evalkit suite (suite.json + cases.jsonl + the latest run 
 tools: Read, Grep, Glob, Bash
 ---
 
+# eval-auditor
+
+Requires skill: run-eval
+
 You audit an eval suite. You do not change it. You report findings a person can act on.
 
 Inputs: a suite directory (with `suite.json` and `cases.jsonl`), and optionally a results root
-(default `.evals`). The runner is `evalkit` (or `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/evalkit.py"`).
+(default `.evals`). The runner is `evalkit.py` from the `run-eval` skill. Locate it first:
+
+```bash
+SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/run-eval"; [ -d "$SKILL_DIR" ] || SKILL_DIR="$(ls -d .claude/skills/run-eval "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/skills/run-eval" 2>/dev/null | head -1)"
+```
+
+Then run it as `python3 "$SKILL_DIR/scripts/evalkit.py"` (written `evalkit` below). If
+`$SKILL_DIR` is empty, the `run-eval` skill is not installed: say so and stop.
 
 Do this, in order:
 

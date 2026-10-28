@@ -26,17 +26,17 @@ This document is the human-readable version of the `foundry-sdlc` plugin. The pl
  worktree-guard, verify-before-done, stale-write-guard, ship-stop.
 ```
 
-Find where a project is, from a terminal in the project root (`${CLAUDE_PLUGIN_ROOT}` is only set inside Claude Code, so a terminal needs the installed path):
+Find where a project is: ask Claude "what stage are we in?". Inside Claude Code the `sdlc` skill runs its own copy of the detector. By hand, run it from the installed skill folder, from the project root:
 
 ```bash
-python3 "$(ls -d ~/.claude/plugins/cache/ai-foundry/foundry-sdlc/*/ | tail -1)scripts/sdlc_stage.py" .
+python3 ~/.claude/skills/sdlc/scripts/sdlc_stage.py .
 ```
 
-Or ask Claude "what stage are we in?". The detector looks for the artifacts in `.`, then `product/`, then `docs/product/`, and reports the first stage whose exit check fails. With `foundry-sdlc` enabled, a SessionStart hook prints the same verdict when the project has a `PRD.md` or `REQUIREMENTS.md`.
+Use `.claude/skills/sdlc/` instead if you copied the skill into the project, or `plugins/foundry-sdlc/skills/sdlc/scripts/sdlc_stage.py` from a clone of this repo. The script is standard library only, so any copy works. The detector looks for the artifacts in `.`, then `product/`, then `docs/product/`, and reports the first stage whose exit check fails. With `foundry-sdlc` enabled, a SessionStart hook prints the same verdict when the project has a `PRD.md` or `REQUIREMENTS.md`.
 
 ## The stages
 
-Template paths are relative to `plugins/foundry-sdlc/`. The `new-project` skill copies them into your project.
+Template and script paths are relative to the `new-project` skill folder (`plugins/foundry-sdlc/skills/new-project/`). The skill copies the templates into your project.
 
 ### 0. Scaffold
 
@@ -143,7 +143,7 @@ Choose build effort, review depth, and whether an independent reviewer is needed
 | Medium | Mechanical edits, config, cadence changes, test-only work |
 | No review agent | Docs, copy, comments, log text. The builder self-checks. A second agent adds nothing |
 
-Building agents run at low or medium effort for normal work, and at high or above only for the top tier. An independent verifier is for the top tier. Below that, the builder's own tests are the verification. This table is also in `plugins/foundry-sdlc/docs/CLAUDE-md-snippet.md`, ready to paste into your CLAUDE.md.
+Building agents run at low or medium effort for normal work, and at high or above only for the top tier. An independent verifier is for the top tier. Below that, the builder's own tests are the verification. This table is also in `plugins/foundry-sdlc/skills/new-project/references/CLAUDE-md-snippet.md`, ready to paste into your CLAUDE.md.
 
 ## Already using agent-team-kit?
 

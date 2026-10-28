@@ -27,12 +27,12 @@ behind a proxy: download `axe.min.js` once and pass `--axe-source path/to/axe.mi
 
 ```bash
 # pages by URL, on desktop and phone
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/a11y_check.py" \
+python3 "${CLAUDE_SKILL_DIR}/scripts/a11y_check.py" \
   --url http://localhost:3000/ --url http://localhost:3000/signup \
   --devices desktop-1440x900,phone-390x844
 
 # the state a journey reaches (a modal open, a form with errors, a signed-in page)
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/a11y_check.py" --journey qa/done-journey.yaml --base-url http://localhost:3000
+python3 "${CLAUDE_SKILL_DIR}/scripts/a11y_check.py" --journey qa/done-journey.yaml --base-url http://localhost:3000
 ```
 
 Options: `--fail-on critical|serious|moderate|minor` (default `serious`), `--tags` (default

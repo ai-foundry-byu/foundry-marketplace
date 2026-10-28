@@ -48,6 +48,17 @@ To try it from a local clone without installing:
 claude --plugin-dir ./plugins/foundry-guardrails
 ```
 
+### Install one item on its own
+
+Nothing in this plugin works on its own. The six guardrails are hooks, and only a plugin can install hooks (they live in `hooks/hooks.json` and point at `${CLAUDE_PLUGIN_ROOT}/hooks/scripts/`).
+
+| Item | Standalone copy? | Needs |
+|---|---|---|
+| all six hooks | no, plugin only | the plugin install |
+| `guardrails-help` skill | no, plugin only | the hooks it explains. It references no files, so a copy in `.claude/skills/` loads, but without the hooks there is nothing for it to explain |
+
+There are no agents in this plugin.
+
 ## Requirements
 
 - `python3` (3.8 or newer) on your `PATH`. The hooks run in exec form (`python3 <script>`), so there is no shell quoting to break. If `python3` is missing, Claude Code treats each hook as a non-blocking error and the tool call goes ahead, so you lose the guard but your session keeps working.
@@ -192,7 +203,7 @@ cd plugins/foundry-guardrails
 python3 -m unittest discover -s tests -v
 ```
 
-88 tests. They cover the allow and deny cases for each rule, the false positives listed above, malformed stdin, the disable switches, the Stop loop caps, and real temporary git repos and worktrees. The hooks were also checked end to end in a live `claude -p --plugin-dir` session: `cat .env` was denied, and a code edit with no tests got exactly one Stop block.
+108 tests. They cover the allow and deny cases for each rule, the false positives listed above, malformed stdin, the disable switches, the Stop loop caps, and real temporary git repos and worktrees. The hooks were also checked end to end in a live `claude -p --plugin-dir` session: `cat .env` was denied, and a code edit with no tests got exactly one Stop block.
 
 ## Known limitations
 

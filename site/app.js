@@ -162,21 +162,36 @@
     var mp = DATA.marketplace;
     return ["/plugin marketplace add " + mp.repo, "/plugin install " + pluginName + "@" + mp.name];
   }
-  function skillDir(it, scope) { return (scope === "project" ? ".claude/skills/" : "~/.claude/skills/") + it.name; }
+  // A copied skill lives in a folder named after its source folder: agents look for it there.
+  function skillDir(it, scope) { return (scope === "project" ? ".claude/skills/" : "~/.claude/skills/") + (it.dir || it.name); }
+  function installMode(it) {
+    if (it.install_mode) return it.install_mode;
+    return it.needs_plugin ? "plugin-only" : "standalone";
+  }
+  function pluginOnly(it) { return it.type === "hook" || it.type === "plugin" || installMode(it) === "plugin-only"; }
+  function requiredSkills(it) {
+    return (it.requires_skill_ids || []).map(function (id) { return byId[id]; }).filter(Boolean);
+  }
+  function codeList(names) {
+    return names.map(function (n) { return "<code>" + esc(n) + "</code>"; }).join(", ");
+  }
   function agentDir(scope) { return scope === "project" ? ".claude/agents" : "~/.claude/agents"; }
 
-  function fileLoop(dest, base, files) {
+  // Download every file, keeping subfolders. With execScripts, files under scripts/ get chmod +x.
+  function fileLoop(dest, base, files, execScripts) {
     var list = files.map(function (f) { return "  " + f + " \\"; });
     list[list.length - 1] = list[list.length - 1].replace(/ \\$/, "");
-    return [
+    var lines = [
       "d=" + dest,
       "base=" + base,
       "for f in \\",
       list.join("\n"),
       "do",
-      '  mkdir -p "$d/$(dirname "$f")" && curl -fsSL "$base/$f" -o "$d/$f"',
-      "done"
-    ].join("\n");
+      '  mkdir -p "$d/$(dirname "$f")" && curl -fsSL "$base/$f" -o "$d/$f"'
+    ];
+    if (execScripts) lines.push('  case "$f" in scripts/*) chmod +x "$d/$f" ;; esac');
+    lines.push("done");
+    return lines.join("\n");
   }
   function skillCmd(it, scope) {
     var dir = skillDir(it, scope);
@@ -185,11 +200,17 @@
       return "mkdir -p " + dir + " && curl -fsSL " + it.raw_url + " -o " + dir + "/SKILL.md";
     }
     var base = it.raw_url.replace(/\/SKILL\.md$/, "");
-    return fileLoop(dir, base, files.map(function (f) { return f.path; }));
+    return fileLoop(dir, base, files.map(function (f) { return f.path; }), true);
   }
   function agentCmd(it, scope) {
     var dir = agentDir(scope);
-    return "mkdir -p " + dir + " && curl -fsSL " + it.raw_url + " -o " + dir + "/" + it.name + ".md";
+    var one = "mkdir -p " + dir + " && curl -fsSL " + it.raw_url + " -o " + dir + "/" + it.name + ".md";
+    var skills = requiredSkills(it);
+    if (!skills.length) return one;
+    // One script: the agent file, then every skill whose scripts it runs.
+    return ["# The agent", one].concat(skills.map(function (sk) {
+      return "\n# The skill it needs: " + (sk.dir || sk.name) + "\n" + skillCmd(sk, scope);
+    })).join("\n");
   }
   function templateCmd(it) {
     var files = it.files || [];
@@ -204,15 +225,20 @@
   function agentPrompt(it, scope) {
     var where = scope === "project" ? "this project only" : "all my projects";
     var id = it.id;
-    if (it.type === "skill") {
+    if (it.type === "skill" && !pluginOnly(it)) {
       return "Read " + CATALOG_URL + " and find the item with id \"" + id + "\". Install that skill for " + where +
         ": download every file in its \"files\" list from its raw_url into " + skillDir(it, scope) +
-        "/ keeping the folder layout. Then read the SKILL.md and tell me in two sentences when you will use it." +
-        (it.needs_plugin ? " It calls scripts from the " + it.plugin + " plugin, so if they are missing, tell me to install the plugin instead." : "");
+        "/ keeping the folder layout, and make the files under scripts/ executable. Then read the SKILL.md and tell me in two sentences when you will use it.";
     }
-    if (it.type === "agent") {
+    if (it.type === "agent" && !pluginOnly(it)) {
+      var skills = requiredSkills(it);
       return "Read " + CATALOG_URL + " and find the item with id \"" + id + "\". Install that subagent for " + where +
-        ": download its raw_url to " + agentDir(scope) + "/" + it.name + ".md. Then tell me in two sentences what it does and when you will hand work to it.";
+        ": download its raw_url to " + agentDir(scope) + "/" + it.name + ".md." +
+        (skills.length ? " It runs scripts from " + (skills.length > 1 ? "the skills " : "the skill ") +
+          skills.map(function (sk) { return "\"" + sk.id + "\""; }).join(" and ") +
+          ", so install " + (skills.length > 1 ? "each one" : "it") + " too: download every file in its \"files\" list into " +
+          (scope === "project" ? ".claude/skills/" : "~/.claude/skills/") + "<its dir>/ keeping the folder layout, and make the files under scripts/ executable." : "") +
+        " Then tell me in two sentences what it does and when you will hand work to it.";
     }
     if (it.type === "template") {
       return "Read " + CATALOG_URL + " and find the item with id \"" + id + "\". Copy that template's files into this project where they belong, " +
@@ -491,21 +517,37 @@
         cmdBlock(pc[0], "Step 1: add the marketplace (once)") + cmdBlock(pc[1], "Step 2: install the plugin")
     };
     var tabs = [];
-    if (it.type === "skill") {
+    if ((it.type === "skill" || it.type === "agent") && pluginOnly(it)) {
+      pluginTab.label = "Install";
+      pluginTab.html = '<div class="notice notice-info plugin-only"><p><strong>Plugin only.</strong> ' +
+        inlineCode(it.plugin_only_reason || "It needs files that only the plugin installs.") +
+        " A copy of this one " + (it.type === "skill" ? "folder" : "file") + " would not work on its own, so install the <strong>" +
+        esc(it.plugin) + "</strong> plugin.</p></div>" + pluginTab.html;
+      tabs.push(pluginTab);
+    } else if (it.type === "skill") {
+      var n = (it.files || []).length;
       tabs.push({
         id: "single", label: "Just this skill",
-        html: "<p>No plugin system needed. This copies the skill's files from GitHub" +
-          ((it.files || []).length > 1 ? " (" + it.files.length + " files)" : "") + ".</p>" + scopeToggle("scope-skill") +
-          '<div data-cmd="skill"></div>' +
-          (it.needs_plugin ? '<div class="notice notice-info"><p>This skill runs scripts that ship with the <strong>' + esc(it.plugin) +
-            "</strong> plugin (it refers to <code>${CLAUDE_PLUGIN_ROOT}</code>). A copy of the skill gives you the instructions, not the scripts. Install the whole plugin for the full thing.</p></div>" : "")
+        html: "<p>No plugin system needed. The skill is self-contained: this copies " +
+          (n > 1 ? "all " + n + " of its files" : "its file") + " from GitHub into one folder" +
+          (n > 1 ? ", keeping the subfolders and making its scripts executable" : "") + ". A copy does not update; reinstall to update it.</p>" +
+          scopeToggle("scope-skill") + '<div data-cmd="skill"></div>'
       });
       tabs.push(pluginTab);
     } else if (it.type === "agent") {
+      var skills = requiredSkills(it);
+      var names = skills.length ? skills.map(function (sk) { return sk.dir || sk.name; }) : (it.requires_skills || []);
+      var needs = installMode(it) === "needs-skill";
       tabs.push({
         id: "single", label: "Just this agent",
-        html: "<p>No plugin system needed. A subagent is one Markdown file.</p>" + scopeToggle("scope-agent") + '<div data-cmd="agent"></div>' +
-          (it.needs_plugin ? '<div class="notice notice-info"><p>This agent calls scripts from the <strong>' + esc(it.plugin) + "</strong> plugin. Install the whole plugin for the full thing.</p></div>" : "")
+        html: (needs ?
+          "<p>No plugin system needed, but this agent needs " + (names.length > 1 ? "the skills " : "the skill ") + codeList(names) +
+            ". The agent is one Markdown file that runs scripts living in " + (names.length > 1 ? "those skills" : "that skill") +
+            ", and it looks for " + (names.length > 1 ? "them" : "it") + " in <code>.claude/skills/</code> or <code>~/.claude/skills/</code>. This script installs the agent and " +
+            (names.length > 1 ? "each skill" : "the skill") + " together.</p>" :
+          "<p>No plugin system needed. A subagent is one Markdown file.</p>") +
+          scopeToggle("scope-agent") + '<div data-cmd="agent"></div>' +
+          (needs && skills.length < (it.requires_skills || []).length ? '<div class="notice notice-info"><p>One of the skills it needs is not in the catalog. Install the whole <strong>' + esc(it.plugin) + "</strong> plugin instead.</p></div>" : "")
       });
       tabs.push(pluginTab);
     } else if (it.type === "hook") {
@@ -528,7 +570,7 @@
         tabs.push({ id: "source", label: "Source", html: '<p>This plugin lives in its own repository. Read its README before you install it.</p><p><a href="' + esc(it.source_url) + '" rel="noopener">' + esc(it.external_repo || it.source_url) + "</a></p>" });
       }
     }
-    var needsScope = it.type === "skill" || it.type === "agent";
+    var needsScope = (it.type === "skill" || it.type === "agent") && !pluginOnly(it);
     tabs.push({
       id: "agent", label: "Ask your agent",
       html: "<p>Paste this into Claude Code and let it do the install.</p>" + (needsScope ? scopeToggle("scope-prompt") : "") +
@@ -545,7 +587,7 @@
       else if (kind === "prompt") holder.innerHTML = cmdBlock(agentPrompt(it, scope), "Prompt");
     }
     paint("skill", "user"); paint("agent", "user");
-    if (it.type === "skill" || it.type === "agent") paint("prompt", "user");
+    if ((it.type === "skill" || it.type === "agent") && !pluginOnly(it)) paint("prompt", "user");
     var root = app.querySelector(".detail");
     root.addEventListener("change", function (ev) {
       var r = ev.target;
@@ -570,6 +612,13 @@
       facts.push(["SDLC stage", stLinks.join(", ") || esc(stageText(it))]);
     }
     facts.push(["Maturity", esc(MAT_LABEL[it.maturity]) + (it.maturity_note && it.maturity_note.toLowerCase() !== it.maturity ? ' <span class="muted">(' + inlineCode(it.maturity_note.replace(/\*\*/g, "")) + ")</span>" : "")]);
+    if (it.type === "skill" || it.type === "agent" || it.type === "hook") {
+      var mode = installMode(it);
+      var req = requiredSkills(it);
+      facts.push(["Install as", pluginOnly(it) ? "Plugin only" : mode === "needs-skill" ?
+        "One file plus " + (req.length ? req.map(function (sk) { return '<a href="' + itemHref(sk) + '">' + esc(sk.dir || sk.name) + "</a>"; }).join(", ") : codeList(it.requires_skills || [])) :
+        "Plugin, or this " + (it.type === "skill" ? "folder" : "file") + " on its own"]);
+    }
     if (it.tools && it.tools.length) facts.push(["Tools", it.tools.map(function (t) { return "<code>" + esc(t) + "</code>"; }).join(" ")]);
     if (it.model) facts.push(["Model", "<code>" + esc(it.model) + "</code>"]);
     if (it.triggers && it.triggers.length) {
@@ -689,7 +738,8 @@
       "</ol>" +
       '<h2 style="margin-top:28px">How this site reads your files</h2>' +
       "<p>The site has no database. A small script reads the repository and writes <a href=\"catalog.json\">catalog.json</a>, and these pages render that file. It reads:</p>" +
-      "<ul><li><strong>Skills</strong> from <code>skills/*/SKILL.md</code>, with every sibling file listed for the single-skill install.</li>" +
+      "<ul><li><strong>Skills</strong> from <code>skills/*/SKILL.md</code>, with every file in the folder listed for the single-skill install. A skill must be self-contained: it points at its own files as <code>${CLAUDE_SKILL_DIR}/...</code>.</li>" +
+      "<li><strong>Install mode</strong> from two lines right under the title: <code>Install: plugin only. &lt;reason&gt;.</code> for an item that needs the plugin, and <code>Requires skill: &lt;name&gt;</code> for an agent that runs a skill's scripts.</li>" +
       "<li><strong>Agents</strong> from <code>agents/*.md</code>, including the <code>tools</code> line.</li>" +
       "<li><strong>Hooks</strong> from <code>hooks/hooks.json</code> and the header comment of each script. A <code>FOO=0</code> switch in your README or script header shows up as the way to turn it off.</li>" +
       "<li><strong>Templates</strong> from <code>templates/</code>, one card per file or folder.</li>" +

@@ -12,14 +12,14 @@ Eight stages, in order. Each one produces a file and ends at a gate. **Never ski
 Run the stage detector from the project root. It reads the artifacts and reports the first stage whose exit check fails:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdlc_stage.py" .
+python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .
 ```
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdlc_stage.py" . --json
+python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" . --json
 ```
 
-If `${CLAUDE_PLUGIN_ROOT}` is empty in the shell, the plugin is installed at `$HOME/.claude/plugins/cache/ai-foundry/foundry-sdlc/<version>/`. Every script in this plugin can be run from there. A project scaffolded by `new-project` also has its own copy of `tools/gen_stories.py`.
+The detector ships inside this skill (`scripts/sdlc_stage.py`, with its helper `scripts/gen_stories.py`), so it works whether the skill came with the plugin or was copied on its own. A project scaffolded by `new-project` also has its own copy of `tools/gen_stories.py`.
 
 It looks for the artifact set in `.`, then `product/`, then `docs/product/`. With this plugin enabled, a SessionStart hook prints the same verdict in two lines whenever the project has a `PRD.md` or `REQUIREMENTS.md`.
 
@@ -48,7 +48,7 @@ Stage 8 loops back. A bug becomes a story in the PRD (stage 2), a task (stage 3)
 3. **Verbatim before paraphrase.** Requests go into REQUIREMENTS.md in the requester's words, and decisions go into DECISIONS.md the same way. Agents propose. Humans decide.
 4. **Reuse before build.** Fill the "Already exists" audit before the PRD. Check it again before each lane starts.
 5. **Independent judges.** The agent that wrote the PRD does not critique it, and the agent that built a story does not verify it. Use `prd-critic` and `story-verifier`. Each runs in a fresh context and never sees the builder's claims.
-6. **Effort and review scale with blast radius**, not habit. See the 4-tier table in `docs/CLAUDE-md-snippet.md`, and paste that snippet into the project's CLAUDE.md.
+6. **Effort and review scale with blast radius**, not habit. See the 4-tier table in `${CLAUDE_SKILL_DIR}/references/CLAUDE-md-snippet.md`, and paste that snippet into the project's CLAUDE.md.
 7. **Status words are exact.** NOT_BUILT, BUILT (code exists, not verified), PARTIAL (deployed, some criteria fail), LIVE (deployed and every criterion verified), PARKED. "Done" means LIVE.
 
 ## Which companion plugin does what
@@ -64,7 +64,7 @@ Stage 8 loops back. A bug becomes a story in the PRD (stage 2), a task (stage 3)
 
 ## Example: a fresh session on an existing project
 
-1. Run `sdlc_stage.py .`. Suppose it prints `Current stage: 3 Workplan` and the check says `no task table`.
+1. Run `python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .`. Suppose it prints `Current stage: 3 Workplan` and the check says `no task table`.
 2. Load the `write-workplan` skill. Read PRD.md and stories.json, then write the table.
-3. Run `sdlc_stage.py .` again. When it says stage 4, load `parallel-lanes`.
+3. Run `python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .` again. When it says stage 4, load `parallel-lanes`.
 4. Tell the human one line: the stage you finished, the gate that passed, and what is next.

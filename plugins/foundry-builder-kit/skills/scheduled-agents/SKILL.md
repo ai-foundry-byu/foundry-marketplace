@@ -7,11 +7,11 @@ description: Run Claude Code as an unattended job on a schedule (cron, macOS lau
 
 A scheduled agent fails in two ways: loudly (it errors) and silently (it stops running, or runs and does nothing, and every dashboard stays green). This skill prevents both.
 
-Bundled tools (Python 3 stdlib, copy them into your project's `scripts/` or `$HOME/bin`):
+Bundled tools (Python 3 stdlib). Copy both into your project so the schedule does not depend on where the skill is installed (`run_headless.py` imports `deadman.py` from its own folder): `mkdir -p scripts && cp "${CLAUDE_SKILL_DIR}/scripts/run_headless.py" "${CLAUDE_SKILL_DIR}/scripts/deadman.py" scripts/`.
 
-- `${CLAUDE_PLUGIN_ROOT}/scripts/run_headless.py`: runs one `claude -p` job with a lock, a hard timeout, a saved transcript, and a heartbeat written only on real success.
-- `${CLAUDE_PLUGIN_ROOT}/scripts/deadman.py`: `beat` writes a heartbeat; `check` alerts when the last success is too old.
-- Templates in `${CLAUDE_PLUGIN_ROOT}/skills/scheduled-agents/templates/`: `crontab.txt`, `launchd.plist`, `task-scheduler.ps1`, `github-actions.yml`.
+- `${CLAUDE_SKILL_DIR}/scripts/run_headless.py`: runs one `claude -p` job with a lock, a hard timeout, a saved transcript, and a heartbeat written only on real success.
+- `${CLAUDE_SKILL_DIR}/scripts/deadman.py`: `beat` writes a heartbeat; `check` alerts when the last success is too old.
+- Templates in `${CLAUDE_SKILL_DIR}/templates/`: `crontab.txt`, `launchd.plist`, `task-scheduler.ps1`, `github-actions.yml`.
 
 ## Step 1: pick the primitive
 
@@ -94,10 +94,10 @@ Exit codes: 0 ok, 1 failed, 4 already running, 5 timed out, 6 claude not found.
 
 All templates use absolute paths. Schedulers run with a tiny `PATH` and no login shell, which is the most common reason a job "works when I run it" and fails on schedule.
 
-- cron: `templates/crontab.txt`. `cd` into the project before anything relative; in POSIX `sh` a failed `. ./file` aborts the whole line.
-- launchd: `templates/launchd.plist`. `plutil -lint` it first; an unescaped `&` makes launchd ignore the file without an error. After changing `EnvironmentVariables`, `bootout` then `bootstrap`; `kickstart` does not re-read them.
-- Windows: `templates/task-scheduler.ps1`. `-MultipleInstances IgnoreNew` is the overlap guard.
-- GitHub Actions: `templates/github-actions.yml`. Times are UTC, runs can start late, and on public repos scheduled workflows are disabled after 60 days without activity.
+- cron: `${CLAUDE_SKILL_DIR}/templates/crontab.txt`. `cd` into the project before anything relative; in POSIX `sh` a failed `. ./file` aborts the whole line.
+- launchd: `${CLAUDE_SKILL_DIR}/templates/launchd.plist`. `plutil -lint` it first; an unescaped `&` makes launchd ignore the file without an error. After changing `EnvironmentVariables`, `bootout` then `bootstrap`; `kickstart` does not re-read them.
+- Windows: `${CLAUDE_SKILL_DIR}/templates/task-scheduler.ps1`. `-MultipleInstances IgnoreNew` is the overlap guard.
+- GitHub Actions: `${CLAUDE_SKILL_DIR}/templates/github-actions.yml`. Times are UTC, runs can start late, and on public repos scheduled workflows are disabled after 60 days without activity.
 
 Never schedule the same job in two systems (for example cron and launchd). It double-runs and the lock hides it.
 

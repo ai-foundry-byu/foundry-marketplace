@@ -12,7 +12,7 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SCRIPTS = os.path.join(os.path.dirname(HERE), "scripts")
+SCRIPTS = os.path.join(os.path.dirname(HERE), "skills", "secrets-hygiene", "scripts")
 sys.path.insert(0, SCRIPTS)
 
 import commit_secret_guard  # noqa: E402

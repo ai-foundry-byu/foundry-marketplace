@@ -79,7 +79,7 @@ class TestBrowser(unittest.TestCase):
         self.td.cleanup()
 
     def run_script(self, name, *args):
-        p = subprocess.run([sys.executable, str(_paths.SCRIPTS / name), *args], cwd=self.d,
+        p = subprocess.run([sys.executable, str(_paths.script(name)), *args], cwd=self.d,
                            capture_output=True, text=True, timeout=240)
         return p.returncode, p.stdout + p.stderr
 

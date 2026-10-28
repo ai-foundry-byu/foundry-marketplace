@@ -34,9 +34,9 @@ claude plugin install foundry-evals@ai-foundry
 | `run-eval` | skill | run, read the report in the right order, compare with the last run, report only measured numbers | test / verify | method proven; tooling new |
 | `hillclimb` | skill | one change per round, keep only changes above the noise band, train/val/test discipline, cost staircase | improve / optimize | method proven; tooling new |
 | `eval-auditor` | agent | audits a suite for ambiguous cases, cheatable or over-strict graders, missing hold cases, bad judge rubrics, saturated or noisy runs | review | new |
-| `scripts/evalkit.py` (also `bin/evalkit`) | script | the runner: init, run, check, compare, history | test / CI gate | new (standalone port) |
-| `scripts/judge_claude.py` | script | binary LLM judge through `claude -p`: critique, then a single VERDICT line | test | new |
-| `templates/example-suite` | template | `refund-triage`, a 9-case suite with an offline target, a model target, controls and a deliberate bug to find | learning | new |
+| `skills/new-eval/scripts/evalkit.py` (also `bin/evalkit`) | script | the runner: init, run, check, compare, history; vendored into `run-eval` and `hillclimb` | test / CI gate | new (standalone port) |
+| `skills/new-eval/scripts/judge_claude.py` | script | binary LLM judge through `claude -p`: critique, then a single VERDICT line | test | new |
+| `skills/new-eval/templates/example-suite` | template | `refund-triage`, a 9-case suite with an offline target, a model target, controls and a deliberate bug to find | learning | new |
 
 **Maturity, honestly.** "Proven" here means the METHOD (code graders first, binary judges,
 negative controls, errors never scored as zeros, pass^k, same cases or no comparison, one
@@ -55,8 +55,25 @@ evalkit run . --no-judge --gate
 ```
 
 If `evalkit` is not on PATH (the plugin's `bin/` is added only while the plugin is enabled),
-use `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/evalkit.py"` inside Claude Code, or copy
-`scripts/evalkit.py` into your repo and run `python3 evalkit.py`.
+run `python3 skills/new-eval/scripts/evalkit.py` from the plugin folder, or copy that one file
+into your repo and run `python3 evalkit.py`.
+
+## Install one item on its own
+
+Every skill is self-contained: copy its folder to `.claude/skills/<name>/` or
+`~/.claude/skills/<name>/` and it runs its own `scripts/evalkit.py` through
+`${CLAUDE_SKILL_DIR}`.
+
+| item | on its own | notes |
+|---|---|---|
+| `new-eval` | standalone | carries the canonical `evalkit.py`, `judge_claude.py` and the example suite, so `init` works |
+| `run-eval` | standalone | carries a vendored `evalkit.py` (run, check, compare, history); `init` needs `new-eval` |
+| `hillclimb` | standalone | carries a vendored `evalkit.py`; scaffold with `new-eval` first |
+| `eval-auditor` | needs skill `run-eval` | copy `agents/eval-auditor.md` to `.claude/agents/` and `run-eval` to `.claude/skills/run-eval/`; the agent finds it and says so if it is missing |
+| `bin/evalkit` | plugin only | the PATH wrapper exists only while the plugin is enabled |
+
+Vendored copies are listed in `vendor.json` (copy path: canonical path) and must stay
+byte-identical; `tests/test_evalkit.py` checks it. Edit the canonical file, then copy it over.
 
 The first run scores 77.8% and fails the 90% gate: two final-sale cases sit at 0% because the
 example target has a deliberate bug. Ask Claude "use the hillclimb skill on this suite" to
@@ -124,14 +141,15 @@ CI example (GitHub Actions step):
 ## Tests
 
 ```bash
-cd "${CLAUDE_PLUGIN_ROOT}"
-python3 -m unittest discover -s scripts/tests -v
+cd plugins/foundry-evals
+python3 -m unittest discover -s tests -v
 ```
 
-24 offline tests: every grader, pass@k and pass^k math, error handling (crash, junk stdout,
+26 offline tests: every grader, pass@k and pass^k math, error handling (crash, junk stdout,
 timeout), judge wiring and cost sums, the example suite end to end (baseline fails the gate,
 the one-line fix passes, comparison names the two fixed cases), case-set change detection,
-control and empty-output self-tests, CLI exit codes.
+control and empty-output self-tests, CLI exit codes, vendored copies byte-identical to
+canonical, and a clear error when `init` runs without the example suite.
 
 ## Known limitations
 

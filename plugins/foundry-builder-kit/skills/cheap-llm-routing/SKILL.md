@@ -43,7 +43,7 @@ Every provider above supports function calling. Force the model to call your one
 - OpenAI-compatible (Groq, Gemini, OpenRouter, Ollama): `tools=[{"type":"function","function":{"name":..., "parameters": schema}}]` and `tool_choice={"type":"function","function":{"name":...}}`. The result arrives in `choices[0].message.tool_calls[0].function.arguments` as a **JSON string**. Parse it inside a try block.
 - Anthropic: `tools=[{"name":..., "input_schema": schema}]`, `tool_choice={"type":"tool","name":...}`. The result is `content[i].input`, already an object.
 
-Write the schema tight: `enum` for categories, `minimum`/`maximum` for scores, `maxLength` on strings, `maxItems` on arrays, `additionalProperties: false`. Example: `${CLAUDE_PLUGIN_ROOT}/skills/cheap-llm-routing/examples/ticket-schema.json`.
+Write the schema tight: `enum` for categories, `minimum`/`maximum` for scores, `maxLength` on strings, `maxItems` on arrays, `additionalProperties: false`. Example: `${CLAUDE_SKILL_DIR}/examples/ticket-schema.json`.
 
 ## Rule 3: validate, then fall through
 
@@ -59,13 +59,13 @@ A variable set to `YOUR_KEY_HERE` is non-empty and useless. Gate on the provider
 
 ## The bundled router (Python stdlib)
 
-`${CLAUDE_PLUGIN_ROOT}/scripts/structured_router.py` implements all five rules. Copy it into your project (it is one file, no dependencies) or call it from the CLI.
+`${CLAUDE_SKILL_DIR}/scripts/structured_router.py` implements all five rules. Copy it into your project (it is one file, no dependencies) or call it from the CLI.
 
 See the route before spending anything:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/structured_router.py" \
-  --schema "${CLAUDE_PLUGIN_ROOT}/skills/cheap-llm-routing/examples/ticket-schema.json" \
+python3 "${CLAUDE_SKILL_DIR}/scripts/structured_router.py" \
+  --schema "${CLAUDE_SKILL_DIR}/examples/ticket-schema.json" \
   --data-class private --plan
 ```
 
@@ -82,10 +82,10 @@ TRY  anthropic        claude-haiku-4-5  (key ok)
 Run it on synthetic input:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/structured_router.py" \
-  --schema "${CLAUDE_PLUGIN_ROOT}/skills/cheap-llm-routing/examples/ticket-schema.json" \
+python3 "${CLAUDE_SKILL_DIR}/scripts/structured_router.py" \
+  --schema "${CLAUDE_SKILL_DIR}/examples/ticket-schema.json" \
   --system "Classify this support ticket." \
-  --input "${CLAUDE_PLUGIN_ROOT}/skills/cheap-llm-routing/examples/ticket.txt" \
+  --input "${CLAUDE_SKILL_DIR}/examples/ticket.txt" \
   --data-class private
 ```
 
@@ -107,7 +107,7 @@ except RouterError as exc:
     raise
 ```
 
-Provider list: edit `DEFAULT_PROVIDERS`, or pass a JSON file (`--providers` or env `STRUCTURED_ROUTER_PROVIDERS`); example in `examples/providers.json`. Model names change; check each provider's model list. Override the defaults with `ROUTER_GROQ_MODEL`, `ROUTER_GEMINI_MODEL`, `ROUTER_OPENROUTER_MODEL`, `ROUTER_ANTHROPIC_MODEL`, `ROUTER_OLLAMA_MODEL`.
+Provider list: edit `DEFAULT_PROVIDERS`, or pass a JSON file (`--providers` or env `STRUCTURED_ROUTER_PROVIDERS`); example in `${CLAUDE_SKILL_DIR}/examples/providers.json`. Model names change; check each provider's model list. Override the defaults with `ROUTER_GROQ_MODEL`, `ROUTER_GEMINI_MODEL`, `ROUTER_OPENROUTER_MODEL`, `ROUTER_ANTHROPIC_MODEL`, `ROUTER_OLLAMA_MODEL`.
 
 ### TypeScript / Next.js shape
 

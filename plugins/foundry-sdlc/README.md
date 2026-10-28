@@ -4,7 +4,7 @@ The deterministic 0-to-1 workflow AI Foundry uses to take software from an idea 
 
 | # | Stage | Artifact | Item in this plugin |
 |---|---|---|---|
-| 0 | Scaffold | the artifact set | `new-project` skill, `scripts/new_project.py` |
+| 0 | Scaffold | the artifact set | `new-project` skill, `skills/new-project/scripts/new_project.py` |
 | 1 | Gather requirements | `REQUIREMENTS.md`, `DECISIONS.md` | `gather-requirements` skill |
 | 2 | PRD + user stories | `PRD.md`, `stories.json` | `write-prd` skill, `scripts/gen_stories.py`, `prd-critic` agent |
 | 3 | Workplan | `WORKPLAN.md` | `write-workplan` skill |
@@ -43,14 +43,30 @@ The companion plugins are installed the same way: `foundry-guardrails`, `foundry
 In your project, ask Claude: "Use foundry-sdlc to start a new project called Study Buddy." Or do it by hand:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/new_project.py" product --name "Study Buddy" --owner "Team 4"
+python3 "$PLUGIN/skills/new-project/scripts/new_project.py" product --name "Study Buddy" --owner "Team 4"
 ```
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/sdlc_stage.py" .
+python3 "$PLUGIN/skills/sdlc/scripts/sdlc_stage.py" .
 ```
 
-(`${CLAUDE_PLUGIN_ROOT}` is the plugin's install directory. If it is empty in your shell, the plugin lives at `$HOME/.claude/plugins/cache/ai-foundry/foundry-sdlc/<version>/`, or use your clone of this repo.) Then paste `docs/CLAUDE-md-snippet.md` into your project's `CLAUDE.md`.
+(`$PLUGIN` is the plugin's install directory, `$HOME/.claude/plugins/cache/ai-foundry/foundry-sdlc/<version>/`, or your clone of this repo at `plugins/foundry-sdlc`.) Then paste `skills/new-project/references/CLAUDE-md-snippet.md` into your project's `CLAUDE.md`.
+
+## Install one item on its own
+
+Every skill in this plugin is self-contained: the scripts, templates and references it runs or copies live inside its own folder and are addressed as `${CLAUDE_SKILL_DIR}/...`. So you can copy one skill folder into `.claude/skills/<name>/` (one project) or `~/.claude/skills/<name>/` (all projects) without the rest of the plugin.
+
+| Item | On its own? | Notes |
+|---|---|---|
+| `sdlc`, `gather-requirements`, `write-prd`, `write-workplan`, `parallel-lanes`, `ship` | standalone | Each carries its own copy of `scripts/sdlc_stage.py` and its helper `scripts/gen_stories.py` |
+| `new-project` | standalone | Carries `scripts/new_project.py`, `scripts/gen_stories.py` (copied into the project's `tools/`), `scripts/sdlc_stage.py`, all of `templates/` and `references/CLAUDE-md-snippet.md` |
+| `bug-to-story` | standalone | Runs only the project's own `tools/gen_stories.py`, so it ships no files |
+| `prd-critic`, `story-verifier` agents | standalone | Copy the `.md` into `.claude/agents/` or `~/.claude/agents/`. Neither runs a plugin script, so neither needs a skill |
+| SessionStart stage hint | plugin only | Hooks need the plugin's `hooks/hooks.json` |
+
+When run on their own, the skills are named `sdlc`, `write-prd` and so on, without the `foundry-sdlc:` prefix.
+
+**Single source of truth.** Files used by several skills have one canonical copy and byte-identical copies in the other skills, listed in `vendor.json` (copy path: canonical path). `scripts/sdlc_stage.py` and `scripts/gen_stories.py` stay at the plugin root because the hook runs them there. The CLAUDE.md snippet's canonical copy is in `new-project`. Edit the canonical file, then re-copy it: `scripts/tests/test_layout.py` fails when a copy drifts.
 
 ## Items
 
@@ -61,7 +77,7 @@ Invoke a skill by asking in plain words, for example "write the PRD", or by name
 | Skill | What it does | Maturity |
 |---|---|---|
 | `sdlc` | The router. Stage map, which artifact and which skill or agent each stage uses, and how to detect the current stage | proven |
-| `new-project` | Scaffolds the artifact set from `templates/`, copies `tools/gen_stories.py`, and sets up the CI check | proven |
+| `new-project` | Scaffolds the artifact set from its `templates/`, copies `tools/gen_stories.py`, and sets up the CI check | proven |
 | `gather-requirements` | Verbatim asks with R-ids and sources, a DECISIONS table, and an "Already exists" audit before the PRD | proven |
 | `write-prd` | The PRD with inline `**US-01. Title.**` stories and observable criteria. Compiles stories.json, runs the prd-critic, and fills "Addressed critiques" | proven |
 | `write-workplan` | Task table (Id, Task, Owner with model, effort and review tier by blast radius, Deps, Status), milestones, "Blocked on human" | proven |
@@ -88,23 +104,25 @@ Use them by asking, for example "Use the prd-critic agent on product/PRD.md", or
 
 | Script | What it does | Maturity |
 |---|---|---|
-| `scripts/gen_stories.py` | Compiles PRD stories into `stories.json`. `--check` exits 1 if the file is stale, a story has no criteria, an id is duplicated, or a status is invalid. Regenerating keeps `status`, `notes`, `evidence` and any meta the PRD does not set | proven (generalized port) |
-| `scripts/new_project.py` | Scaffolds the artifact set. Never overwrites without `--force` | new |
-| `scripts/sdlc_stage.py` | Reports the current stage from the files on disk (`--json` for machines, `--hook` for the SessionStart hook) | new |
+| `scripts/gen_stories.py` (canonical; copied into each skill that runs the detector) | Compiles PRD stories into `stories.json`. `--check` exits 1 if the file is stale, a story has no criteria, an id is duplicated, or a status is invalid. Regenerating keeps `status`, `notes`, `evidence` and any meta the PRD does not set | proven (generalized port) |
+| `skills/new-project/scripts/new_project.py` | Scaffolds the artifact set. Never overwrites without `--force` | new |
+| `scripts/sdlc_stage.py` (canonical; used by the hook, copied into each skill that runs it) | Reports the current stage from the files on disk (`--json` for machines, `--hook` for the SessionStart hook) | new |
 
-### Templates and docs
+### Templates and references
+
+All templates live in `skills/new-project/templates/`, since only the scaffolder uses them.
 
 | File | Purpose | Maturity |
 |---|---|---|
-| `templates/REQUIREMENTS.md` | Sources, verbatim asks (R-01..), "Already exists" audit, constraints, open questions | proven |
-| `templates/DECISIONS.md` | Verbatim human decisions with what each one authorizes, and pending questions with a recommendation | proven |
-| `templates/PRD.md` | Short version, user, metrics, principles, scope, stories, architecture, rollout with "used fully" gates, risks, Appendix A (addressed critiques), Appendix B (push back) | proven |
-| `templates/WORKPLAN.md` | Status block, blast-radius tiers, Next up, milestones, task table, Blocked on human, Parked | proven |
-| `templates/stories.schema.json` | JSON Schema for stories.json (id, title, acceptance[], surfaces[], devices[], status, waits_on[], optional covers/notes/evidence) | proven |
-| `templates/done-journey.yaml` | Journey for the `foundry-qa` done gate: `steps` (goto, click, fill, wait_for), `assertions` (visible, text, url_contains), `screenshot` | proven (format) |
-| `templates/CHANGELOG.md` | One dated heading per ship, one bullet per user-visible change, with evidence | proven |
-| `templates/README.md` | Project README that indexes the artifact set | new |
-| `docs/CLAUDE-md-snippet.md` | Always-on norms to paste into a project CLAUDE.md: root cause first, surgical changes, never "done" without a passing gate, the 4-tier blast-radius table, reuse before build | proven |
+| `skills/new-project/templates/REQUIREMENTS.md` | Sources, verbatim asks (R-01..), "Already exists" audit, constraints, open questions | proven |
+| `skills/new-project/templates/DECISIONS.md` | Verbatim human decisions with what each one authorizes, and pending questions with a recommendation | proven |
+| `skills/new-project/templates/PRD.md` | Short version, user, metrics, principles, scope, stories, architecture, rollout with "used fully" gates, risks, Appendix A (addressed critiques), Appendix B (push back) | proven |
+| `skills/new-project/templates/WORKPLAN.md` | Status block, blast-radius tiers, Next up, milestones, task table, Blocked on human, Parked | proven |
+| `skills/new-project/templates/stories.schema.json` | JSON Schema for stories.json (id, title, acceptance[], surfaces[], devices[], status, waits_on[], optional covers/notes/evidence) | proven |
+| `skills/new-project/templates/done-journey.yaml` | Journey for the `foundry-qa` done gate: `steps` (goto, click, fill, wait_for), `assertions` (visible, text, url_contains), `screenshot` | proven (format) |
+| `skills/new-project/templates/CHANGELOG.md` | One dated heading per ship, one bullet per user-visible change, with evidence | proven |
+| `skills/new-project/templates/README.md` | Project README that indexes the artifact set | new |
+| `skills/new-project/references/CLAUDE-md-snippet.md` (copied into `sdlc`) | Always-on norms to paste into a project CLAUDE.md: root cause first, surgical changes, never "done" without a passing gate, the 4-tier blast-radius table, reuse before build | proven |
 
 **What the maturity labels mean.** "proven" means the item is generalized from a workflow, format or tool that runs in production in our harness today. "proven (pattern)" means the agent's role and rules are what we use in production, rewritten here as a portable agent definition. "new" means it was written for this marketplace and is not yet battle-tested. Please report problems.
 

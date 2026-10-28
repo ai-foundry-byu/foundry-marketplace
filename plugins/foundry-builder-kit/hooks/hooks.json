@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/commit_secret_guard.py\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/skills/secrets-hygiene/scripts/commit_secret_guard.py\"",
             "timeout": 90
           }
         ]

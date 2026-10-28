@@ -28,7 +28,7 @@ claude plugin marketplace add ai-foundry-byu/foundry-marketplace
 claude plugin install foundry-builder-kit@ai-foundry
 ```
 
-Not using plugins? Every skill is a plain `SKILL.md` your agent can read directly, and every script runs on its own with `python3`.
+Not using plugins? See "Install one item on its own" below. Every script runs on its own with `python3`.
 
 ## What is inside
 
@@ -40,15 +40,15 @@ Not using plugins? Every skill is a plain `SKILL.md` your agent can read directl
 | `cheap-llm-routing` | skill | Route schema-pinned extraction or classification to a free or cheap model, with a privacy bar and a paid fallback | build | proven |
 | `scheduled-agents` | skill | Headless `claude -p` on cron, launchd, Task Scheduler or GitHub Actions, with locks, timeouts, success-only heartbeats and a deadman | operate | proven (cron/launchd, deadman); new (Windows, GitHub Actions) |
 | `tmux-agents` | skill | Drive REPLs, dev servers, installers and parallel coding agents through tmux on a private socket | build / test | proven |
-| commit secret guard | hook | Blocks a `git commit` the agent runs when the staged change contains a secret (gitleaks if installed, stdlib scanner otherwise) | build | new |
-| `scan_secrets.py` | script | Stdlib secret scanner: `--staged`, `--worktree`, `--all`, or paths; redacted output | build | new |
-| `probe_key.py` | script | Asks a provider whether a key still authenticates: LIVE, DEAD or ERR (ERR is never an all-clear) | operate | new |
-| `structured_router.py` | script | Forced-tool-call structured extraction across a privacy-aware provider chain with schema validation | build | new |
-| `run_headless.py` | script | Runs one `claude -p` job with a lock, timeout, saved transcript and success-only heartbeat | operate | new |
-| `deadman.py` | script | Writes heartbeats and alerts (webhook or command) when the last success is too old; reports failed alert delivery | operate | new |
-| `tmux_agent.py` | script | start, send, keys, read, wait, run, ls, kill on a private tmux socket | build / test | new |
-| secrets templates | template | `.gitignore` block, `.env.example`, `.pre-commit-config.yaml`, plain git hook, GitHub Actions secret scan | build | new |
-| scheduling templates | template | crontab lines, LaunchAgent plist, Task Scheduler PowerShell, GitHub Actions workflow | operate | new |
+| commit secret guard | hook | `skills/secrets-hygiene/scripts/commit_secret_guard.py`, wired in `hooks/hooks.json`. Blocks a `git commit` the agent runs when the staged change contains a secret (gitleaks if installed, stdlib scanner otherwise) | build | new |
+| `skills/secrets-hygiene/scripts/scan_secrets.py` | script | Stdlib secret scanner: `--staged`, `--worktree`, `--all`, or paths; redacted output | build | new |
+| `skills/secrets-hygiene/scripts/probe_key.py` | script | Asks a provider whether a key still authenticates: LIVE, DEAD or ERR (ERR is never an all-clear) | operate | new |
+| `skills/cheap-llm-routing/scripts/structured_router.py` | script | Forced-tool-call structured extraction across a privacy-aware provider chain with schema validation | build | new |
+| `skills/scheduled-agents/scripts/run_headless.py` | script | Runs one `claude -p` job with a lock, timeout, saved transcript and success-only heartbeat | operate | new |
+| `skills/scheduled-agents/scripts/deadman.py` | script | Writes heartbeats and alerts (webhook or command) when the last success is too old; reports failed alert delivery | operate | new |
+| `skills/tmux-agents/scripts/tmux_agent.py` | script | start, send, keys, read, wait, run, ls, kill on a private tmux socket | build / test | new |
+| `skills/secrets-hygiene/templates/` | template | `.gitignore` block, `.env.example`, `.pre-commit-config.yaml`, plain git hook, GitHub Actions secret scan | build | new |
+| `skills/scheduled-agents/templates/` | template | crontab lines, LaunchAgent plist, Task Scheduler PowerShell, GitHub Actions workflow | operate | new |
 
 **Maturity labels.** "proven" means the skill is generalized from a tool or runbook that runs in production in our own harness today. "new" means it was written for this marketplace from documentation and best practice and has unit tests, but has not yet been battle-tested in production. Where a skill mixes both, the table says which part is which.
 
@@ -74,7 +74,7 @@ Ask: "is this ready for launch?" or run `/foundry-builder-kit:scale-10k` (or `sc
 Ask: "set up secret scanning" or "I committed my OpenAI key". Prevention takes about 10 minutes: gitignore block, `.env.example`, gitleaks pre-commit hook, CI scan. For a leak, the order is: probe the key, map every place it is used, mint a new one, swap all consumers, revoke the old one, probe again until it reports DEAD, and only then scrub git history.
 
 ```bash
-LEAKED=sk-... python3 "${CLAUDE_PLUGIN_ROOT}/scripts/probe_key.py" openai:LEAKED
+LEAKED=sk-... python3 "${CLAUDE_PLUGIN_ROOT}/skills/secrets-hygiene/scripts/probe_key.py" openai:LEAKED
 ```
 
 ### Commit secret guard (hook)
@@ -86,7 +86,7 @@ Enabled automatically with the plugin. It looks at every Bash command, ignores e
 Ask: "make this classification call free" or "use Groq for this, with a fallback". Mark each call `private` (real user data) or `public`. Private data never goes to a provider whose terms allow training on inputs.
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/structured_router.py" --schema schema.json --data-class private --plan
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/cheap-llm-routing/scripts/structured_router.py" --schema schema.json --data-class private --plan
 ```
 
 ### scheduled-agents
@@ -96,6 +96,19 @@ Ask: "run this agent every morning" or "why did my cron job stop". The agent wri
 ### tmux-agents
 
 Ask: "keep the dev server running while you test" or "drive this REPL". The agent uses `tmux_agent.py` to start a named session, wait for a prompt, send input, read output, and clean up.
+
+## Install one item on its own
+
+Every skill is self-contained: its scripts, templates and examples live inside its own folder and are referenced through `${CLAUDE_SKILL_DIR}`, so you can copy one folder without the rest of the plugin.
+
+```bash
+cp -R skills/secrets-hygiene ~/.claude/skills/        # personal, every project
+cp -R skills/secrets-hygiene .claude/skills/          # this project only
+```
+
+- Standalone: `add-auth`, `scale-10k`, `cheap-llm-routing`, `scheduled-agents`, `tmux-agents`, `secrets-hygiene`. Each works when copied on its own.
+- Needs a skill: no agents ship in this plugin, so nothing depends on another item.
+- Plugin only: the commit secret guard hook. Copying `secrets-hygiene` brings the scanner and the guard script, but nothing runs the guard on agent commits unless the plugin is installed. Without the plugin, install the git pre-commit hook from `secrets-hygiene` instead.
 
 ## Requirements
 

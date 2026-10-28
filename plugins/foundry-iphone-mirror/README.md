@@ -27,6 +27,16 @@ surface is the same, and it is covered by protocol tests, but it has not driven 
 phone in our harness yet. The port also changed the engine in small ways (listed under
 "Changes from the source" below) that are unit-tested but not yet re-run on a device.
 
+## Install one item on its own
+
+Nothing in this plugin works when copied on its own. Install the whole plugin.
+
+| Item | Standalone? | Why |
+|---|---|---|
+| `iphone-mirror` skill | plugin only | needs the `iphone-mirror` CLI on PATH (bin/), the `iphone` MCP server, and the helper app compiled from engine/ |
+| `iphone-driver` agent | plugin only | calls the same CLI and helper app |
+| `iphone` MCP server | plugin only | registered by the plugin's `.mcp.json` via `${CLAUDE_PLUGIN_ROOT}` |
+
 ## Requirements
 
 - macOS 15 (Sequoia) or newer, with the **iPhone Mirroring** app. Not offered in every

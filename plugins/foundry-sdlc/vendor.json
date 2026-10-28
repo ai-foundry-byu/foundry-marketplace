@@ -1,0 +1,17 @@
+{
+  "skills/sdlc/scripts/sdlc_stage.py": "scripts/sdlc_stage.py",
+  "skills/sdlc/scripts/gen_stories.py": "scripts/gen_stories.py",
+  "skills/gather-requirements/scripts/sdlc_stage.py": "scripts/sdlc_stage.py",
+  "skills/gather-requirements/scripts/gen_stories.py": "scripts/gen_stories.py",
+  "skills/new-project/scripts/sdlc_stage.py": "scripts/sdlc_stage.py",
+  "skills/new-project/scripts/gen_stories.py": "scripts/gen_stories.py",
+  "skills/write-prd/scripts/sdlc_stage.py": "scripts/sdlc_stage.py",
+  "skills/write-prd/scripts/gen_stories.py": "scripts/gen_stories.py",
+  "skills/write-workplan/scripts/sdlc_stage.py": "scripts/sdlc_stage.py",
+  "skills/write-workplan/scripts/gen_stories.py": "scripts/gen_stories.py",
+  "skills/parallel-lanes/scripts/sdlc_stage.py": "scripts/sdlc_stage.py",
+  "skills/parallel-lanes/scripts/gen_stories.py": "scripts/gen_stories.py",
+  "skills/ship/scripts/sdlc_stage.py": "scripts/sdlc_stage.py",
+  "skills/ship/scripts/gen_stories.py": "scripts/gen_stories.py",
+  "skills/sdlc/references/CLAUDE-md-snippet.md": "skills/new-project/references/CLAUDE-md-snippet.md"
+}

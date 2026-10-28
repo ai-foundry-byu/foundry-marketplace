@@ -80,7 +80,24 @@ Committing `enabledPlugins` does not download anything. Claude Code prompts each
 claude plugin install foundry-sdlc@ai-foundry --scope project
 ```
 
-Also paste [the CLAUDE.md snippet](plugins/foundry-sdlc/docs/CLAUDE-md-snippet.md) into your project's `CLAUDE.md`. Plugins load skills on demand; the always-on norms (root cause first, never say done without a passing gate, review by blast radius) have to live in CLAUDE.md.
+Also paste [the CLAUDE.md snippet](plugins/foundry-sdlc/skills/new-project/references/CLAUDE-md-snippet.md) into your project's `CLAUDE.md`. Plugins load skills on demand; the always-on norms (root cause first, never say done without a passing gate, review by blast radius) have to live in CLAUDE.md.
+
+## Plugin or single item?
+
+Every skill and most agents work two ways. Pick per item.
+
+| | Plugin | Single skill | Single agent | Hook |
+|---|---|---|---|---|
+| What you install | The whole plugin, with `/plugin install` | One folder, copied to `~/.claude/skills/<name>/` or `.claude/skills/<name>/` | One `.md` file, copied to `~/.claude/agents/` or `.claude/agents/` | Plugin only |
+| Updates | From the marketplace, all items together | None. Copy it again to update | None | With the plugin |
+| Names | Namespaced, for example `foundry-qa:done-gate` | Plain, for example `done-gate` | Plain | n/a |
+| Good for | Getting everything, staying current, hooks and MCP servers | Trying one thing, or forking it to make it yours | One reviewer or tester | Rules that must hold every time |
+
+- A **skill** is self-contained: its scripts, templates and references live in its own folder, so the copy runs exactly like the plugin version.
+- An **agent** that runs scripts says `Requires skill: <name>` under its title. Install that skill too; the agent finds it in either skills folder. The site's "Just this agent" tab gives one script that installs both.
+- A few items say `Install: plugin only.` with the reason (they need the plugin's hooks, MCP server or a compiled helper). **Hooks** always need the plugin, because `hooks.json` and the scripts it runs install together.
+
+Each plugin README lists which of its items are standalone, which need a skill, and which are plugin only. The [site](https://ai-foundry-byu.github.io/foundry-marketplace/) shows the install for each item.
 
 ## Let your agent do it
 
@@ -265,7 +282,7 @@ A harness is everything around the model that makes it behave the way your team 
 
 | Mechanism | What it is | Use it when | Example here |
 |---|---|---|---|
-| **CLAUDE.md** | Text loaded into every session | A norm must apply on every turn | [CLAUDE-md-snippet.md](plugins/foundry-sdlc/docs/CLAUDE-md-snippet.md): root cause first, never say done without a gate |
+| **CLAUDE.md** | Text loaded into every session | A norm must apply on every turn | [CLAUDE-md-snippet.md](plugins/foundry-sdlc/skills/new-project/references/CLAUDE-md-snippet.md): root cause first, never say done without a gate |
 | **Skills** | Procedures the agent loads on demand, by description | A multi-step method is needed sometimes, not always | `write-prd`, `done-gate`, `regression-check` |
 | **Agents** | A subagent with its own fresh context and tool list | You need independent judgment that has not seen the builder's reasoning | `prd-critic`, `story-verifier`, `persona-tester` |
 | **Hooks** | Scripts the harness runs on events (before a tool call, at stop) | A rule is non-negotiable. The harness enforces it, not the model's memory | `secret-guard`, `verify-before-done`, `worktree-guard` |

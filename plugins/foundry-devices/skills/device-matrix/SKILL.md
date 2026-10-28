@@ -11,7 +11,7 @@ Maturity: **new**. The planner and report script (`scripts/device_matrix.py`) ar
 
 ## 1. Give every story a devices[] field
 
-Stories live in a JSON file (a list, or `{"stories": [...]}`), or a folder of `*.json` files. Copy `${CLAUDE_PLUGIN_ROOT}/templates/stories.example.json` to start.
+Stories live in a JSON file (a list, or `{"stories": [...]}`), or a folder of `*.json` files. Copy `${CLAUDE_SKILL_DIR}/templates/stories.example.json` to start.
 
 ```json
 {"id": "S1", "title": "Returning user signs in",
@@ -42,7 +42,7 @@ How to choose devices for a story (write the reason into the story if it is not 
 ## 2. Plan the lanes
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/device_matrix.py" plan stories.json
+python3 "${CLAUDE_SKILL_DIR}/scripts/device_matrix.py" plan stories.json
 ```
 
 Output: one row per lane with its agent, whether it can run **on this machine**, its stories and profiles. It also lists unknown device names (typos like `andriod`) and stories with no devices. Fix unknown names before running anything.
@@ -54,7 +54,7 @@ A lane that cannot run here (for example `windows` on a Mac) is not skipped sile
 Create the result skeletons, one `results.json` per lane, all stories `NOT_RUN`:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/device_matrix.py" init stories.json --qa .qa
+python3 "${CLAUDE_SKILL_DIR}/scripts/device_matrix.py" init stories.json --qa .qa
 ```
 
 Then start one subagent per runnable lane **in the same turn** so they run concurrently. Give each one the same contract:
@@ -71,7 +71,7 @@ Parallelism limits, so lanes do not fight:
 ## 4. Merge into one matrix
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/device_matrix.py" report stories.json --qa .qa
+python3 "${CLAUDE_SKILL_DIR}/scripts/device_matrix.py" report stories.json --qa .qa
 ```
 
 It reads every lane's `results.json`, writes `.qa/matrix.md`, prints it, and exits `0` PASS, `1` FAIL, `3` INCONCLUSIVE (use the exit code in CI). Verdict rules:
@@ -81,14 +81,14 @@ It reads every lane's `results.json`, writes `.qa/matrix.md`, prints it, and exi
 - Only when every story passed on every device it lists: **PASS**.
 - A status that is not one of PASS, FAIL, INCONCLUSIVE, NOT_RUN (for example "LGTM") is counted as INCONCLUSIVE.
 
-The shape each lane writes (see `${CLAUDE_PLUGIN_ROOT}/templates/results.example.json`):
+The shape each lane writes (see `${CLAUDE_SKILL_DIR}/templates/results.example.json`):
 
 ```json
 {"lane": "android", "agent": "android-qa", "device": "Pixel 7 emulator, API 34", "build": "1.4.2 (87)",
  "stories": [{"id": "S1", "status": "FAIL", "evidence": [".qa/android/S1-crash.txt"], "notes": "NPE on Sign in"}]}
 ```
 
-`${CLAUDE_PLUGIN_ROOT}/templates/matrix.template.md` shows what a finished matrix looks like, if you want to write one by hand.
+`${CLAUDE_SKILL_DIR}/templates/matrix.template.md` shows what a finished matrix looks like, if you want to write one by hand.
 
 ## 5. Acceptance checks before you call it done
 
@@ -101,4 +101,4 @@ The shape each lane writes (see `${CLAUDE_PLUGIN_ROOT}/templates/results.example
 
 ## Maestro flow templates
 
-`${CLAUDE_PLUGIN_ROOT}/templates/maestro/android-sign-in.yaml` and `ios-sign-in.yaml` are working starting points for a sign-in story: fresh state, wait for the screen, type from `-e` variables, tap, assert, screenshot. Copy one per story into `.qa/<lane>/flows/` and change the `appId`, ids and texts.
+`${CLAUDE_SKILL_DIR}/templates/maestro/android-sign-in.yaml` and `${CLAUDE_SKILL_DIR}/templates/maestro/ios-sign-in.yaml` are working starting points for a sign-in story: fresh state, wait for the screen, type from `-e` variables, tap, assert, screenshot. Copy one per story into `.qa/<lane>/flows/` and change the `appId`, ids and texts.

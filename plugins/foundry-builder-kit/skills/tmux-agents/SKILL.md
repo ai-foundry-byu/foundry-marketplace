@@ -13,14 +13,14 @@ Use tmux only when you need one of these:
 
 For a one-shot command that finishes on its own, just run it. tmux adds moving parts.
 
-Bundled helper: `${CLAUDE_PLUGIN_ROOT}/scripts/tmux_agent.py` (Python 3 stdlib, calls `tmux`). Install tmux first: `brew install tmux` (macOS), `sudo apt install tmux` (Ubuntu/WSL). On Windows, use WSL.
+Bundled helper: `${CLAUDE_SKILL_DIR}/scripts/tmux_agent.py` (Python 3 stdlib, calls `tmux`). Install tmux first: `brew install tmux` (macOS), `sudo apt install tmux` (Ubuntu/WSL). On Windows, use WSL.
 
 Every command uses a **private socket** (`$TMUX_AGENT_SOCKET`, or a per-user path under the temp dir), so the agent never types into the user's own tmux sessions.
 
 ## The five moves
 
 ```bash
-T="python3 ${CLAUDE_PLUGIN_ROOT}/scripts/tmux_agent.py"
+T="python3 ${CLAUDE_SKILL_DIR}/scripts/tmux_agent.py"
 
 $T start dev --cwd "$PWD" --cmd "npm run dev"      # 1. start a named session, optionally launch a program
 $T wait dev "Local:.*http://localhost:\d+" --timeout 60   # 2. wait for a line (regex; --fixed for plain text)

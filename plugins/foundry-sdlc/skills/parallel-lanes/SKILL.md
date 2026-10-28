@@ -93,6 +93,6 @@ Scott Murff's **agent-team-kit** (https://github.com/ai-foundry-byu/agent-team-k
 
 - Every task in WORKPLAN.md is DONE (with evidence) or PARKED.
 - `git worktree list` shows only the main checkout (no forgotten lanes).
-- `sdlc_stage.py .` reports past stage 4. Stage 5 (code QA) is checked by CI, not by files.
+- `python3 "${CLAUDE_SKILL_DIR}/scripts/sdlc_stage.py" .` reports past stage 4. Stage 5 (code QA) is checked by CI, not by files.
 
 Next: code QA with `foundry-qa:regression-check` and CI, then stage 6 visual QA.

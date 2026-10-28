@@ -1,0 +1,11 @@
+{
+  "skills/a11y-check/scripts/done_gate.py": "skills/done-gate/scripts/done_gate.py",
+  "skills/a11y-check/scripts/qa_yaml.py": "skills/done-gate/scripts/qa_yaml.py",
+  "skills/visual-baseline/scripts/done_gate.py": "skills/done-gate/scripts/done_gate.py",
+  "skills/visual-baseline/scripts/qa_yaml.py": "skills/done-gate/scripts/qa_yaml.py",
+  "skills/persona-run/scripts/done_gate.py": "skills/done-gate/scripts/done_gate.py",
+  "skills/persona-run/scripts/qa_yaml.py": "skills/done-gate/scripts/qa_yaml.py",
+  "skills/explore/scripts/done_gate.py": "skills/done-gate/scripts/done_gate.py",
+  "skills/explore/scripts/qa_yaml.py": "skills/done-gate/scripts/qa_yaml.py",
+  "skills/explore/scripts/persona_run.py": "skills/persona-run/scripts/persona_run.py"
+}

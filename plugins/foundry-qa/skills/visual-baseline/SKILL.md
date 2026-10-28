@@ -30,7 +30,7 @@ Everything lives under `.qa/visual/`:
 **1. First run: capture and approve.**
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/visual_baseline.py" capture \
+python3 "${CLAUDE_SKILL_DIR}/scripts/visual_baseline.py" capture \
   --url http://localhost:3000/ --name home \
   --url http://localhost:3000/pricing --name pricing \
   --devices desktop-1440x900,phone-390x844,tablet-820x1180
@@ -40,13 +40,13 @@ Open every file in `.qa/visual/current/` and look at it. A baseline is a claim t
 correct; never approve a screenshot you have not looked at.
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/visual_baseline.py" approve
+python3 "${CLAUDE_SKILL_DIR}/scripts/visual_baseline.py" approve
 ```
 
 **2. Every change after that: check.**
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/visual_baseline.py" check \
+python3 "${CLAUDE_SKILL_DIR}/scripts/visual_baseline.py" check \
   --url http://localhost:3000/ --name home \
   --url http://localhost:3000/pricing --name pricing \
   --devices desktop-1440x900,phone-390x844,tablet-820x1180

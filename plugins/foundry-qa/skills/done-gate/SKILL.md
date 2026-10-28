@@ -33,14 +33,14 @@ python3 -m playwright install chromium        # add webkit for Safari-engine run
 
 No PyYAML needed: the gate ships a small YAML-subset parser and also accepts JSON.
 
-The script lives at `${CLAUDE_PLUGIN_ROOT}/scripts/done_gate.py`. For CI, copy the
+The script lives at `${CLAUDE_SKILL_DIR}/scripts/done_gate.py`. For CI, copy this skill's
 `scripts/` folder into your repo (for example `qa/tools/`) so the pipeline does not depend on a
 plugin install. It only needs `done_gate.py` and `qa_yaml.py`.
 
 ## 1. Write the done-journey
 
 One file per feature, kept in the repo next to the code (for example `qa/done-journey.yaml`).
-Start from `${CLAUDE_PLUGIN_ROOT}/templates/done-journey.yaml`.
+Start from `${CLAUDE_SKILL_DIR}/templates/done-journey.yaml`.
 
 ```yaml
 name: add an item to the cart
@@ -89,13 +89,13 @@ Writing a good journey:
 Check the file without a browser:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/done_gate.py" --journey qa/done-journey.yaml --base-url http://localhost:3000 --validate
+python3 "${CLAUDE_SKILL_DIR}/scripts/done_gate.py" --journey qa/done-journey.yaml --base-url http://localhost:3000 --validate
 ```
 
 ## 2. Run it locally
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/done_gate.py" --journey qa/done-journey.yaml --base-url http://localhost:3000
+python3 "${CLAUDE_SKILL_DIR}/scripts/done_gate.py" --journey qa/done-journey.yaml --base-url http://localhost:3000
 ```
 
 Output: one line per device (`PASS`, `FAIL`, `INCONCLUSIVE` plus the reason), then
@@ -110,7 +110,7 @@ Make the app report its commit. Any one of these works:
 - a string in the HTML, for example `<meta name="build" content="<sha>">` (use `--sha-regex`)
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/done_gate.py" \
+python3 "${CLAUDE_SKILL_DIR}/scripts/done_gate.py" \
   --journey qa/done-journey.yaml \
   --base-url https://<your-app>.example.com \
   --sha-url https://<your-app>.example.com/api/version --sha-json-key commit \

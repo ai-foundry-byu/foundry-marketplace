@@ -9,7 +9,9 @@ Hill-climbing is a loop: read failures, make ONE change to one surface, rerun th
 the change only if the score really went up (or the cost really went down at equal score),
 otherwise revert. It needs a working suite first (see `new-eval`) and a stored baseline.
 
-Tool: `evalkit` (or `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/evalkit.py"`).
+Tool: `evalkit` (on PATH while the foundry-evals plugin is enabled), or
+`python3 "${CLAUDE_SKILL_DIR}/scripts/evalkit.py"`, which works with this skill on its own.
+Where this page says `evalkit`, either form works.
 
 ## Before the first round
 
@@ -103,8 +105,11 @@ If test did not move with val, you fit the val cases. Say so, and do not ship th
 The example suite `refund-triage` ships with a deliberate bug in `target_rules.py`: it never
 checks `final_sale`.
 
+`evalkit init` copies the example suite, which ships with the `new-eval` skill; with this
+skill installed on its own, scaffold with `new-eval` first and climb from here.
+
 ```bash
-evalkit init evals/refund-triage
+evalkit init evals/refund-triage                                # from the new-eval skill
 evalkit run evals/refund-triage --no-judge --label baseline     # 77.8%, gate FAIL
 # report: deny-final-sale and deny-final-sale-over-200 at 0% on every rep
 # ONE change: add the final-sale rule before the $200 check in target_rules.py

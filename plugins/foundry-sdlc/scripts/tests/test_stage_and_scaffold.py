@@ -9,6 +9,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# new_project.py lives in the new-project skill (it is used by that skill only)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "skills" / "new-project" / "scripts"))
 import gen_stories  # noqa: E402
 import new_project  # noqa: E402
 import sdlc_stage  # noqa: E402

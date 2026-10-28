@@ -33,13 +33,13 @@ class TestPersona(unittest.TestCase):
                     pr.parse_persona(text)
 
     def test_templates_parse(self):
-        for f in sorted((_paths.TEMPLATES / "personas").glob("*.md")):
+        for f in sorted((_paths.PERSONA_TEMPLATES / "personas").glob("*.md")):
             with self.subTest(f=f.name):
                 p = pr.parse_persona(f.read_text(), str(f))
                 self.assertTrue(p.name)
 
     def test_example_stories_parse(self):
-        stories = pr.parse_stories(qa_yaml.load_file(str(_paths.TEMPLATES / "stories.example.json")))
+        stories = pr.parse_stories(qa_yaml.load_file(str(_paths.PERSONA_TEMPLATES / "stories.example.json")))
         self.assertGreaterEqual(len(stories), 3)
 
 

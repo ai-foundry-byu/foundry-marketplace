@@ -1,0 +1,4 @@
+{
+  "skills/run-eval/scripts/evalkit.py": "skills/new-eval/scripts/evalkit.py",
+  "skills/hillclimb/scripts/evalkit.py": "skills/new-eval/scripts/evalkit.py"
+}

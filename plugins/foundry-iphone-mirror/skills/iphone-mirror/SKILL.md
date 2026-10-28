@@ -5,6 +5,8 @@ description: Drive a real iPhone from this Mac through macOS iPhone Mirroring, u
 
 # Drive an iPhone through iPhone Mirroring
 
+Install: plugin only. It drives the phone through the plugin's `iphone-mirror` CLI on PATH (bin/), its `iphone` MCP server, and the compiled helper app built from the plugin's engine/.
+
 An iPhone has no Mac-side API for most apps. iPhone Mirroring (macOS 15+) shows the
 phone's screen in a Mac window and forwards clicks and keystrokes to the phone. This
 skill drives that window: take a screenshot, read it, inject one action, take another
