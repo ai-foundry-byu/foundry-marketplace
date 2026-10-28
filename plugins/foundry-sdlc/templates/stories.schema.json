@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ai-foundry-byu/foundry-marketplace/plugins/foundry-sdlc/templates/stories.schema.json",
+  "title": "stories.json",
+  "description": "User stories compiled from PRD.md by gen_stories.py. Title and acceptance come from the PRD; status, surfaces, devices and waits_on are preserved across regenerations.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "title", "acceptance", "surfaces", "devices", "status", "waits_on"],
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9]*-[0-9]+[a-z]?$",
+        "description": "Stable story id, e.g. US-01. Never reused."
+      },
+      "title": {"type": "string", "minLength": 1},
+      "acceptance": {
+        "type": "array",
+        "minItems": 1,
+        "items": {"type": "string", "minLength": 1},
+        "description": "Numbered acceptance criteria from the PRD, in order. Criterion n is referenced as US-01.n."
+      },
+      "surfaces": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Routes or screens the story is visible on, e.g. /login."
+      },
+      "devices": {
+        "type": "array",
+        "items": {"type": "string", "pattern": "^[a-z0-9-]+(-[0-9]+x[0-9]+)?$"},
+        "description": "Device profiles the story must pass on, e.g. phone-390x844, tablet-820x1180, desktop-1440x900, ios-sim, android-emu."
+      },
+      "status": {
+        "type": "string",
+        "enum": ["NOT_BUILT", "BUILT", "PARTIAL", "LIVE", "PARKED"],
+        "description": "NOT_BUILT: no code. BUILT: on a branch or deployed but not verified. PARTIAL: deployed, some criteria fail (name them in notes). LIVE: deployed and every criterion PASSED by the story-verifier. PARKED: deliberately not now (cite the D-id in notes)."
+      },
+      "waits_on": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Story ids, task ids, requirement ids or decision ids that must be done first."
+      },
+      "covers": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Requirement ids (R-01) this story covers, from the (R-01) after the PRD heading."
+      },
+      "notes": {"type": "string"},
+      "evidence": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Verifier report paths, PR links, done-gate run ids."
+      }
+    },
+    "additionalProperties": true
+  }
+}

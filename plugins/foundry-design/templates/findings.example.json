@@ -1,0 +1,47 @@
+[
+  {
+    "id": "df-2026-01-15-001",
+    "question": 6,
+    "heuristic": "nielsen-7",
+    "surface": "route:/settings/notifications",
+    "evidence": {
+      "screenshot": "design/captures/settings-notifications@phone.png",
+      "file_line": "src/app/settings/notifications/page.tsx:12",
+      "note": "The page holds two toggles and nothing else."
+    },
+    "claim": "Two notification toggles sit on their own page, one tap deeper than the profile page that links to them.",
+    "proposal": {
+      "type": "inline",
+      "diff_hint": "Move both toggles under the profile header and delete the notifications route."
+    },
+    "delta": { "clicks_before": 3, "clicks_after": 2, "surfaces_before": 2, "surfaces_after": 1 },
+    "class": "agent-fixes",
+    "severity": "flag",
+    "constitution_refs": ["C6", "C8"],
+    "log_refs": [],
+    "resolution_tier": 1,
+    "status": "accepted"
+  },
+  {
+    "id": "df-2026-01-15-002",
+    "question": 2,
+    "surface": "component:CheckoutFooter",
+    "evidence": { "file_line": "src/components/CheckoutFooter.tsx:31" },
+    "claim": "The primary button says Submit; design/vocabulary.md names this act Place order.",
+    "proposal": { "type": "relabel", "diff_hint": "Submit -> Place order" },
+    "class": "agent-fixes",
+    "severity": "block",
+    "constitution_refs": ["C2", "blocking-rule-3"],
+    "status": "open"
+  },
+  {
+    "id": "df-2026-01-15-003",
+    "question": 7,
+    "surface": "route:/dashboard",
+    "claim": "Unclear from screenshots whether the sync spinner resolves fast enough to feel instant.",
+    "proposal": { "type": "escalate", "diff_hint": "Latency is not judgeable from pixels; measure time-to-visible in the gate or A/B." },
+    "class": "needs-resolver",
+    "severity": "flag",
+    "status": "open"
+  }
+]

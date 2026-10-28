@@ -1,0 +1,138 @@
+{
+  "name": "ai-foundry",
+  "description": "The AI Foundry (BYU Marriott) toolbox for building your own Claude Code harness: an 8-stage SDLC framework plus skills, agents and hooks, each labeled proven (runs in production in our harness) or new (written for this marketplace).",
+  "owner": {
+    "name": "AI Foundry (BYU Marriott)",
+    "url": "https://aifoundry.byu.edu"
+  },
+  "metadata": {
+    "version": "0.1.0",
+    "description": "Starter set: foundry-sdlc, foundry-guardrails, foundry-qa."
+  },
+  "plugins": [
+    {
+      "name": "foundry-sdlc",
+      "source": "./plugins/foundry-sdlc",
+      "description": "The 8-stage 0-to-1 workflow: scaffold, requirements, PRD and stories, workplan, parallel lanes, QA, ship, feedback. Templates, a PRD-to-stories compiler, a stage detector, and two independent judge agents (prd-critic, story-verifier).",
+      "category": "sdlc",
+      "tags": [
+        "sdlc",
+        "prd",
+        "user-stories",
+        "workplan",
+        "worktrees",
+        "starter"
+      ]
+    },
+    {
+      "name": "foundry-guardrails",
+      "source": "./plugins/foundry-guardrails",
+      "description": "Hooks that make the gates real: block destructive commands and secret leaks, require tests before done and before push or deploy, keep worktree sessions in their worktree, flag stale whole-file writes, and keep working until a workplan milestone is checked.",
+      "category": "guardrails",
+      "tags": [
+        "hooks",
+        "safety",
+        "secrets",
+        "verification",
+        "worktree",
+        "starter"
+      ]
+    },
+    {
+      "name": "foundry-qa",
+      "source": "./plugins/foundry-qa",
+      "description": "Web QA: a definition-of-done gate (deployed SHA plus a Playwright journey on desktop, phone and tablet), blast-radius regression checks, axe-core accessibility, screenshot baselines, and web-qa, persona-tester and explorer agents.",
+      "category": "qa",
+      "tags": [
+        "qa",
+        "playwright",
+        "accessibility",
+        "visual-regression",
+        "personas",
+        "starter"
+      ]
+    },
+    {
+      "name": "foundry-design",
+      "source": "./plugins/foundry-design",
+      "description": "Design gates: a subtract-only design critic, a UI spec writer with a full state matrix and checkable acceptance criteria, a design-system template, a read-only ui-reviewer agent, and a deterministic design gate script.",
+      "category": "design",
+      "tags": [
+        "design",
+        "ux",
+        "ui-review",
+        "wcag",
+        "design-system"
+      ]
+    },
+    {
+      "name": "foundry-devices",
+      "source": "./plugins/foundry-devices",
+      "description": "Native and desktop QA agents for iOS Simulator, Android, Windows and macOS, plus a device-matrix skill that runs them as parallel lanes and merges one PASS/FAIL/INCONCLUSIVE matrix.",
+      "category": "devices",
+      "tags": [
+        "qa",
+        "ios",
+        "android",
+        "windows",
+        "macos",
+        "maestro"
+      ]
+    },
+    {
+      "name": "foundry-iphone-mirror",
+      "source": "./plugins/foundry-iphone-mirror",
+      "description": "Drive a real iPhone from a Mac through macOS iPhone Mirroring: screenshot, read, tap, type, swipe, verify. A skill, an iphone-driver agent, an MCP server and a CLI with a doctor.",
+      "category": "devices",
+      "tags": [
+        "iphone",
+        "ios",
+        "real-device",
+        "mcp",
+        "macos"
+      ]
+    },
+    {
+      "name": "foundry-evals",
+      "source": "./plugins/foundry-evals",
+      "description": "Measure agents and prompts: scaffold an eval suite with oracles, code graders, a binary judge and negative controls, run and compare it, and hill-climb one change at a time. Ships evalkit.py (stdlib only).",
+      "category": "evals",
+      "tags": [
+        "evals",
+        "llm-judge",
+        "testing",
+        "prompt-engineering"
+      ]
+    },
+    {
+      "name": "foundry-builder-kit",
+      "source": "./plugins/foundry-builder-kit",
+      "description": "Day-one build skills: add auth, a 10k-user launch audit, secrets hygiene with a commit guard, cheap structured LLM routing, scheduled headless agents, and driving interactive CLIs through tmux.",
+      "category": "build",
+      "tags": [
+        "auth",
+        "scaling",
+        "secrets",
+        "llm-routing",
+        "scheduling",
+        "tmux"
+      ]
+    },
+    {
+      "name": "recruit",
+      "source": {
+        "source": "github",
+        "repo": "jddavenportOpen/recruit-copilot"
+      },
+      "description": "External (MIT). Resume builder and job finder: merge your resumes into one experience bank, score roles against your goals, build a tailored ATS-safe resume per job, and check a machine can read it. It never applies for you.",
+      "category": "career",
+      "tags": [
+        "external",
+        "resume",
+        "job-search",
+        "ats"
+      ],
+      "homepage": "https://github.com/jddavenportOpen/recruit-copilot"
+    }
+  ]
+}

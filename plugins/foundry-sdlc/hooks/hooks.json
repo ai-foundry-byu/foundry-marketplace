@@ -1,0 +1,16 @@
+{
+  "description": "foundry-sdlc: on session start, print which SDLC stage the project is in (silent when the project has no PRD.md or REQUIREMENTS.md).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/sdlc_stage.py\" --hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

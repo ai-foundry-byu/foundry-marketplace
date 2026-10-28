@@ -1,0 +1,56 @@
+{
+  "stories": [
+    {
+      "id": "S-1",
+      "title": "A visitor understands what the app does from the home page",
+      "as_a": "first-time visitor",
+      "start": "/",
+      "assertions": [
+        {"visible": "h1"},
+        {"no_console_errors": true}
+      ],
+      "acceptance": [
+        "Within 5 seconds the visitor can say what the app is for",
+        "There is one obvious primary action"
+      ]
+    },
+    {
+      "id": "S-2",
+      "title": "A visitor can start sign-up from the home page",
+      "start": "/",
+      "steps": [
+        {"click": "text=Get started"},
+        {"wait_for": "form"}
+      ],
+      "assertions": [
+        {"visible": "input[type=email]"},
+        {"url_contains": "signup"}
+      ],
+      "acceptance": ["The form asks only for what it needs"]
+    },
+    {
+      "id": "S-3",
+      "title": "A returning user can search and open a result with the keyboard",
+      "start": "/search",
+      "devices": ["desktop-1440x900"],
+      "steps": [
+        {"fill": {"selector": "input[type=search]", "value": "budget"}},
+        {"press": {"selector": "input[type=search]", "key": "Enter"}},
+        {"wait_for": "[data-testid=result]"}
+      ],
+      "assertions": [
+        {"visible": "[data-testid=result]"}
+      ],
+      "acceptance": ["Results appear without a full page reload", "Focus moves somewhere sensible"]
+    },
+    {
+      "id": "S-4",
+      "title": "An empty account explains what to do next",
+      "start": "/dashboard",
+      "acceptance": [
+        "The empty state says what will appear here and offers the first action",
+        "No spinner is left running"
+      ]
+    }
+  ]
+}

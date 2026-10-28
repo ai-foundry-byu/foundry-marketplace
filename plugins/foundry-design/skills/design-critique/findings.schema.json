@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Design critique finding",
+  "description": "One critique finding. The proposal verb enum has NO 'add': the critic can only subtract. A findings file is a JSON array of these objects.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "question", "surface", "claim", "proposal", "class", "severity"],
+  "properties": {
+    "id": { "type": "string", "description": "Stable id, for example df-2026-01-15-004" },
+    "question": { "type": "integer", "minimum": 1, "maximum": 8, "description": "The ONE primary constitution question (C1-C8) this finding is grounded in" },
+    "heuristic": { "type": "string", "description": "Optional secondary grounding, for example nielsen-4, fitts, hick" },
+    "surface": { "type": "string", "description": "Route, component or element, for example route:/settings or component:CheckoutSummary" },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "screenshot": { "type": "string" },
+        "file_line": { "type": "string", "description": "for example src/app/settings/page.tsx:42" },
+        "note": { "type": "string" }
+      }
+    },
+    "claim": { "type": "string", "description": "One sentence: the defect" },
+    "proposal": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["remove", "merge", "relabel", "inline", "escalate"], "description": "The ONLY allowed verbs. No 'add'." },
+        "diff_hint": { "type": "string", "description": "What to cut or combine, concretely" }
+      }
+    },
+    "delta": {
+      "type": "object",
+      "description": "REQUIRED when question is 1, 5, 6 or 8 (flow shape): the measurable improvement",
+      "additionalProperties": false,
+      "properties": {
+        "clicks_before": { "type": "integer", "minimum": 0 },
+        "clicks_after": { "type": "integer", "minimum": 0 },
+        "surfaces_before": { "type": "integer", "minimum": 0 },
+        "surfaces_after": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "class": { "enum": ["agent-fixes", "needs-resolver"], "description": "agent-fixes only when the change is mechanical AND grounded in a rule or decision entry; otherwise the tier 2-4 resolver handles it" },
+    "severity": { "enum": ["block", "flag", "nit"], "description": "block = objective regression that hard-fails the build; flag = resolved by the tier 2-3 resolver; nit = at most 2 per run" },
+    "constitution_refs": { "type": "array", "items": { "type": "string" } },
+    "log_refs": { "type": "array", "items": { "type": "string" }, "description": "Decision entries consulted; never re-raise a resolved finding on an unchanged surface" },
+    "resolution_tier": { "enum": [1, 2, 3, 4], "description": "1 objective metric, 2 constitution/reference judge, 3 adversarial panel, 4 empirical A/B" },
+    "status": { "enum": ["open", "accepted", "rejected", "fixed", "overruled"] }
+  }
+}

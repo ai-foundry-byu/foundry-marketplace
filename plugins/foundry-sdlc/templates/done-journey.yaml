@@ -1,0 +1,39 @@
+# done-journey.yaml: the deterministic journey the done gate runs on the DEPLOYED build.
+# Run it with the foundry-qa plugin's done-gate (see the foundry-qa README for the command).
+# Keep it read-only against production: navigate, wait and look. No form submits that write
+# real data, unless base_url points at a disposable preview or staging environment.
+#
+# Step forms (one key per step):
+#   - goto: <path or absolute url>          paths are joined to base_url
+#   - click: <css selector>
+#   - fill: {selector: <css>, value: <text>}
+#   - wait_for: <css selector>               waits until visible (default timeout 10 s)
+# Assertion forms (all must hold after the last step):
+#   - visible: <css selector>
+#   - text: {selector: <css>, contains: <text>}
+#   - url_contains: <text>
+# screenshot: a name; the gate saves <name>-<device>.png for the story-verifier and design review.
+#
+# name, base_url, devices and stories are metadata for people and the story-verifier. If your
+# done-gate command takes the URL or devices as flags, the flags win.
+#
+# Prefer data-testid selectors: they survive restyles. Replace every TODO marker before the gate.
+
+name: "TODO: US-01 the home page renders and the core action is reachable"
+base_url: "TODO: https://<your-app>.example.com"
+devices: [phone-390x844, desktop-1440x900]
+stories: [US-01]
+
+steps:
+  - goto: /
+  - wait_for: "[data-testid=app-shell]"
+  - click: "[data-testid=nav-login]"
+  - wait_for: "[data-testid=login-form]"
+  - fill: {selector: "[data-testid=login-email]", value: "qa@example.com"}
+
+assertions:
+  - visible: "[data-testid=login-submit]"
+  - text: {selector: "h1", contains: "Sign in"}
+  - url_contains: /login
+
+screenshot: us-01-login

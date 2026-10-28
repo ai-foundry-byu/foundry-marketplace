@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "iphone": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/server.py"],
+      "env": {
+        "IPHONE_MIRROR_CLI": "${CLAUDE_PLUGIN_ROOT}/bin/iphone-mirror"
+      }
+    }
+  }
+}

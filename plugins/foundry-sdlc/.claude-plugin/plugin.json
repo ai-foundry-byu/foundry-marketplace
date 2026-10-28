@@ -1,0 +1,9 @@
+{
+  "name": "foundry-sdlc",
+  "version": "0.1.0",
+  "description": "The deterministic 0-to-1 software workflow used by AI Foundry: 8 stages from scaffold to feedback, with templates, a PRD-to-stories compiler, a stage detector, and two independent judge agents (prd-critic, story-verifier).",
+  "author": {"name": "AI Foundry (BYU Marriott)"},
+  "license": "MIT",
+  "repository": "https://github.com/ai-foundry-byu/foundry-marketplace",
+  "keywords": ["sdlc", "prd", "user-stories", "workplan", "requirements", "git-worktree", "parallel-agents", "qa", "ship", "ai-foundry"]
+}

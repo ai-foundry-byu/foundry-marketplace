@@ -1,0 +1,9 @@
+{
+  "name": "foundry-qa",
+  "version": "0.1.0",
+  "description": "Web QA in code and with example users: a definition-of-done gate (deployed SHA check plus a Playwright journey on desktop, phone and tablet), blast-radius regression checks, axe-core accessibility audits against a WCAG 2.2 AA floor, screenshot baselines with pixel diff, and three agents (web-qa, a read-only persona-tester, and an exploratory crawler).",
+  "author": {"name": "AI Foundry (BYU Marriott)"},
+  "license": "MIT",
+  "repository": "https://github.com/ai-foundry-byu/foundry-marketplace",
+  "keywords": ["qa", "testing", "playwright", "accessibility", "wcag", "visual-regression", "personas", "definition-of-done", "e2e"]
+}

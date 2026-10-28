@@ -1,0 +1,26 @@
+{
+  "stories": [
+    {
+      "id": "S1",
+      "title": "Returning user signs in",
+      "devices": ["ios", "android:pixel_7", "web-mobile"],
+      "steps": ["Open the app", "Enter the test account email and password", "Tap Sign in"],
+      "expect": ["Home screen shows Welcome", "No error banner", "Back button does not sign the user out (android)"],
+      "test_data": "QA test account only"
+    },
+    {
+      "id": "S2",
+      "title": "User exports the monthly report as CSV",
+      "devices": ["windows", "macos"],
+      "steps": ["Open Reports", "Choose last month", "Click Export > CSV"],
+      "expect": ["A .csv file is saved", "File has a header row and at least one data row"]
+    },
+    {
+      "id": "S3",
+      "title": "Sign-in works on a real iPhone",
+      "devices": ["iphone"],
+      "steps": ["Install the TestFlight build", "Sign in with the test account"],
+      "expect": ["Home screen shows Welcome"]
+    }
+  ]
+}

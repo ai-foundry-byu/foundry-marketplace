@@ -1,0 +1,159 @@
+#!/bin/bash
+# shellcheck disable=SC2015  # 'A && B || C' below is used only where C is a report line.
+# iphone-mirror: drive a real iPhone from this Mac through macOS iPhone Mirroring.
+#
+# This is the CLIENT. The privileged work (screenshot, tap) runs inside the
+# helper app built by `iphone-mirror build`, launched per action through
+# LaunchServices so the helper's own Accessibility + Screen Recording grants
+# apply, whoever calls this. Results come back through files in the state dir.
+#
+# Usage:
+#   iphone-mirror doctor                  preflight every requirement, prints N ok, M fail
+#   iphone-mirror build [opts]            build + sign the helper app (see engine/build-helper-app.sh --help)
+#   iphone-mirror open                    launch and focus iPhone Mirroring
+#   iphone-mirror info                    window geometry in screen points (x y w h)
+#   iphone-mirror shot [out.png]          screenshot the phone window, prints path + size
+#   iphone-mirror tap <px> <py>           tap at pixel coords FROM THE LAST SHOT
+#   iphone-mirror swipe <px1> <py1> <px2> <py2>   drag (scroll, slide), shot pixels
+#   iphone-mirror type "text"             type into the focused field
+#   iphone-mirror key <name>              return | esc | tab | space | delete | arrow-up ...
+#   iphone-mirror home                    swipe-up home gesture
+#   iphone-mirror tapxy <gx> <gy>         tap at absolute screen points (rarely needed)
+#   iphone-mirror map <px> <py>           print where a tap WOULD land, inject nothing
+#
+# Environment (all optional):
+#   IPHONE_MIRROR_HELPER   path to the helper .app (default: the path recorded by build,
+#                          else $HOME/Applications/FoundryPhone.app)
+#   IPHONE_MIRROR_TIMEOUT  seconds to wait for one action (default 30)
+
+set -o pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
+ENGINE="$ROOT/engine"
+MIRROR_APP="iPhone Mirroring"
+STATE="${IPHONE_MIRROR_STATE:-$HOME/Library/Caches/foundry-iphone-mirror}"
+CONF_DIR="$HOME/Library/Application Support/foundry-iphone-mirror"
+SHOTDIR="$STATE/shots"
+TIMEOUT="${IPHONE_MIRROR_TIMEOUT:-30}"
+mkdir -p "$STATE" "$SHOTDIR"
+
+resolve_helper() {
+  if [ -n "${IPHONE_MIRROR_HELPER:-}" ]; then echo "$IPHONE_MIRROR_HELPER"; return; fi
+  if [ -s "$CONF_DIR/helper-path" ]; then head -n1 "$CONF_DIR/helper-path"; return; fi
+  echo "$HOME/Applications/FoundryPhone.app"
+}
+HELPER="$(resolve_helper)"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+# One action at a time: the state files are a single mailbox, and there is one phone.
+LOCK="$STATE/lock"
+acquire_lock() {
+  local i=0
+  until mkdir "$LOCK" 2>/dev/null; do
+    # Break a lock left by a crashed client (older than 2x the action timeout).
+    if [ -d "$LOCK" ] && [ -n "$(find "$LOCK" -maxdepth 0 -mmin +"$(( (TIMEOUT * 2 + 59) / 60 ))" 2>/dev/null)" ]; then
+      rmdir "$LOCK" 2>/dev/null; continue
+    fi
+    sleep 0.2; i=$((i+1))
+    [ "$i" -gt $((TIMEOUT * 5)) ] && die "another iphone-mirror action is still running (lock: $LOCK)"
+  done
+  trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+}
+
+# Run one command inside the granted helper app and block for its result.
+# IPHONE_MIRROR_WORKER_DIRECT=<worker.sh> runs the worker in-process instead
+# (used by the unit tests; it has no TCC grant of its own).
+run_worker() {
+  acquire_lock
+  rm -f "$STATE/done" "$STATE/rc" "$STATE/result"
+  if [ -n "${IPHONE_MIRROR_WORKER_DIRECT:-}" ]; then
+    IPHONE_MIRROR_STATE="$STATE" /bin/bash "$IPHONE_MIRROR_WORKER_DIRECT" "$@" >/dev/null 2>&1
+  else
+    [ -d "$HELPER" ] || die "helper app missing at $HELPER (run: iphone-mirror build)"
+    open -n -a "$HELPER" --args "$@" || die "could not launch the helper app at $HELPER"
+  fi
+  local i=0
+  while [ ! -f "$STATE/done" ]; do
+    sleep 0.2; i=$((i+1))
+    [ "$i" -gt $((TIMEOUT * 5)) ] && { echo "worker timeout (${TIMEOUT}s)" >&2; return 124; }
+  done
+  [ -f "$STATE/result" ] && cat "$STATE/result"
+  return "$(cat "$STATE/rc" 2>/dev/null || echo 1)"
+}
+
+# Bring iPhone Mirroring to the front so captures and taps hit it, not a window
+# on top of it. `open -a` needs no TCC permission.
+raise_mirror() {
+  [ -n "${IPHONE_MIRROR_WORKER_DIRECT:-}" ] && return 0
+  open -a "$MIRROR_APP" 2>/dev/null; sleep 0.4
+}
+
+need_ints() { local a; for a in "$@"; do [[ "$a" =~ ^-?[0-9]+$ ]] || die "expected integer pixel coords, got '$a'"; done; }
+
+cmd_doctor() {
+  echo "=== iphone-mirror doctor ==="
+  local ok=0 fail=0 warn=0
+  pass() { echo "[ok]   $*"; ok=$((ok+1)); }
+  bad()  { echo "[FAIL] $*"; fail=$((fail+1)); }
+  note() { echo "[warn] $*"; warn=$((warn+1)); }
+
+  local major; major="$(sw_vers -productVersion 2>/dev/null | cut -d. -f1)"
+  if [ -n "$major" ] && [ "$major" -ge 15 ]; then pass "macOS $(sw_vers -productVersion) (15+ required for iPhone Mirroring)"
+  else bad "macOS 15 or newer required (found: ${major:-not macOS})"; fi
+
+  if [ -d "/System/Applications/$MIRROR_APP.app" ] || [ -d "/Applications/$MIRROR_APP.app" ]; then pass "$MIRROR_APP app installed"
+  else bad "$MIRROR_APP app not found (needs macOS 15+, and it is not offered in every region)"; fi
+
+  local cc=""; for c in "$(command -v cliclick 2>/dev/null)" /opt/homebrew/bin/cliclick /usr/local/bin/cliclick; do [ -n "$c" ] && [ -x "$c" ] && { cc="$c"; break; }; done
+  [ -n "$cc" ] && pass "cliclick at $cc" || bad "cliclick missing: brew install cliclick, then iphone-mirror build"
+
+  if [ -d "$HELPER" ]; then
+    pass "helper app present: $HELPER"
+    if codesign --verify --deep --strict "$HELPER" 2>/dev/null; then pass "helper app signature verifies (bundle not edited since build)"
+    else bad "helper app signature does not verify: something edited the bundle. Rebuild with iphone-mirror build and re-approve"; fi
+    if cmp -s "$HELPER/Contents/Resources/worker.sh" "$ENGINE/worker.sh"; then pass "helper app matches this plugin version"
+    else note "helper app was built from a different worker.sh (plugin updated?). Rebuild with: iphone-mirror build, then re-approve the grants"; fi
+    if [ -f "$HELPER/Contents/Resources/config.env" ] && ! grep -q "^CLICLICK=..*" "$HELPER/Contents/Resources/config.env"; then
+      note "helper app was built before cliclick was installed: rebuild with iphone-mirror build"
+    fi
+  else
+    bad "helper app missing at $HELPER (run: iphone-mirror build)"
+  fi
+
+  pgrep -xq "$MIRROR_APP" && pass "$MIRROR_APP running" || bad "$MIRROR_APP not running (iphone-mirror open, then unlock/approve on the phone)"
+
+  if [ -d "$HELPER" ]; then
+    echo "--- testing through the helper app ---"
+    local g grc s src
+    g="$(run_worker geometry 2>&1)"; grc=$?
+    if [ $grc -eq 0 ] && [ -n "$g" ]; then pass "Accessibility + Automation (via helper): window $g"
+    else bad "Accessibility or Automation: $g (grant $HELPER under Privacy & Security > Accessibility, and allow it to control System Events under Automation)"; fi
+    rmdir "$LOCK" 2>/dev/null
+    s="$(run_worker shot "$SHOTDIR/_doctor.png" 2>&1)"; src=$?
+    if [ $src -eq 0 ] && [ -s "$SHOTDIR/_doctor.png" ]; then pass "Screen Recording (via helper): $s"
+    else bad "Screen Recording: add $HELPER in System Settings > Privacy & Security > Screen Recording ($s)"; fi
+    rm -f "$SHOTDIR/_doctor.png"
+  fi
+  echo "=== $ok ok, $fail fail, $warn warn ==="
+  [ "$fail" -eq 0 ]
+}
+
+case "${1:-}" in
+  doctor) cmd_doctor ;;
+  build)  shift; exec "$ENGINE/build-helper-app.sh" "$@" ;;
+  open)   open -a "$MIRROR_APP" || die "could not open $MIRROR_APP"; sleep 2
+          echo "Launched $MIRROR_APP. If it shows a connect, passcode or 'iPhone in Use' screen, finish that on the phone (or lock the phone) first." ;;
+  info)   raise_mirror; run_worker geometry ;;
+  shot)   shift; raise_mirror; run_worker shot "${1:-$SHOTDIR/shot.png}" ;;
+  tap)    shift; [ $# -eq 2 ] || die "usage: tap <px> <py>"; need_ints "$@"; raise_mirror; run_worker tap "$@" ;;
+  tapxy)  shift; [ $# -eq 2 ] || die "usage: tapxy <gx> <gy>"; need_ints "$@"; raise_mirror; run_worker tapxy "$@" ;;
+  swipe)  shift; [ $# -eq 4 ] || die "usage: swipe <px1> <py1> <px2> <py2>"; need_ints "$@"; raise_mirror; run_worker swipe "$@" ;;
+  map)    shift; [ $# -eq 2 ] || die "usage: map <px> <py>"; need_ints "$@"; run_worker map "$@" ;;
+  type)   shift; [ -n "${1:-}" ] || die "usage: type \"text\""; run_worker type "$1" ;;
+  key)    shift; [ -n "${1:-}" ] || die "usage: key <name>"; run_worker key "$1" ;;
+  home)   raise_mirror; run_worker home ;;
+  ""|help|-h|--help) sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command: $1 (try: iphone-mirror help)" ;;
+esac

@@ -1,0 +1,53 @@
+{
+  "base_url": "http://localhost:3000",
+  "baseline": "design/design-baseline.json",
+  "screenshots_dir": "design/captures",
+  "engine": "chromium",
+  "timeout_ms": 8000,
+  "settle_ms": 500,
+  "viewports": {
+    "phone": { "width": 390, "height": 844, "touch": true },
+    "desktop": { "width": 1440, "height": 900, "touch": false }
+  },
+  "selectors": {
+    "primary_button": "[data-variant='primary'], .btn-primary",
+    "entry_points": "nav a, nav button, [role='tablist'] [role='tab']"
+  },
+  "limits": {
+    "max_primary_buttons": 1,
+    "min_touch_target": 44,
+    "min_pointer_target": 24,
+    "min_contrast": 4.5,
+    "min_contrast_large": 3.0,
+    "min_input_font_px_touch": 16,
+    "allow_horizontal_scroll": false,
+    "max_small_targets": 0,
+    "max_contrast_failures": 0,
+    "max_unlabeled_buttons": 0
+  },
+  "setup_steps": [
+    { "goto": "/login" },
+    { "fill": "input[name='email']", "value": "gate-user@example.test" },
+    { "fill": "input[name='password']", "value": "local-test-only" },
+    { "click": "button[type='submit']", "wait": 800 }
+  ],
+  "pages": [
+    { "name": "home", "path": "/", "wait_for": "main" },
+    { "name": "settings", "path": "/settings", "wait_for": "main" }
+  ],
+  "flows": [
+    {
+      "name": "add-task",
+      "start": "/",
+      "steps": [
+        { "click": "button:has-text('New task')" },
+        { "fill": "input[name='title']", "value": "Buy milk" },
+        { "press": "Enter", "wait": 300 }
+      ],
+      "goal": "li:has-text('Buy milk')"
+    }
+  ],
+  "context_checks": [
+    { "name": "cart-total-in-checkout", "path": "/checkout", "selector": "[data-testid='cart-total']", "viewports": ["phone"] }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "lane": "android",
+  "agent": "android-qa",
+  "device": "Pixel 7 emulator, API 34, google_apis arm64",
+  "build": "com.example.app 1.4.2 (87), debug",
+  "started_at": "2026-01-15T17:02:00Z",
+  "finished_at": "2026-01-15T17:09:40Z",
+  "stories": [
+    {
+      "id": "S1",
+      "status": "FAIL",
+      "evidence": [".qa/android/S1-02-after-submit.png", ".qa/android/S1-logcat-crash.txt"],
+      "notes": "App crashed after tapping Sign in: java.lang.NullPointerException in LoginViewModel.submit (logcat attached). Reproduced 3 of 3 times."
+    },
+    {
+      "id": "S2",
+      "status": "INCONCLUSIVE",
+      "evidence": [".qa/android/S2-01-reports.png"],
+      "notes": "Export menu needs a storage permission dialog that the emulator image did not show. Could not reach the export step."
+    }
+  ]
+}

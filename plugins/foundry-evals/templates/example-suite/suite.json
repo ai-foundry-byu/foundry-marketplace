@@ -1,0 +1,19 @@
+{
+  "name": "refund-triage",
+  "description": "A support agent decides what to do with a refund request: approve_refund, deny, escalate or ask_info, and writes the reply.",
+  "target": {"command": ["python3", "target_rules.py"], "timeout_s": 60},
+  "cases": "cases.jsonl",
+  "reps": 1,
+  "threshold": 0.9,
+  "surfaces": ["prompt.md", "target_rules.py"],
+  "graders": [
+    {"name": "valid_action", "type": "json_field", "path": "action", "one_of": ["approve_refund", "deny", "escalate", "ask_info"]},
+    {"name": "reply_not_empty", "type": "regex", "path": "reply", "pattern": "\\S{3,}"},
+    {"name": "no_price_match_promise", "type": "regex", "path": "reply", "pattern": "\\b(we|i) (will|can|do|would be happy to) (offer )?price[- ]match", "flags": "i", "negate": true}
+  ],
+  "judge": {"command": ["python3", "judge.py"], "timeout_s": 180},
+  "controls": [
+    {"name": "do-nothing", "command": ["python3", "controls/do_nothing.py"], "max_score": 0.1},
+    {"name": "pushover", "command": ["python3", "controls/pushover.py"], "max_score": 0.4}
+  ]
+}

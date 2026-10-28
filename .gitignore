@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# QA and eval run output (evidence is written per project, not to this repo)
+.qa/
+.evals/
+qa_smoke/
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS and editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local Claude Code state
+.claude/settings.local.json

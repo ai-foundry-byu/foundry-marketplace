@@ -1,0 +1,17 @@
+{
+  "description": "foundry-builder-kit: block agent-made git commits that contain secrets.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/commit_secret_guard.py\"",
+            "timeout": 90
+          }
+        ]
+      }
+    ]
+  }
+}

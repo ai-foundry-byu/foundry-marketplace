@@ -1,0 +1,6 @@
+{"stories": [
+  {"id": "S1", "title": "User signs in", "devices": ["ios", "android:pixel_7", "web-mobile"]},
+  {"id": "S2", "title": "User exports a report", "devices": ["windows", "macos", "Android"]},
+  {"id": "S3", "title": "Settings page", "devices": []},
+  {"id": "S4", "title": "Typo device", "devices": ["andriod"]}
+]}

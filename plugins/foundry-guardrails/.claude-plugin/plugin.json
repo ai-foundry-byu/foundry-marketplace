@@ -1,0 +1,21 @@
+{
+  "name": "foundry-guardrails",
+  "version": "0.1.0",
+  "description": "Claude Code hooks that make SDLC gates real: block destructive commands and secret leaks, require tests before 'done' and before push or deploy, keep worktree sessions in their worktree, flag stale whole-file writes, and keep working until a workplan milestone is checked off.",
+  "author": {
+    "name": "AI Foundry (BYU Marriott)"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/ai-foundry-byu/foundry-marketplace",
+  "keywords": [
+    "hooks",
+    "guardrails",
+    "safety",
+    "sdlc",
+    "verification",
+    "worktree",
+    "secrets",
+    "pretooluse",
+    "stop-hook"
+  ]
+}

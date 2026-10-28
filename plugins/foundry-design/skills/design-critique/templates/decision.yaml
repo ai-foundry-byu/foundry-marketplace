@@ -1,0 +1,19 @@
+# design/decisions/<date>-<short-slug>.yaml
+# One file per ruling. The critic loads these each run and never re-raises a
+# resolved finding on an unchanged surface.
+id: dec-2026-01-15-001
+date: 2026-01-15
+finding_id: df-2026-01-15-004        # the finding this rules on
+surface: route:/settings             # must match the finding's surface exactly
+surface_fingerprint: "src/app/settings/page.tsx@a1b2c3d"   # file@commit; a change re-opens the question
+question: 6                          # C1..C8
+ruling: accepted                     # accepted | rejected | overruled
+action: inline                       # remove | merge | relabel | inline | escalate
+tier: 1                              # 1 metric, 2 constitution/reference, 3 panel, 4 A/B
+reason: >
+  Inlining the two notification toggles under the profile header removes one
+  page and one click from F2 (clicks 4 -> 3). Gate metric decided it.
+evidence:
+  - design/findings/2026-01-15-settings.json
+  - "gate: full_clicks_to_goal.F2 4 -> 3"
+promote_to_constitution: false       # true when the same ruling has recurred in 3+ projects

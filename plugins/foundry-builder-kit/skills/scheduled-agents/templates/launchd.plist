@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS LaunchAgent. Save as ~/Library/LaunchAgents/com.example.daily-digest.plist
+  Replace every /Users/YOU path (launchd does not expand $HOME or ~).
+  Check:   plutil -lint ~/Library/LaunchAgents/com.example.daily-digest.plist
+  Load:    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.daily-digest.plist
+  Run now: launchctl kickstart gui/$(id -u)/com.example.daily-digest
+  Changed EnvironmentVariables? kickstart does NOT re-read them. bootout, then bootstrap again:
+           launchctl bootout gui/$(id -u)/com.example.daily-digest
+  OFF condition: bootout and delete this file when the job is no longer needed.
+  Secrets: keep tokens out of this file if you can (it is world-readable by default);
+  have the prompt read them, or chmod 600 the plist.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.example.daily-digest</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/YOU/bin/run_headless.py</string>
+    <string>--name</string><string>daily-digest</string>
+    <string>--prompt-file</string><string>prompts/digest.md</string>
+    <string>--workdir</string><string>/Users/YOU/projects/your-app</string>
+    <string>--claude-bin</string><string>/Users/YOU/.local/bin/claude</string>
+    <string>--max-minutes</string><string>20</string>
+    <string>--</string>
+    <string>--max-turns</string><string>30</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>15</integer></dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StandardOutPath</key><string>/Users/YOU/projects/your-app/.agent-jobs/launchd.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/projects/your-app/.agent-jobs/launchd.err.log</string>
+</dict>
+</plist>

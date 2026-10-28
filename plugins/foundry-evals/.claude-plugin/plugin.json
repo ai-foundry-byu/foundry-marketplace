@@ -1,0 +1,9 @@
+{
+  "name": "foundry-evals",
+  "version": "0.1.0",
+  "description": "Measure agents and prompts: scaffold an eval suite (cases, target runner, code graders, binary judge, negative controls, pass threshold), run it and compare with the last run, and hill-climb a prompt one change at a time. Ships evalkit.py, a stdlib-only runner.",
+  "author": {"name": "AI Foundry (BYU Marriott)"},
+  "license": "MIT",
+  "repository": "https://github.com/ai-foundry-byu/foundry-marketplace",
+  "keywords": ["evals", "evaluation", "llm-judge", "testing", "prompt-engineering", "hill-climbing", "agents", "quality"]
+}

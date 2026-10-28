@@ -1,0 +1,11 @@
+{
+  "name": "foundry-builder-kit",
+  "version": "0.1.0",
+  "description": "Day-one build skills for student projects: add auth, get launch-ready for 10k users, keep secrets out of git, route cheap structured LLM calls, schedule headless agents, and drive interactive CLIs through tmux.",
+  "author": {
+    "name": "AI Foundry (BYU Marriott)"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/ai-foundry-byu/foundry-marketplace",
+  "keywords": ["auth", "scaling", "secrets", "gitleaks", "llm-routing", "cron", "scheduled-agents", "tmux", "student-projects"]
+}

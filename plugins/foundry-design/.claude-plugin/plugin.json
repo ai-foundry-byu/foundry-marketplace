@@ -1,0 +1,9 @@
+{
+  "name": "foundry-design",
+  "version": "0.1.0",
+  "description": "Design quality gates for Claude Code: a subtract-only design critic (C1-C8 constitution), a UI spec writer with a full state matrix and machine-checkable acceptance checks, a fill-in design system template, a read-only UI reviewer agent with a 10-dimension rubric, and a deterministic design gate script.",
+  "author": {"name": "AI Foundry (BYU Marriott)"},
+  "license": "MIT",
+  "repository": "https://github.com/ai-foundry-byu/foundry-marketplace",
+  "keywords": ["design", "ux", "ui-review", "accessibility", "wcag", "design-system", "quality-gate", "playwright"]
+}

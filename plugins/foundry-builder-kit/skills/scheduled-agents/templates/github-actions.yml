@@ -1,0 +1,49 @@
+# .github/workflows/daily-agent.yml
+# Runs a headless Claude Code job on GitHub's runners, no machine of yours needs to be on.
+# Secrets (repo Settings > Secrets and variables > Actions):
+#   CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) or ANTHROPIC_API_KEY
+#   ALERT_WEBHOOK_URL (optional, for the failure alert)
+# Notes: schedules run in UTC, can start late under load, and are disabled after
+# 60 days without repo activity on public repos. That is why the deadman exists.
+# OFF condition: delete this file.
+name: daily-agent
+on:
+  schedule:
+    - cron: "15 13 * * *"      # 13:15 UTC daily
+  workflow_dispatch: {}         # lets you run it by hand from the Actions tab
+permissions:
+  contents: read
+concurrency:
+  group: daily-agent
+  cancel-in-progress: false     # never two runs at once
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}   # job-level so the step `if` can read it
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Run job
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          python3 scripts/run_headless.py --name daily-digest --prompt-file prompts/digest.md \
+            --max-minutes 20 -- --max-turns 30 --allowedTools "Read,Grep,Glob"
+      - name: Keep the transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-logs
+          path: .agent-jobs/
+      - name: Alert on failure
+        if: failure() && env.ALERT_WEBHOOK_URL != ''
+        run: |
+          curl -sS -X POST -H 'Content-Type: application/json' \
+            -d "{\"text\":\"daily-agent failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
+            "$ALERT_WEBHOOK_URL"

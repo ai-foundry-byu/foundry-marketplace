@@ -1,0 +1,41 @@
+# done-journey.yaml: the one user journey that proves this feature works.
+# Copy to qa/done-journey.yaml in your project and edit.
+# Format: a YAML subset (see scripts/qa_yaml.py) or the same shape as JSON.
+# Quote every selector. Unquoted values that start with # are comments in YAML.
+
+name: sign up and land on the dashboard
+base_url: http://localhost:3000          # --base-url on the command line overrides this
+devices: [desktop-1440x900, phone-390x844, tablet-820x1180]
+timeout_ms: 10000                        # per step and per assertion
+
+steps:
+  - goto: /
+  - click: "text=Get started"
+  - fill: {selector: "#email", value: "qa-student@example.com"}
+  - fill: {selector: "#password", value: "correct-horse-battery-staple"}
+  - press: {selector: "#password", key: "Enter"}
+  - wait_for: "[data-testid=dashboard]"
+
+assertions:
+  - visible: "[data-testid=dashboard]"
+  - text: {selector: "h1", contains: "Welcome"}
+  - url_contains: /dashboard
+  - no_console_errors: true
+
+screenshot: signup-dashboard             # file name stem: <screenshot>-<device>.png
+
+# Optional: URL substrings that mean "we got bounced to sign-in". Hitting one is
+# INCONCLUSIVE (exit 6), not a failure and not a pass.
+auth_wall: [/login, /signin]
+
+# Optional: console messages to ignore (Python regexes).
+ignore_console: ["Download the React DevTools"]
+
+# Optional: block every non-GET request (always use on production).
+read_only: false
+
+# Optional: where the deployed build reports its commit. Pick ONE of header,
+# json_key, regex. Pair it with --expected-sha (default HEAD).
+# sha_check:
+#   url: https://<your-app>.example.com/api/version
+#   json_key: commit

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Foundry Marketplace</title>
+  <meta name="description" content="Skills, agents, hooks and templates for building your own Claude Code harness, organized around an 8-stage SDLC. From AI Foundry at BYU Marriott.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23002E5D'/%3E%3Cpath d='M9 23V9h13v3.2h-9.4v2.6h8v3.1h-8V23z' fill='%23fff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#app">Skip to content</a>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="#/" aria-label="AI Foundry Marketplace, home">
+        <span class="brand-mark" aria-hidden="true">F</span>
+        <span class="brand-text">AI Foundry <span class="brand-sub">Marketplace</span></span>
+      </a>
+      <nav aria-label="Main">
+        <ul class="nav">
+          <li><a href="#/browse" data-nav="browse">Browse</a></li>
+          <li><a href="#/sdlc" data-nav="sdlc">SDLC</a></li>
+          <li><a href="#/contribute" data-nav="contribute">Contribute</a></li>
+          <li class="nav-gh"><a href="https://github.com/ai-foundry-byu/foundry-marketplace" rel="noopener">GitHub</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main id="app" tabindex="-1">
+    <div class="wrap loading" role="status">Loading the catalog...</div>
+    <noscript><div class="wrap"><p>This site needs JavaScript to read its catalog. The same content is in the <a href="https://github.com/ai-foundry-byu/foundry-marketplace">GitHub repository</a> and in <a href="catalog.json">catalog.json</a>.</p></div></noscript>
+  </main>
+
+  <div id="live" class="sr-only" aria-live="polite"></div>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <p>Built by AI Foundry at BYU Marriott for students building their own Claude Code harnesses. Open source under the MIT license. Every page is generated from the files in the repository, so what you see here is what you install.</p>
+      <p><a href="catalog.json">catalog.json</a> <span aria-hidden="true">·</span> <a href="https://github.com/ai-foundry-byu/foundry-marketplace">Source</a> <span aria-hidden="true">·</span> <a href="#/contribute">Contribute</a></p>
+    </div>
+  </footer>
+</body>
+</html>

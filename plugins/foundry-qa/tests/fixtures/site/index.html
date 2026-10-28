@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Fixture Home</title>
+<style>body{font-family:sans-serif;margin:0;padding:16px} button,a.btn{display:inline-block;min-height:44px;min-width:44px;padding:8px 16px}</style></head>
+<body>
+<main>
+  <h1>Welcome to the fixture app</h1>
+  <p>This page exists so foundry-qa can test itself against a real browser.</p>
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email" style="min-height:44px">
+  <button id="save" type="button">Save</button>
+  <p id="status">Not saved</p>
+  <a class="btn" href="about.html">About</a>
+</main>
+<script>
+document.getElementById('save').addEventListener('click', async () => {
+  const r = await fetch('/api/save', {method: 'POST', body: JSON.stringify({email: document.getElementById('email').value})});
+  const j = await r.json();
+  document.getElementById('status').textContent = j.qaReadOnly ? 'Saved (simulated)' : 'Saved';
+});
+</script>
+</body></html>

@@ -1,0 +1,22 @@
+[
+  {
+    "name": "groq",
+    "style": "openai",
+    "base_url": "https://api.groq.com/openai/v1",
+    "model": "llama-3.3-70b-versatile",
+    "key_env": "GROQ_API_KEY",
+    "key_prefix": "gsk_",
+    "private_ok": true,
+    "policy_checked": "YYYY-MM-DD: link to the DPA you read"
+  },
+  {
+    "name": "anthropic",
+    "style": "anthropic",
+    "base_url": "https://api.anthropic.com/v1",
+    "model": "claude-haiku-4-5",
+    "key_env": "ANTHROPIC_API_KEY",
+    "key_prefix": "sk-ant-api",
+    "private_ok": true,
+    "policy_checked": "YYYY-MM-DD: link to the commercial terms you read"
+  }
+]
