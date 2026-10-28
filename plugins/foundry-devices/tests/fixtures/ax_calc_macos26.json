@@ -1,0 +1,13 @@
+[
+ {"path": "1", "depth": 0, "role": "AXWindow", "subrole": "AXStandardWindow", "name": "Calculator", "description": "standard window", "value": null, "identifier": "main", "enabled": null, "position": [62, 352], "size": [230, 408]},
+ {"path": "1/1", "depth": 1, "role": "AXGroup", "subrole": "AXHostingView", "name": null, "description": "group", "value": null, "identifier": null, "enabled": null, "position": [62, 352], "size": [230, 408]},
+ {"path": "1/1/1", "depth": 2, "role": "AXSplitGroup", "subrole": null, "name": null, "description": "split group", "value": null, "identifier": "main, SidebarNavigationSplitView", "enabled": null, "position": [62, 352], "size": [230, 408]},
+ {"path": "1/1/1/1", "depth": 3, "role": "AXGroup", "subrole": "AXHostingView", "name": null, "description": "group", "value": null, "identifier": null, "enabled": null, "position": [62, 352], "size": [230, 408]},
+ {"path": "1/1/1/1/1", "depth": 4, "role": "AXGroup", "subrole": null, "name": null, "description": "group", "value": null, "identifier": "CalculatorKeypadView", "enabled": true, "position": [62, 405], "size": [230, 354]},
+ {"path": "1/1/1/1/1/1", "depth": 5, "role": "AXScrollArea", "subrole": null, "name": null, "description": "Edit field", "value": null, "identifier": "StandardInputView", "enabled": null, "position": [72, 438], "size": [210, 42]},
+ {"path": "1/1/1/1/1/1/1", "depth": 6, "role": "AXStaticText", "subrole": null, "name": "‎0", "description": "text", "value": "‎0", "identifier": null, "enabled": true, "position": [263, 441], "size": [19, 36]},
+ {"path": "1/1/1/1/1/3", "depth": 5, "role": "AXButton", "subrole": null, "name": null, "description": "button", "value": null, "identifier": "AllClear", "enabled": true, "position": [126, 485], "size": [48, 48]},
+ {"path": "1/1/1/1/1/6", "depth": 5, "role": "AXButton", "subrole": null, "name": null, "description": "button", "value": null, "identifier": "Seven", "enabled": true, "position": [72, 539], "size": [48, 48]},
+ {"path": "1/1/1/1/1/7", "depth": 5, "role": "AXButton", "subrole": null, "name": null, "description": "button", "value": null, "identifier": "Eight", "enabled": true, "position": [126, 539], "size": [48, 48]},
+ {"path": "1/1/1/1/1/21", "depth": 5, "role": "AXButton", "subrole": null, "name": null, "description": "button", "value": null, "identifier": "Equals", "enabled": true, "position": [234, 701], "size": [48, 48]}
+]

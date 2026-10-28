@@ -59,7 +59,7 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/device_matrix.py" init stories.json --qa .q
 
 Then start one subagent per runnable lane **in the same turn** so they run concurrently. Give each one the same contract:
 
-> You are the `<lane>` lane. Stories: `<ids>` from `stories.json`. Profile hints: `<profiles>`. Build under test: `<path or version>`. Use test accounts only. Run your doctor first and stop if NOT READY. Write evidence under `.qa/<lane>/` and fill in `.qa/<lane>/results.json` with PASS, FAIL or INCONCLUSIVE per story, with evidence paths and one-line notes.
+> You are the `<lane>` lane. Stories: `<ids>` from `stories.json`. Profile hints: `<profiles>`. Build under test: `<path or version>`. Use test accounts only. Your first command is your own doctor command, exactly as your manual writes it; stop if it says NOT READY, and never write doctor.json yourself. Write evidence under `.qa/<lane>/` and fill in `.qa/<lane>/results.json` with PASS, FAIL or INCONCLUSIVE per story, with evidence paths and one-line notes.
 
 Parallelism limits, so lanes do not fight:
 

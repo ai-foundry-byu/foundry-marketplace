@@ -6,9 +6,15 @@ Needs: macOS, and Accessibility permission for the app that runs this script
 
     ax_tree.py dump "Calculator" [--depth 8] [--out .qa/macos/ax.json]
     ax_tree.py outline .qa/macos/ax.json
-    ax_tree.py find .qa/macos/ax.json --role AXButton --name "7"
-    ax_tree.py press "Calculator" 1/3/2/7          # AXPress the element at that path
+    ax_tree.py find .qa/macos/ax.json --role AXButton --id Seven
+    ax_tree.py press "Calculator" 1/1/1/1/1/6       # AXPress the path that find printed
     ax_tree.py bounds "Calculator"                  # x,y,w,h of window 1 for screencapture -R
+
+On current macOS (checked on 26.6), Calculator's keys have no name, the
+description "button", and an AXIdentifier such as "Seven", "Eight", "Equals"
+or "AllClear". Many modern apps (SwiftUI especially) look like this: when
+--name finds nothing, try --id. Use the path `find` prints, never a path from
+an example: it differs between macOS versions.
 
 A path is the window number followed by 1-based child indexes, exactly as
 `dump` prints it. Paths are only valid until the UI changes, so dump again
@@ -173,6 +179,9 @@ def main(argv: list[str] | None = None) -> int:
     hits = find(tree, a.role, a.name, a.desc, a.value, a.id)
     for h in hits:
         print(label(h))
+    if not hits and a.name is not None and a.id is None:
+        sys.stderr.write("no match. Many apps expose an AXIdentifier but no name: "
+                         "run `outline` and try --id (for example --id Seven in Calculator).\n")
     return 0 if hits else 1
 
 

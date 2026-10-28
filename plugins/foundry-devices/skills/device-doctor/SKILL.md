@@ -7,7 +7,7 @@ description: Preflight a device QA lane before testing anything. Checks that the
 
 One command per platform. It never installs or changes anything; it only checks and tells you the fix.
 
-Maturity: **new** (unit-tested).
+Maturity: **new** (unit-tested; run on real Android API 34, iOS 26.2 simulator, Windows Server 2025 and macOS 26 CI runners).
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/doctor.py" --platform ios --out .qa       # or android, windows, macos
@@ -25,7 +25,9 @@ What it checks:
 | `windows` | native Windows (flags WSL), `pywinauto` | Pillow, PowerShell |
 | `macos` | macOS host, `osascript`, `screencapture` (in `/usr/sbin`), Accessibility permission for the app running Claude Code | Screen Recording (reported, not probed), `cliclick`, Node |
 
-Exit code `0` when every required check passed (READY), `1` otherwise (NOT READY). It writes `<out>/<platform>/doctor.json` with one row per check and its fix line.
+Exit code `0` when every required check passed (READY), `1` otherwise (NOT READY). It writes `<out>/<platform>/doctor.json` with one row per check and its fix line. Rows print as `OK`, `FAIL` (required) or `warn` (optional). A row the doctor cannot check prints `??` with `"probed": false` and `"ok": false` in the JSON: today that is only macOS Screen Recording. Treat it as unknown, never as granted.
+
+Only `doctor.py` writes `doctor.json`. Do not write or edit it by hand: the device-matrix report and the agents read its format.
 
 If it says NOT READY, stop and report the FAIL rows with their fix lines. Do not start testing on a machine the doctor rejected: the run will end INCONCLUSIVE anyway, after wasting time.
 

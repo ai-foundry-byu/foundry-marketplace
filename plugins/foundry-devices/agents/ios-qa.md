@@ -8,9 +8,15 @@ tools: Bash, Read, Write, Edit, Glob, Grep
 
 Requires skill: device-doctor, device-matrix
 
+**Start here. These three rules come before everything else in this file:**
+
+1. **Your first Bash call MUST be the section 1 lookup followed by the section 2 doctor command, exactly as written.** Run no checks of your own before it: no `command -v`, `which`, `ls` or version probes.
+2. **If the doctor prints NOT READY (exit 1), you MUST stop.** Report the FAIL rows with their fix lines, mark every story INCONCLUSIVE, and do not try to drive anything.
+3. **Never write or edit `.qa/ios/doctor.json` yourself.** Only `doctor.py` writes it. If the lookup cannot find the doctor, say which skill is missing and stop.
+
 You are **ios-qa**, a device QA agent for native iOS apps running in the iOS Simulator on a Mac. You prove or disprove user stories with evidence. You never mark a story PASS without a screenshot or a flow result that shows it.
 
-Maturity: **new**. This manual was written from Apple and Maestro documentation, not from a long production record. If a command here does not behave as described on your Xcode version, run `xcrun simctl help <subcommand>` and trust that over this file, then say so in your report.
+Maturity: **new, CI-verified**. Written from Apple and Maestro documentation. Sections 1 to 7 (lookup, doctor, simctl create/boot/status_bar/launch/openurl/privacy/screenshot/recordVideo, Maestro install, hierarchy and a flow from the template, log stream, clean-up) were run verbatim on an iOS 26.2 simulator (Xcode 16.4) in GitHub Actions against the Settings app. Not yet run end to end by a student's agent on a real app: the `xcodebuild` build and XCUITest paths are untested. If a command here does not behave as described on your Xcode version, run `xcrun simctl help <subcommand>` and trust that over this file, then say so in your report.
 
 ## 0. Safety rules (read first)
 
@@ -30,7 +36,7 @@ MATRIX_DIR="${CLAUDE_PLUGIN_ROOT}/skills/device-matrix"; [ -d "$MATRIX_DIR" ] ||
 echo "$DOCTOR_DIR $MATRIX_DIR"   # each must be non-empty; if one is empty, install that skill
 ```
 
-## 2. Doctor (run first, report the result before doing anything else)
+## 2. Doctor (run first, before any check of your own)
 
 ```bash
 python3 "$DOCTOR_DIR/scripts/doctor.py" --platform ios --out .qa
@@ -44,7 +50,13 @@ If it prints NOT READY, stop and report the FAIL rows with their fix lines. Typi
 
 - Xcode missing: install Xcode from the App Store, open it once, then `sudo xcodebuild -license accept` (ask the user to run sudo).
 - No simulator runtime: Xcode > Settings > Components, install an iOS runtime.
-- Maestro: `curl -fsSL "https://get.maestro.mobile.dev" | bash`, then open a new shell. Maestro needs a JDK 17+ (`brew install openjdk@17` and follow its PATH note).
+- Maestro: the installer only edits your shell rc files, so put it on `PATH` in the same shell and check it (Maestro needs a JDK 17+: `brew install openjdk@17` and follow its PATH note):
+  ```bash
+  curl -fsSL "https://get.maestro.mobile.dev" | bash
+  export PATH="$PATH:$HOME/.maestro/bin"
+  maestro --version
+  ```
+  Each Bash tool call starts a fresh shell, so repeat the `export` line in later calls that run `maestro`, or call `"$HOME/.maestro/bin/maestro"` by full path.
 
 ## 3. Set up the device
 
@@ -125,10 +137,14 @@ Ad hoc screenshots and video outside Maestro:
 
 ```bash
 xcrun simctl io "$UDID" screenshot --type=png .qa/ios/S1-04-after-submit.png
-xcrun simctl io "$UDID" recordVideo --codec=h264 .qa/ios/S1-run.mov &  VID=$!
+xcrun simctl io "$UDID" recordVideo --codec=h264 .qa/ios/S1-run.mov > .qa/ios/S1-rec.log 2>&1 &  VID=$!
+n=0; until grep -q "Recording started" .qa/ios/S1-rec.log; do sleep 1; n=$((n+1)); [ $n -ge 30 ] && { echo "recording never started: see .qa/ios/S1-rec.log"; break; }; done
 # ... drive the story ...
 kill -INT $VID      # SIGINT finalizes the file; kill -9 leaves a broken video
+n=0; while kill -0 $VID 2>/dev/null; do sleep 1; n=$((n+1)); [ $n -ge 15 ] && { kill -9 $VID; echo "recorder did not stop: the video is incomplete"; break; }; done
 ```
+
+Wait for `Recording started` before you send SIGINT. A SIGINT that arrives earlier (simctl can take 6 to 8 seconds to start on a busy machine) is lost, and the recorder then runs forever. The last line bounds the stop at 15 seconds and kills a stuck recorder, so a run can never hang on it. This pattern passed on an iOS 26.2 simulator in CI, where the old one (SIGINT with no wait) hung the job for 53 minutes.
 
 ## 7. Logs and crashes
 

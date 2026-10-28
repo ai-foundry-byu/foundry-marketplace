@@ -27,6 +27,11 @@ from datetime import datetime, timezone
 
 TIMEOUT_S = 20
 
+# The installer only edits ~/.bashrc and ~/.zshrc, so the shell that ran it (an agent's
+# Bash tool included) does not see maestro until PATH is exported.
+MAESTRO_FIX = ('Install: curl -fsSL "https://get.maestro.mobile.dev" | bash, then in the same shell: '
+               'export PATH="$PATH:$HOME/.maestro/bin"  and check: maestro --version  (needs Java 17+)')
+
 
 @dataclass
 class Check:
@@ -35,6 +40,7 @@ class Check:
     ok: bool = False
     detail: str = ""
     fix: str = ""
+    probed: bool = True     # False: the doctor cannot check this; state is unknown, never OK
 
 
 @dataclass
@@ -124,8 +130,7 @@ def checks_ios() -> list[Check]:
     cs.append(which_check("xcodebuild (needed to build the app or run XCUITest)", "xcodebuild", False,
                           "Comes with Xcode.", ["-version"]))
     cs.append(which_check("maestro (taps, asserts, UI tree)", "maestro", True,
-                          'Install: curl -fsSL "https://get.maestro.mobile.dev" | bash  (needs Java 17+)',
-                          ["--version"]))
+                          MAESTRO_FIX, ["--version"]))
     cs.append(which_check("java (Maestro runtime)", "java", True,
                           "Install a JDK 17 or newer, for example: brew install openjdk@17",
                           ["-version"]))
@@ -160,7 +165,7 @@ def checks_android() -> list[Check]:
         c.detail = "adb missing"
     cs.append(c)
     cs.append(which_check("maestro (optional flow runner)", "maestro", False,
-                          'curl -fsSL "https://get.maestro.mobile.dev" | bash', ["--version"]))
+                          MAESTRO_FIX, ["--version"]))
     return cs
 
 
@@ -214,14 +219,20 @@ def checks_macos() -> list[Check]:
     else:
         c.detail = "osascript missing"
     cs.append(c)
-    cs.append(Check(name="Screen Recording permission", required=False, ok=True,
-                    detail="cannot be probed reliably; if screenshots come back as only the desktop wallpaper, it is missing",
-                    fix="System Settings > Privacy & Security > Screen & System Audio Recording: enable the same app."))
+    cs.append(screen_recording_check())
     cs.append(which_check("cliclick (optional coordinate clicks)", "cliclick", False,
                           "brew install cliclick"))
     cs.append(which_check("node (optional, Playwright for Electron apps)", "node", False,
                           "Install Node 18+, then: npm i -D playwright", ["--version"]))
     return cs
+
+
+def screen_recording_check() -> Check:
+    """Screen Recording cannot be probed reliably from a script, so report it as unknown."""
+    return Check(name="Screen Recording permission", required=False, ok=False, probed=False,
+                 detail=("not probed: if screenshots show only the wallpaper and menu bar, "
+                         "this permission is missing"),
+                 fix="System Settings > Privacy & Security > Screen & System Audio Recording: enable the same app.")
 
 
 PLATFORMS = {
@@ -235,7 +246,10 @@ PLATFORMS = {
 def render(rep: Report) -> str:
     lines = [f"doctor: {rep.platform} on {rep.host_os} ({rep.checked_at})"]
     for c in rep.checks:
-        mark = "OK  " if c.ok else ("FAIL" if c.required else "warn")
+        if not c.probed:
+            mark = "??  "
+        else:
+            mark = "OK  " if c.ok else ("FAIL" if c.required else "warn")
         req = "required" if c.required else "optional"
         lines.append(f"  [{mark}] {c.name} ({req}): {c.detail}")
         if not c.ok and c.fix:
